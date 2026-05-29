@@ -1,0 +1,22 @@
+{
+  "en": {
+    "description": {
+      "tfm2_executioner": {
+        "name": "Executioner",
+        "skill": "Lunge Strike: a heavy blow dealing 180% AD.",
+        "skill2": "Bloodthirst: gains attack speed and lifesteal for a short time.",
+        "passive": "Execute: basic attacks deal bonus damage to low-HP enemies. On takedown, gains move and attack speed."
+      }
+    }
+  },
+  "ko": {
+    "description": {
+      "tfm2_executioner": {
+        "name": "처형자",
+        "skill": "돌격 일격: 공격력의 180% 피해를 주는 강타.",
+        "skill2": "피의 갈증: 잠시 공격 속도와 흡혈을 얻습니다.",
+        "passive": "처형: 체력이 낮은 적에게 평타가 추가 피해를 줍니다. 처치 시 이동/공격 속도를 얻습니다."
+      }
+    }
+  }
+}

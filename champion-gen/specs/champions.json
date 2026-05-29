@@ -1,0 +1,43 @@
+{
+  "mod_id": "tfm2_champion_creator",
+  "author": "seyelive0",
+  "version": "0.1.0",
+  "champions": [
+    {
+      "id": "tfm2_cc_emberling",
+      "name": { "ko": "엠벌링", "en": "Emberling" },
+      "role": "mage",
+      "sprite": { "mode": "select", "value": "pyromancer" },
+      "skill_icon": { "mode": "select", "value": "pyromancer" },
+      "skills": [
+        { "slot": "skill",  "template": "skillshot_ap", "params": { "ap_ratio": 80, "range": 65000, "cooltime": 240 } },
+        { "slot": "skill2", "template": "self_buff",     "params": { "magic_power": 20, "skill_cooldown_mult": 15, "tick": 180 } },
+        { "slot": "ult",    "template": "aoe_stun",      "params": { "ap_ratio": 100, "radius": 42000, "stun": 45, "cooltime": 900 } }
+      ]
+    },
+    {
+      "id": "tfm2_cc_random_bruiser",
+      "name": { "ko": "랜덤 투사", "en": "Random Bruiser" },
+      "role": "assassin",
+      "sprite": { "mode": "random" },
+      "skill_icon": { "mode": "random" },
+      "skills": [
+        { "slot": "skill",  "template": "dash",      "params": { "ad_ratio": 70, "range": 42000 } },
+        { "slot": "skill2", "template": "self_buff", "params": { "attack": 15, "attack_speed_mult": 30 } },
+        { "slot": "ult",    "template": "aoe_stun",  "params": { "ap_ratio": 0, "damage": 150, "radius": 30000, "stun": 60 } }
+      ]
+    },
+    {
+      "id": "tfm2_cc_random_warden",
+      "name": { "ko": "랜덤 수호자", "en": "Random Warden" },
+      "role": "support",
+      "sprite": { "mode": "random" },
+      "skill_icon": { "mode": "random" },
+      "skills": [
+        { "slot": "skill",  "template": "heal",      "params": { "amount": 100, "ap_ratio": 50 } },
+        { "slot": "skill2", "template": "self_buff", "params": { "magic_power": 15 } },
+        { "slot": "ult",    "template": "aoe_stun",  "params": { "ap_ratio": 60, "radius": 38000, "stun": 50 } }
+      ]
+    }
+  ]
+}

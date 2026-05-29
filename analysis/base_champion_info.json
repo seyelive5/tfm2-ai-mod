@@ -1,0 +1,4752 @@
+{
+  "mod_champions": [],
+  "fighter": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 950,
+      "defence": 30,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 9,
+      "magic_resistance": 4,
+      "move_speed": 12,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 23000,
+      "cooltime": 70,
+      "duration": 20,
+      "start_timing": 13,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 50,
+      "attack_ratio": 70,
+      "range": 80000,
+      "attack_range": 20000,
+      "speed": 3200,
+      "stun": 60,
+      "cooltime": 300,
+      "duration": 20,
+      "start_timing": 6,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 40,
+      "attack_ratio": 60,
+      "attack_range": 45000,
+      "slow_speed": 60,
+      "slow_duration": 60,
+      "cooltime": 300,
+      "duration": 24,
+      "start_timing": 15,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 120,
+      "attack_ratio": 80,
+      "attack_range": 70000,
+      "airborne": 60,
+      "cooltime": 3600,
+      "duration": 36,
+      "start_timing": 25,
+      "cancelable": false
+    },
+    "category": "Melee",
+    "tags": [
+      "AD",
+      "Tank",
+      "CC"
+    ]
+  },
+  "knight": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 0,
+      "hp": 1100,
+      "defence": 40,
+      "magic_resistance": 30,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 0,
+      "hp": 120,
+      "defence": 10,
+      "magic_resistance": 5,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 80,
+      "duration": 20,
+      "start_timing": 13,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "range": 40000,
+      "cooltime": 180,
+      "tick": 60,
+      "duration": 30,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "skill2": {
+      "cooltime": 480,
+      "tick": 180,
+      "shield": 500,
+      "shield_ratio": 10,
+      "reflect": 20,
+      "duration": 24,
+      "start_timing": 12,
+      "cancelable": false
+    },
+    "ult": {
+      "cooltime": 2400,
+      "tick": 300,
+      "range": 60000,
+      "damage_reduce": 40,
+      "damage_reduce_hp_ratio": 1,
+      "move_speed_reduce": 30,
+      "duration": 18,
+      "start_timing": 16,
+      "cancelable": false,
+      "cast_range": 80000
+    },
+    "category": "Melee",
+    "tags": [
+      "AD",
+      "Tank",
+      "CC",
+      "Shield"
+    ]
+  },
+  "swordman": {
+    "stat": {
+      "attack": 120,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 25,
+      "magic_resistance": 15,
+      "move_speed": 1100,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 25,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 12,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 60,
+      "duration": 20,
+      "start_timing": 13,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "name": "swordman_skill",
+      "action_name": "skill",
+      "attack": 40,
+      "attack_ratio": 70,
+      "range": 100000,
+      "attack_range": 30000,
+      "speed": 4000,
+      "cooltime": 420,
+      "duration": 40,
+      "start_timing": 30,
+      "cancelable": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill2": {
+      "attack": 20,
+      "attack_ratio": 30,
+      "range": 28000,
+      "interval": 6,
+      "cooltime": 360,
+      "duration": 40,
+      "start_timing": 17,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 50,
+      "attack_ratio": 200,
+      "range": 150000,
+      "width": 40000,
+      "cooltime": 3600,
+      "duration": 38,
+      "start_timing": 12,
+      "cancelable": false
+    },
+    "category": "Melee",
+    "tags": [
+      "AD"
+    ]
+  },
+  "archer": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 15,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 15,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "archer_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 70000,
+      "speed": 6000,
+      "cooltime": 60,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 40,
+      "attack_ratio": 80,
+      "range": 70000,
+      "projectile_speed": 6000,
+      "move_range": 30000,
+      "speed": 2000,
+      "cooltime": 240,
+      "duration": 20,
+      "start_timing": 12,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 60,
+      "attack_ratio": 80,
+      "range": 30000,
+      "projectile_speed": 6000,
+      "move_range": 30000,
+      "move_tick": 10,
+      "cooltime": 360,
+      "duration": 34,
+      "start_timing": 22,
+      "cancelable": false
+    },
+    "ult": {
+      "name": "archer_ult",
+      "attack": 30,
+      "attack_ratio": 50,
+      "range": 120000,
+      "attack_range": 5000,
+      "interval": 6,
+      "total_shots": 15,
+      "speed": 6000,
+      "cooltime": 3600,
+      "duration": 18,
+      "start_timing": 17,
+      "cancelable": false,
+      "y_offset": 0
+    },
+    "category": "Range",
+    "tags": [
+      "AD"
+    ]
+  },
+  "soldier": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 15,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 15,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "soldier_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "range": 60000,
+      "growth_range": 3000,
+      "speed": 6000,
+      "cooltime": 60,
+      "duration": 20,
+      "start_timing": 15,
+      "cancelable": true,
+      "y_offset": 0
+    },
+    "skill": {
+      "name": "soldier_attack",
+      "attack": 20,
+      "attack_ratio": 60,
+      "range": 70000,
+      "growth_range": 3000,
+      "interval": 6,
+      "speed": 6000,
+      "cooltime": 240,
+      "duration": 48,
+      "start_timing": 30,
+      "cancelable": false,
+      "y_offset": 0
+    },
+    "ult": {
+      "name": "soldier_ult",
+      "attack": 200,
+      "attack_ratio": 150,
+      "range": 300000,
+      "attack_range": 30000,
+      "attack_reduce_ratio": 80,
+      "speed": 6000,
+      "cooltime": 3600,
+      "duration": 36,
+      "start_timing": 34,
+      "cancelable": false,
+      "y_offset": 0
+    },
+    "category": "Range",
+    "tags": [
+      "AD"
+    ]
+  },
+  "priest": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 30,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 15,
+      "hp": 80,
+      "defence": 8,
+      "magic_resistance": 4,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "priest_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 6000,
+      "cooltime": 90,
+      "duration": 40,
+      "start_timing": 32,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "heal": 8,
+      "attack_ratio": 20,
+      "range": 70000,
+      "heal_range": 32000,
+      "heal_period": 20,
+      "heal_tick": 180,
+      "cooltime": 300,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "skill2": {
+      "range": 70000,
+      "cooltime": 360,
+      "tick": 180,
+      "shield": 50,
+      "shield_ratio": 70,
+      "attack_speed": 30,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "ult": {
+      "range": 960000,
+      "cooltime": 2400,
+      "tick": 300,
+      "heal": 20,
+      "heal_ratio": 70,
+      "heal_speed": 6500,
+      "heal_delay": 40,
+      "heal_duration": 19,
+      "duration": 24,
+      "start_timing": 22,
+      "cancelable": false
+    },
+    "category": "Util",
+    "tags": [
+      "Shield",
+      "Heal",
+      "Range",
+      "AP"
+    ]
+  },
+  "pythoness": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 30,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 15,
+      "hp": 100,
+      "defence": 8,
+      "magic_resistance": 4,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "range": 60000,
+      "speed": 4000,
+      "cooltime": 90,
+      "attack": 0,
+      "duration": 20,
+      "start_timing": 14,
+      "cancelable": true
+    },
+    "skill": {
+      "range": 60000,
+      "speed": 5000,
+      "cooltime": 240,
+      "heal": 30,
+      "attack_ratio": 60,
+      "duration": 20,
+      "start_timing": 14,
+      "cancelable": false
+    },
+    "skill2": {
+      "range": 75000,
+      "speed": 5000,
+      "cooltime": 240,
+      "heal": 50,
+      "heal_ratio": 60,
+      "attack": 200,
+      "attack_ratio": 80,
+      "attack_range": 32000,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "ult": {
+      "range": 120000,
+      "speed": 6000,
+      "cooltime": 2400,
+      "heal": 30,
+      "heal_ratio": 15,
+      "attack": 40,
+      "attack_ratio": 15,
+      "term": 6,
+      "total_shots": 15,
+      "duration": 42,
+      "start_timing": 34,
+      "cancelable": false
+    },
+    "category": "Util",
+    "tags": [
+      "Heal",
+      "Range",
+      "AP",
+      "Magic"
+    ]
+  },
+  "monk": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 20,
+      "hp": 1100,
+      "defence": 40,
+      "magic_resistance": 30,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 10,
+      "hp": 120,
+      "defence": 7,
+      "magic_resistance": 5,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 23000,
+      "cooltime": 90,
+      "duration": 18,
+      "start_timing": 12,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "heal_skill": {
+      "range": 80000,
+      "cooltime": 480,
+      "heal": 100,
+      "heal_self": 200,
+      "attack_ratio": 50,
+      "duration": 37,
+      "start_timing": 28,
+      "cancelable": false
+    },
+    "skill2": {
+      "name": "monk_skill",
+      "attack": 30,
+      "attack_ratio": 100,
+      "range": 80000,
+      "attack_range": 23000,
+      "applyed": 50,
+      "delayed": 55,
+      "cooltime": 240,
+      "duration": 30,
+      "stun_duration": 60,
+      "start_timing": 19,
+      "cancelable": false
+    },
+    "ult": {
+      "shield": 500,
+      "shield_ap_ratio": 50,
+      "range": 76000,
+      "shield_duration": 180,
+      "move_speed": 30,
+      "cooltime": 3600,
+      "duration": 12,
+      "start_timing": 10,
+      "cancelable": false
+    },
+    "category": "Util",
+    "tags": [
+      "AP",
+      "Heal",
+      "Shield",
+      "Tank",
+      "CC",
+      "Magic"
+    ]
+  },
+  "pyromancer": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 40,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 20,
+      "hp": 100,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "pyromancer_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 6000,
+      "cooltime": 90,
+      "duration": 34,
+      "start_timing": 26,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "name": "pyromancer_skill",
+      "attack": 60,
+      "attack_ratio": 70,
+      "range": 90000,
+      "attack_range": 35000,
+      "applyed": 24,
+      "delayed": 25,
+      "cooltime": 200,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": false
+    },
+    "skill2": {
+      "damage": 20,
+      "attack_ratio": 5,
+      "range": 90000,
+      "attack_range": 32000,
+      "attack_period": 20,
+      "attack_tick": 180,
+      "cooltime": 500,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": false
+    },
+    "ult": {
+      "name": "pyromancer_ult",
+      "attack": 150,
+      "attack_ratio": 70,
+      "range": 90000,
+      "attack_range": 70000,
+      "applyed": 42,
+      "delayed": 76,
+      "cooltime": 3000,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "category": "Magician",
+    "tags": [
+      "AP",
+      "Dot",
+      "Magic"
+    ]
+  },
+  "ice_mage": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 40,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 20,
+      "hp": 100,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "icemage_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 6000,
+      "cooltime": 90,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "range": 60000,
+      "cooltime": 300,
+      "attack": 60,
+      "attack_ratio": 30,
+      "stun_duration": 30,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": false
+    },
+    "skill2": {
+      "damage": 40,
+      "damage_ratio": 20,
+      "range": 60000,
+      "attack_range": 30000,
+      "attack_period": 20,
+      "attack_tick": 180,
+      "slow": 30,
+      "stun": 60,
+      "cooltime": 480,
+      "duration": 28,
+      "start_timing": 22,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 80,
+      "attack_ratio": 50,
+      "range": 70000,
+      "half_angle_deg": 45,
+      "knockback_speed": 3000,
+      "knockback_tick": 15,
+      "slow": 60,
+      "slow_duration": 180,
+      "block_skill_tick": 120,
+      "sweep_duration": 20,
+      "cooltime": 2400,
+      "duration": 35,
+      "start_timing": 20,
+      "cancelable": false
+    },
+    "category": "Magician",
+    "tags": [
+      "AP",
+      "Dot",
+      "CC",
+      "Magic"
+    ]
+  },
+  "ninja": {
+    "stat": {
+      "attack": 120,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 25,
+      "magic_resistance": 15,
+      "move_speed": 1100,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 30,
+      "magic_power": 0,
+      "hp": 80,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 14,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 23000,
+      "cooltime": 50,
+      "duration": 20,
+      "start_timing": 13,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 40,
+      "attack_ratio": 100,
+      "range": 120000,
+      "attack_range": 10000,
+      "speed": 5000,
+      "cooltime": 300,
+      "duration": 35,
+      "hit_duration": 19,
+      "start_timing": 27,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 50,
+      "attack_ratio": 70,
+      "attack_count": 3,
+      "range": 30000,
+      "cooltime": 300,
+      "duration": 20,
+      "hit_duration": 20,
+      "start_timing": 19,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 80,
+      "attack_ratio": 150,
+      "speed": 4500,
+      "range": 350000,
+      "cooltime": 3000,
+      "duration": 32,
+      "start_timing": 26,
+      "cancelable": false
+    },
+    "category": "Assassin",
+    "tags": [
+      "AD"
+    ]
+  },
+  "magic_knight": {
+    "stat": {
+      "attack": 120,
+      "magic_power": 10,
+      "hp": 900,
+      "defence": 25,
+      "magic_resistance": 15,
+      "move_speed": 1100,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 25,
+      "magic_power": 5,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 12,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 26000,
+      "cooltime": 50,
+      "duration": 29,
+      "start_timing": 24,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "name": "magic_knight_skill",
+      "attack": 80,
+      "attack_ratio": 80,
+      "range": 113000,
+      "attack_range": 5000,
+      "applyed": 41,
+      "delayed": 42,
+      "cooltime": 300,
+      "duration": 29,
+      "start_timing": 22,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 10,
+      "attack_ratio": 20,
+      "pull_time": 10,
+      "pull_speed": 1600,
+      "range": 35000,
+      "attack_range": 70000,
+      "tick": 120,
+      "period": 40,
+      "cooltime": 500,
+      "duration": 34,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "ult": {
+      "tick": 300,
+      "range_increase": 20000,
+      "attack_speed_increase": 30,
+      "attack_speed_ap_ratio": 10,
+      "cooltime": 2400,
+      "duration": 13,
+      "start_timing": 12,
+      "cancelable": false
+    },
+    "category": "Melee",
+    "tags": [
+      "AD",
+      "AP",
+      "CC",
+      "Magic"
+    ]
+  },
+  "berserker": {
+    "stat": {
+      "attack": 120,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 25,
+      "magic_resistance": 15,
+      "move_speed": 1100,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 12,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 25000,
+      "cooltime": 50,
+      "duration": 24,
+      "start_timing": 12,
+      "cancelable": true
+    },
+    "skill": {
+      "buff_duration": 180,
+      "attack_speed": 50,
+      "vamp": 30,
+      "cooltime": 360,
+      "duration": 10,
+      "start_timing": 8,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 80,
+      "attack_ratio": 70,
+      "airborne_time": 30,
+      "offset": 20000,
+      "range": 30000,
+      "attack_range": 15000,
+      "cooltime": 420,
+      "duration": 18,
+      "start_timing": 15,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 100,
+      "attack_ratio": 60,
+      "speed": 4000,
+      "range": 60000,
+      "cooltime": 3600,
+      "duration": 5,
+      "start_timing": 4,
+      "cancelable": false
+    },
+    "ult_cooltime_reduction": 50,
+    "ult_max_cooltime_reduction": 3300,
+    "category": "Melee",
+    "tags": [
+      "AD"
+    ]
+  },
+  "executioner": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 1000,
+      "defence": 30,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 12,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 70,
+      "duration": 20,
+      "start_timing": 13,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 30,
+      "attack_ratio": 100,
+      "range": 100000,
+      "attack_range": 5000,
+      "speed": 3000,
+      "grab": 4000,
+      "cooltime": 300,
+      "duration": 48,
+      "start_timing": 15,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 50,
+      "attack_ratio": 80,
+      "range": 27000,
+      "bleed": 20,
+      "bleed_ratio": 3,
+      "tick": 120,
+      "bleed_tick": 10,
+      "damage_amplification": 10,
+      "cooltime": 360,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": false
+    },
+    "ult": {
+      "attack_ratio": 50,
+      "attack": 100,
+      "range": 130000,
+      "cooltime": 3600,
+      "unhealable_time": 240,
+      "duration": 38,
+      "start_timing": 15,
+      "cancelable": false
+    },
+    "category": "Melee",
+    "tags": [
+      "AD",
+      "CC"
+    ]
+  },
+  "lancer": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 1000,
+      "defence": 30,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 100,
+      "defence": 7,
+      "magic_resistance": 4,
+      "move_speed": 12,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 30000,
+      "cooltime": 60,
+      "duration": 20,
+      "start_timing": 13,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 120,
+      "attack_ratio": 90,
+      "range": 35000,
+      "cooltime": 240,
+      "duration": 30,
+      "knockback_speed": 1500,
+      "knockback_tick": 30,
+      "start_timing": 24,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 100,
+      "attack_ratio": 110,
+      "range": 50000,
+      "speed": 4000,
+      "cooltime": 300,
+      "duration": 33,
+      "start_timing": 12,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 150,
+      "attack_ratio": 100,
+      "range": 120000,
+      "attack_range": 30000,
+      "speed": 3200,
+      "airborne": 40,
+      "cooltime": 3000,
+      "duration": 20,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "category": "Melee",
+    "tags": [
+      "AD"
+    ]
+  },
+  "ogre": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 0,
+      "hp": 1100,
+      "defence": 40,
+      "magic_resistance": 30,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 0,
+      "hp": 120,
+      "defence": 10,
+      "magic_resistance": 5,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 28000,
+      "cooltime": 70,
+      "duration": 36,
+      "start_timing": 24,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "hit_hp": 6,
+    "skill2": {
+      "attack": 50,
+      "attack_ratio": 80,
+      "max_hp_ratio": 5,
+      "stun": 60,
+      "range": 30000,
+      "cooltime": 180,
+      "duration": 29,
+      "start_timing": 23,
+      "cancelable": false
+    },
+    "ult": {
+      "max_hp_ratio": 100,
+      "max_hp_hp_ratio": 1,
+      "size_ratio": 50,
+      "buff_duration": 360,
+      "cooltime": 3000,
+      "duration": 18,
+      "start_timing": 4,
+      "cancelable": false
+    },
+    "category": "Melee",
+    "tags": [
+      "AD",
+      "Tank",
+      "CC"
+    ]
+  },
+  "dual_blader": {
+    "stat": {
+      "attack": 120,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 25,
+      "magic_resistance": 15,
+      "move_speed": 1100,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 25,
+      "magic_power": 0,
+      "hp": 100,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 12,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 50,
+      "duration": 20,
+      "start_timing": 13,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 20,
+      "attack_ratio": 70,
+      "range": 80000,
+      "attack_range": 20000,
+      "projectile_speed": 2500,
+      "bind_duration": 60,
+      "cooltime": 300,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 40,
+      "attack_ratio": 100,
+      "range": 90000,
+      "speed": 4000,
+      "airborne": 60,
+      "cooltime": 240,
+      "duration": 4,
+      "start_timing": 3,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 30,
+      "attack_ratio": 30,
+      "range": 40000,
+      "interval": 3,
+      "hit_count": 6,
+      "cooltime": 3600,
+      "duration": 39,
+      "start_timing": 3,
+      "cancelable": false
+    },
+    "category": "Melee",
+    "tags": [
+      "AD",
+      "CC"
+    ]
+  },
+  "cavalry_knight": {
+    "stat": {
+      "attack": 90,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 25,
+      "magic_resistance": 15,
+      "move_speed": 1200,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 15,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 27000,
+      "cooltime": 50,
+      "bleed": 0,
+      "bleed_ratio": 5,
+      "tick": 60,
+      "bleed_tick": 30,
+      "duration": 19,
+      "start_timing": 13,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 30,
+      "attack_ratio": 120,
+      "move_speed_ratio": 50,
+      "range": 90000,
+      "attack_range": 15000,
+      "speed": 3000,
+      "bind": 60,
+      "bleed": 0,
+      "bleed_ratio": 5,
+      "tick": 180,
+      "bleed_tick": 30,
+      "cooltime": 360,
+      "duration": 13,
+      "start_timing": 7,
+      "cancelable": false
+    },
+    "skill2": {
+      "cooltime": 480,
+      "buff_duration": 240,
+      "move_speed": 20,
+      "duration": 13,
+      "start_timing": 11,
+      "cancelable": false
+    },
+    "ult": {
+      "cooltime": 3600,
+      "buff_duration": 240,
+      "move_speed": 50,
+      "duration": 20,
+      "start_timing": 17,
+      "cancelable": false,
+      "move_speed_attack_ratio": 10
+    },
+    "category": "Melee",
+    "tags": [
+      "AD",
+      "CC"
+    ]
+  },
+  "gunner": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 30,
+      "magic_resistance": 15,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "gunner_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 50000,
+      "speed": 6000,
+      "cooltime": 40,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": true,
+      "attack_type": "BaseAttack",
+      "slow_ratio": 20,
+      "slow_duration": 30
+    },
+    "skill2": {
+      "buff_duration": 180,
+      "attack_boost": 10,
+      "cooltime": 360,
+      "duration": 2,
+      "start_timing": 1,
+      "cancelable": false
+    },
+    "ult": {
+      "buff_duration": 600,
+      "sub_damage": 30,
+      "sub_damage_ratio": 30,
+      "sub_projectile_speed": 6000,
+      "attack_boost": 30,
+      "cooltime": 3600,
+      "duration": 2,
+      "start_timing": 1,
+      "cancelable": false
+    },
+    "move_speed_up": 1,
+    "move_speed_up_duration": 120,
+    "category": "Range",
+    "tags": [
+      "AD"
+    ]
+  },
+  "pole_warrior": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 1000,
+      "defence": 30,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 100,
+      "defence": 9,
+      "magic_resistance": 4,
+      "move_speed": 12,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 30000,
+      "cooltime": 50,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill1": {
+      "attack": 60,
+      "attack_ratio": 100,
+      "range": 45000,
+      "speed": 4000,
+      "cooltime": 180,
+      "duration": 32,
+      "start_timing": 4,
+      "attack_delay": 0,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 60,
+      "attack_ratio": 100,
+      "attack_range": 32000,
+      "move_distance": 60000,
+      "move_speed": 3000,
+      "block_target_tick": 30,
+      "cooltime": 360,
+      "duration": 48,
+      "start_timing": 12,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 100,
+      "attack_ratio": 100,
+      "speed": 3000,
+      "range": 120000,
+      "cooltime": 3000,
+      "airborne": 60,
+      "duration": 2,
+      "start_timing": 1,
+      "cancelable": false
+    },
+    "category": "Melee",
+    "tags": [
+      "AD",
+      "CC"
+    ]
+  },
+  "jiangshi": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 0,
+      "hp": 1100,
+      "defence": 40,
+      "magic_resistance": 30,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 0,
+      "hp": 120,
+      "defence": 10,
+      "magic_resistance": 5,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 70,
+      "duration": 24,
+      "start_timing": 16,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill1": {
+      "cooltime": 240,
+      "range": 65000,
+      "stat": {
+        "attack": 110,
+        "magic_power": 0,
+        "hp": 1000000,
+        "defence": 0,
+        "magic_resistance": 0,
+        "move_speed": 1600,
+        "hp_regen": 0,
+        "stack": 0,
+        "crit_chance": 0
+      },
+      "attack": {
+        "action_name": "attack",
+        "attack_ratio": 50,
+        "attack": 0,
+        "range": 18000,
+        "cooltime": 20,
+        "duration": 12,
+        "start_timing": 7,
+        "cancelable": false,
+        "attack_type": "BaseAttack"
+      },
+      "small_jiangshi_duration": 240,
+      "small_jiangshi_attack_count": 3,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "skill": {
+      "attack": 30,
+      "attack_ratio": 100,
+      "heal": 200,
+      "stun": 60,
+      "range": 28000,
+      "cooltime": 240,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "ult": {
+      "damage": 60,
+      "attack_ratio": 30,
+      "heal": 50,
+      "heal_ratio": 30,
+      "range": 48000,
+      "term": 30,
+      "buff_duration": 360,
+      "cooltime": 2400,
+      "duration": 2,
+      "start_timing": 1,
+      "cancelable": false
+    },
+    "category": "Melee",
+    "tags": [
+      "AD",
+      "CC",
+      "Tank"
+    ]
+  },
+  "gambler": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 15,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "gambler_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 70000,
+      "speed": 6000,
+      "cooltime": 60,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill1": {
+      "attack": 30,
+      "attack_ratio": 30,
+      "attack_ratio_decay": 50,
+      "attack_delay": 40,
+      "attack_interval": 20,
+      "range": 80000,
+      "attack_range": 10000,
+      "speed": 3000,
+      "cooltime": 240,
+      "duration": 18,
+      "start_timing": 12,
+      "y_offset": -20000,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 100,
+      "attack_ratio": 50,
+      "slow": 30,
+      "slow_duration": 60,
+      "range": 75000,
+      "attack_range": 35000,
+      "speed": 4000,
+      "cooltime": 300,
+      "duration": 18,
+      "start_timing": 14,
+      "y_offset": 0,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 50,
+      "attack_ratio": 60,
+      "charm_duration": 60,
+      "range": 100000,
+      "attack_range": 35000,
+      "speed": 2000,
+      "cooltime": 3600,
+      "duration": 28,
+      "start_timing": 20,
+      "cancelable": false
+    },
+    "category": "Range",
+    "tags": [
+      "AD"
+    ]
+  },
+  "hammerer": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 0,
+      "hp": 1100,
+      "defence": 40,
+      "magic_resistance": 30,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 0,
+      "hp": 120,
+      "defence": 10,
+      "magic_resistance": 5,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 70,
+      "duration": 32,
+      "start_timing": 24,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 50,
+      "attack_ratio": 100,
+      "airborne_time": 60,
+      "range": 30000,
+      "cooltime": 240,
+      "duration": 27,
+      "start_timing": 19,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 50,
+      "attack_ratio": 120,
+      "offset": 12000,
+      "attack_range": 60000,
+      "slow_speed": 50,
+      "slow_duration": 120,
+      "cooltime": 240,
+      "duration": 50,
+      "start_timing": 45,
+      "cancelable": false
+    },
+    "ult": {
+      "attack_ratio": 70,
+      "attack": 120,
+      "range": 80000,
+      "cooltime": 3000,
+      "push_distance": 100000,
+      "push_speed": 1500,
+      "airborne_time": 90,
+      "duration": 25,
+      "start_timing": 11,
+      "cancelable": false
+    },
+    "category": "Melee",
+    "tags": [
+      "AD",
+      "Tank",
+      "CC"
+    ]
+  },
+  "demon": {
+    "stat": {
+      "attack": 120,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 25,
+      "magic_resistance": 15,
+      "move_speed": 1100,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 30,
+      "magic_power": 0,
+      "hp": 80,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 14,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 23000,
+      "cooltime": 50,
+      "duration": 24,
+      "start_timing": 20,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 50,
+      "attack_ratio": 70,
+      "range": 65000,
+      "effect_delay": 20,
+      "attack_range": 18000,
+      "cooltime": 240,
+      "duration": 18,
+      "start_timing": 14,
+      "cancelable": false
+    },
+    "skill2": {
+      "buff_duration": 240,
+      "attack": 50,
+      "defence": 50,
+      "move_speed": 10,
+      "attack_speed": 50,
+      "cooltime": 600,
+      "duration": 20,
+      "start_timing": 15,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 60,
+      "magic_ratio": 100,
+      "range": 48000,
+      "cooltime": 2400,
+      "fear_tick": 60,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": false
+    },
+    "category": "Assassin",
+    "tags": [
+      "AD",
+      "CC"
+    ]
+  },
+  "vampire": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 10,
+      "hp": 1000,
+      "defence": 30,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 5,
+      "hp": 100,
+      "defence": 9,
+      "magic_resistance": 4,
+      "move_speed": 12,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 70,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "ap_ratio": 100,
+      "attack": 50,
+      "range": 40000,
+      "cooltime": 120,
+      "heal": 60,
+      "heal_per_stack": 3,
+      "duration": 26,
+      "start_timing": 22,
+      "cancelable": false
+    },
+    "skill2": {
+      "ap_ratio": 100,
+      "attack": 50,
+      "range": 40000,
+      "cooltime": 240,
+      "hp_ratio": 4,
+      "damage_per_stack": 3,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 200,
+      "ap_ratio": 80,
+      "heal": 300,
+      "heal_ratio": 80,
+      "range": 120000,
+      "attack_range": 70000,
+      "speed": 3000,
+      "cooltime": 2400,
+      "duration": 24,
+      "start_timing": 22,
+      "cancelable": false
+    },
+    "category": "Magician",
+    "tags": [
+      "AP",
+      "Heal",
+      "Magic"
+    ]
+  },
+  "spirit_caller": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 30,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 15,
+      "hp": 100,
+      "defence": 7,
+      "magic_resistance": 4,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attaca": {
+      "name": "spirit_caller_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 6000,
+      "cooltime": 90,
+      "duration": 20,
+      "start_timing": 18,
+      "cancelable": false,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "category": "Util",
+    "skill": {
+      "range": 75000,
+      "cooltime": 240,
+      "heal": 20,
+      "heal_ratio": 5,
+      "dot_tick": 120,
+      "dot_period": 30,
+      "speed_up": 15,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "skill2": {
+      "range": 75000,
+      "cooltime": 240,
+      "buff_duration": 180,
+      "defense_down": 30,
+      "magic_def_down": 30,
+      "speed_down": 30,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false,
+      "defense_down_ap_ratio": 10,
+      "magic_def_down_ap_ratio": 10
+    },
+    "ult": {
+      "ult_range": 30000,
+      "shield_amount": 100,
+      "shield_ap_ratio": 30,
+      "shield_duration": 120,
+      "attack_speed_boost": 30,
+      "buff_duration": 120,
+      "damage": 100,
+      "damage_ap_ratio": 30,
+      "stun_duration": 45,
+      "cooltime": 3600,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "tags": [
+      "AP",
+      "Heal",
+      "Magic"
+    ]
+  },
+  "boomerang_hunter": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 15,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "boomerang_hunter_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 6000,
+      "cooltime": 60,
+      "duration": 26,
+      "start_timing": 20,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 30,
+      "attack_ratio": 10,
+      "dot_duration": 120,
+      "attack_period": 20,
+      "dot_range": 16000,
+      "dot_damage": 0,
+      "dot_attack_ratio": 5,
+      "range": 80000,
+      "attack_range": 18000,
+      "speed": 4000,
+      "cooltime": 360,
+      "duration": 26,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 20,
+      "attack_ratio": 60,
+      "range": 100000,
+      "attack_range": 14000,
+      "speed": 3000,
+      "cooltime": 480,
+      "duration": 25,
+      "start_timing": 20,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 30,
+      "attack_ratio": 80,
+      "damage_increase_per_bounce": 5,
+      "max_bounce": 7,
+      "bounce_range": 150000,
+      "range": 60000,
+      "attack_range": 14000,
+      "speed": 5000,
+      "cooltime": 3000,
+      "duration": 28,
+      "start_timing": 20,
+      "cancelable": false
+    },
+    "category": "Range",
+    "tags": [
+      "AD"
+    ]
+  },
+  "inquisitor": {
+    "stat": {
+      "attack": 120,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 25,
+      "magic_resistance": 15,
+      "move_speed": 1100,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 30,
+      "magic_power": 0,
+      "hp": 80,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 14,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 50,
+      "duration": 20,
+      "start_timing": 13,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 50,
+      "attack_ratio": 70,
+      "range": 50000,
+      "attack_range": 15000,
+      "speed": 4000,
+      "stun": 0,
+      "cooltime": 480,
+      "bleed": 0,
+      "bleed_ratio": 5,
+      "bleed_duration": 90,
+      "bleed_tick": 15,
+      "duration": 18,
+      "start_timing": 12,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 50,
+      "attack_ratio": 100,
+      "range": 30000,
+      "cooltime": 300,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 150,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 5000,
+      "area_range": 25000,
+      "execute_threshold": 15,
+      "fear_duration": 60,
+      "fear_range": 30000,
+      "cooltime": 2400,
+      "duration": 18,
+      "start_timing": 12,
+      "cancelable": false
+    },
+    "category": "Assassin",
+    "tags": [
+      "AD"
+    ]
+  },
+  "shield_bearer": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 0,
+      "hp": 1100,
+      "defence": 40,
+      "magic_resistance": 30,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 0,
+      "hp": 120,
+      "defence": 10,
+      "magic_resistance": 5,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 70,
+      "duration": 20,
+      "start_timing": 13,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "range": 50000,
+      "cooltime": 480,
+      "tick": 240,
+      "shield": 300,
+      "shield_ratio": 10,
+      "duration": 29,
+      "start_timing": 22,
+      "cancelable": false
+    },
+    "skill2": {
+      "cooltime": 360,
+      "tick": 240,
+      "damage_share_ratio": 60,
+      "range": 64000,
+      "slow_ratio": 30,
+      "slow_duration": 60,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false,
+      "slow_defence_ratio": 5
+    },
+    "ult": {
+      "cooltime": 3000,
+      "tick": 120,
+      "range": 60000,
+      "defence": 0,
+      "taunt_duration": 120,
+      "duration": 30,
+      "start_timing": 20,
+      "cancelable": false,
+      "damage_reduce": 40,
+      "damage_reduce_magic_resistance_ratio": 10
+    },
+    "category": "Melee",
+    "tags": [
+      "AD",
+      "Tank",
+      "Shield",
+      "CC"
+    ]
+  },
+  "whip_master": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 15,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 40000,
+      "cooltime": 60,
+      "duration": 18,
+      "start_timing": 16,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack_ratio": 100,
+      "target_hp_ratio": 5,
+      "attack": 60,
+      "range": 40000,
+      "cooltime": 240,
+      "duration": 18,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 80,
+      "attack_ratio": 80,
+      "range": 40000,
+      "cooltime": 360,
+      "duration": 18,
+      "knockback_speed": 2000,
+      "knockback_tick": 10,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 50,
+      "attack_ratio": 50,
+      "range": 130000,
+      "projectile_range": 130000,
+      "projectile_width": 3000,
+      "channel_duration": 60,
+      "period": 18,
+      "cooltime": 3000,
+      "duration": 18,
+      "start_timing": 16,
+      "cancelable": false,
+      "bleed": 20,
+      "bleed_ratio": 20,
+      "bleed_duration": 120,
+      "bleed_tick": 30
+    },
+    "category": "Range",
+    "tags": [
+      "AD"
+    ]
+  },
+  "werewolf": {
+    "stat": {
+      "attack": 120,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 25,
+      "magic_resistance": 15,
+      "move_speed": 1100,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 22,
+      "magic_power": 0,
+      "hp": 80,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 12,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 50,
+      "duration": 20,
+      "start_timing": 13,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 50,
+      "attack_ratio": 60,
+      "range": 35000,
+      "offset": 30000,
+      "attack_range": 30000,
+      "heal_ratio": 10,
+      "cooltime": 480,
+      "duration": 25,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 50,
+      "attack_ratio": 60,
+      "range": 50000,
+      "attack_range": 15000,
+      "speed": 4200,
+      "pull_speed": 3000,
+      "pull_time": 15,
+      "slow_speed": 20,
+      "slow_duration": 60,
+      "cooltime": 600,
+      "duration": 28,
+      "start_timing": 4,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 20,
+      "attack_ratio": 25,
+      "range": 70000,
+      "half_angle_deg": 60,
+      "channel_duration": 90,
+      "period": 15,
+      "cooltime": 3000,
+      "duration": 100,
+      "start_timing": 10,
+      "cancelable": false,
+      "bleed": 15,
+      "bleed_ratio": 5,
+      "bleed_duration": 120,
+      "bleed_tick": 30
+    },
+    "category": "Assassin",
+    "tags": [
+      "AD",
+      "Heal",
+      "CC"
+    ]
+  },
+  "dokkaebi": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 0,
+      "hp": 1100,
+      "defence": 40,
+      "magic_resistance": 30,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 0,
+      "hp": 100,
+      "defence": 10,
+      "magic_resistance": 10,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 60,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill1": {
+      "buff_duration": 180,
+      "shockwave_range": 16000,
+      "shockwave_damage": 200,
+      "shockwave_damage_ratio": 80,
+      "cooltime": 300,
+      "duration": 12,
+      "start_timing": 8,
+      "cancelable": false
+    },
+    "skill2": {
+      "buff_duration": 180,
+      "shield_amount": 200,
+      "damage_reduction": 40,
+      "cooltime": 300,
+      "duration": 12,
+      "start_timing": 8,
+      "cancelable": false,
+      "shield_attack_ratio": 50
+    },
+    "ult": {
+      "attack": 150,
+      "attack_ratio": 100,
+      "range": 80000,
+      "speed": 4000,
+      "projectile_radius": 6000,
+      "seal_duration": 90,
+      "bind_duration": 60,
+      "spread_range": 35000,
+      "cooltime": 1800,
+      "duration": 28,
+      "start_timing": 24,
+      "cancelable": false
+    },
+    "category": "Melee",
+    "tags": [
+      "AD",
+      "Tank",
+      "Shield"
+    ]
+  },
+  "necromancer": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 40,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 20,
+      "hp": 100,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "necromancer_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 5000,
+      "cooltime": 90,
+      "duration": 34,
+      "start_timing": 28,
+      "cancelable": true,
+      "y_offset": -20000,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "cooltime": 300,
+      "stat": {
+        "attack": 60,
+        "magic_power": 0,
+        "hp": 400,
+        "defence": 0,
+        "magic_resistance": 0,
+        "move_speed": 1600,
+        "hp_regen": 0,
+        "stack": 0,
+        "crit_chance": 0
+      },
+      "stat_by_spell_power": {
+        "attack": 10,
+        "magic_power": 0,
+        "hp": 20,
+        "defence": 0,
+        "magic_resistance": 0,
+        "move_speed": 0,
+        "hp_regen": 0,
+        "stack": 0,
+        "crit_chance": 0
+      },
+      "attack": {
+        "action_name": "attack",
+        "attack_ratio": 100,
+        "attack": 0,
+        "range": 12000,
+        "cooltime": 32,
+        "duration": 24,
+        "start_timing": 18,
+        "cancelable": false,
+        "attack_type": "BaseAttack"
+      },
+      "ghoul_duration": 180,
+      "ghoul_duration_per_level": 10,
+      "cooltime_reduction_per_level": 20,
+      "duration": 34,
+      "start_timing": 28,
+      "cancelable": false,
+      "ghoul_duration_by_spell_power": 50
+    },
+    "skill2": {
+      "cooltime": 300,
+      "range": 75000,
+      "attack_speed": 50,
+      "attack_speed_by_spell_power": 5,
+      "move_speed": 30,
+      "move_speed_by_spell_power": 5,
+      "buff_duration": 180,
+      "duration": 34,
+      "start_timing": 28,
+      "cancelable": false
+    },
+    "ult": {
+      "cooltime": 3600,
+      "hp_drain_per_tick": 2,
+      "duration": 34,
+      "start_timing": 28,
+      "cancelable": false
+    },
+    "category": "Magician",
+    "tags": [
+      "AP"
+    ]
+  },
+  "bard": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 30,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 15,
+      "hp": 100,
+      "defence": 8,
+      "magic_resistance": 4,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "bard_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 80000,
+      "speed": 5000,
+      "cooltime": 90,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack_speed": 200,
+      "magic_ratio": 20,
+      "range": 100000,
+      "speed": 8000,
+      "cooltime": 360,
+      "buff_duration": 180,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": false,
+      "y_offset": 0,
+      "can_use_with_move": false
+    },
+    "skill2": {
+      "cooltime_reduce": 70,
+      "range": 100000,
+      "buff_range": 64000,
+      "speed": 6000,
+      "effect_duration": 180,
+      "cooltime": 360,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": false,
+      "magic_ratio": 2
+    },
+    "ult": {
+      "range": 100000,
+      "attack_boost": 100,
+      "attack_speed_boost": 100,
+      "magic_ratio": 50,
+      "channel_duration": 240,
+      "period": 3,
+      "cooltime": 2400,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": false,
+      "magic_power_boost": 150,
+      "skill_cooldown_reduce": 50,
+      "defence_reduce": 30,
+      "magic_resistance_reduce": 30
+    },
+    "category": "Util",
+    "tags": [
+      "AP"
+    ]
+  },
+  "barrier_magician": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 30,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 15,
+      "hp": 80,
+      "defence": 8,
+      "magic_resistance": 4,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "barrier_magician_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 4000,
+      "cooltime": 90,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "cooltime": 360,
+      "tick": 120,
+      "range": 65000,
+      "barrier_range": 40000,
+      "shield": 100,
+      "shield_ratio": 60,
+      "effect_duration": 180,
+      "attack_speed_reduce": 50,
+      "attack_speed_increase": 100,
+      "slow_ratio": 30,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": false
+    },
+    "skill2": {
+      "cooltime": 480,
+      "tick": 120,
+      "range": 65000,
+      "barrier_range": 48000,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": false
+    },
+    "ult": {
+      "cooltime": 3000,
+      "range": 60000,
+      "start_radius": 50000,
+      "end_radius": 15000,
+      "shrink_per_tick": 200,
+      "barrier_tick": 180,
+      "edge_thickness": 5000,
+      "damage": 100,
+      "ap_ratio": 60,
+      "stun_duration": 60,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": false
+    },
+    "category": "Util",
+    "tags": [
+      "AP",
+      "Shield",
+      "Magic"
+    ]
+  },
+  "chef": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 10,
+      "hp": 1000,
+      "defence": 30,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 15,
+      "hp": 100,
+      "defence": 8,
+      "magic_resistance": 4,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 70,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 100,
+      "attack_ratio": 60,
+      "slow_speed": 50,
+      "slow_duration": 120,
+      "range": 80000,
+      "attack_range": 15000,
+      "speed": 6000,
+      "cooltime": 240,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "skill2": {
+      "range": 40000,
+      "cooltime": 480,
+      "heal": 50,
+      "heal_ratio": 5,
+      "heal_self": 80,
+      "heal_self_ratio": 10,
+      "dot_tick": 120,
+      "dot_period": 30,
+      "speed": 4000,
+      "duration": 20,
+      "start_timing": 17,
+      "cancelable": false
+    },
+    "ult": {
+      "max_hp_ratio": 50,
+      "size_ratio": 25,
+      "buff_duration": 360,
+      "damage_spread_ratio": 30,
+      "damage_spread_duration": 180,
+      "damage_spread_period": 30,
+      "speed": 5000,
+      "range": 80000,
+      "cooltime": 2400,
+      "duration": 20,
+      "start_timing": 14,
+      "cancelable": false
+    },
+    "category": "Util",
+    "tags": [
+      "AP",
+      "Heal",
+      "Tank",
+      "Magic"
+    ]
+  },
+  "clown": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 15,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 40000,
+      "speed": 5000,
+      "cooltime": 60,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": true,
+      "ult_splash_range": 80000
+    },
+    "skill": {
+      "attack": 60,
+      "attack_ratio": 100,
+      "range": 80000,
+      "cooltime": 600,
+      "move_speed": 30,
+      "buff_duration": 180,
+      "duration": 18,
+      "hit_duration": 14,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 20,
+      "attack_ratio": 10,
+      "range": 80000,
+      "projectile_interval": 6,
+      "projectile_speed": 4000,
+      "cooltime": 480,
+      "duration": 100,
+      "start_timing": 2,
+      "cancelable": false,
+      "ult_splash_range": 80000
+    },
+    "ult": {
+      "buff_duration": 300,
+      "cooltime": 2400,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "category": "Assassin",
+    "tags": [
+      "AD"
+    ]
+  },
+  "dancer": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 15,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "attack": 0,
+      "attack_ratio": 100,
+      "damage_reduce_ratio": 15,
+      "damage_min_ratio": 5,
+      "max_count": 10,
+      "projectile_delay": 3,
+      "range": 60000,
+      "speed": 5000,
+      "cooltime": 60,
+      "duration": 20,
+      "start_timing": 12,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill1": {
+      "attack": 60,
+      "attack_ratio": 100,
+      "range": 100000,
+      "attack_range": 10000,
+      "speed": 5000,
+      "cooltime": 240,
+      "duration": 36,
+      "start_timing": 24,
+      "cancelable": false,
+      "stack_damage_ratio": 10
+    },
+    "vamp": 10,
+    "category": "Range",
+    "ult": {
+      "attack": 20,
+      "attack_ratio": 30,
+      "return_attack": 40,
+      "return_attack_ratio": 50,
+      "range": 130000,
+      "attack_range": 10000,
+      "speed": 3500,
+      "base_count": 4,
+      "max_count": 10,
+      "cooltime": 3600,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": false
+    },
+    "tags": [
+      "AD"
+    ]
+  },
+  "dark_mage": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 40,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 20,
+      "hp": 100,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "dark_mage_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 5000,
+      "cooltime": 90,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 60,
+      "attack_ratio": 100,
+      "bind_duration": 60,
+      "range": 100000,
+      "attack_range": 12000,
+      "speed": 3000,
+      "cooltime": 280,
+      "duration": 42,
+      "start_timing": 34,
+      "cancelable": false
+    },
+    "skill2": {
+      "name": "dark_mage_skill2",
+      "attack": 80,
+      "attack_ratio": 100,
+      "range": 80000,
+      "attack_range": 20000,
+      "applyed": 28,
+      "delayed": 49,
+      "cooltime": 360,
+      "duration": 24,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "ult": {
+      "range": 80000,
+      "link_range": 200000,
+      "debuff_duration": 300,
+      "damage_share_ratio": 40,
+      "cooltime": 3000,
+      "duration": 36,
+      "start_timing": 28,
+      "cancelable": false
+    },
+    "category": "Magician",
+    "tags": [
+      "AP",
+      "CC",
+      "Magic"
+    ]
+  },
+  "exorcist": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 1400,
+      "defence": 30,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 100,
+      "defence": 8,
+      "magic_resistance": 4,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 70,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "range": 100000,
+      "cooltime": 120,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false,
+      "heal": 200,
+      "heal_attack_ratio": 100
+    },
+    "skill2": {
+      "buff_duration": 300,
+      "attack_speed": 100,
+      "attack": 100,
+      "cooltime": 300,
+      "duration": 22,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 150,
+      "attack_ratio": 80,
+      "damage_per_buff": 100,
+      "damage_per_buff_ratio": 10,
+      "range": 60000,
+      "delay": 60,
+      "cooltime": 1800,
+      "duration": 36,
+      "start_timing": 28,
+      "cancelable": false,
+      "cast_range": 100000
+    },
+    "category": "Util",
+    "tags": [
+      "AD",
+      "Tank"
+    ]
+  },
+  "ghost": {
+    "stat": {
+      "attack": 120,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 25,
+      "magic_resistance": 15,
+      "move_speed": 1100,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 30,
+      "magic_power": 0,
+      "hp": 80,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 14,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 23000,
+      "cooltime": 50,
+      "duration": 24,
+      "start_timing": 20,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill1": {
+      "range": 80000,
+      "speed": 4500,
+      "block_target_tick": 40,
+      "cooltime": 240,
+      "duration": 19,
+      "start_timing": 17,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 60,
+      "attack_ratio": 80,
+      "range": 45000,
+      "attack_range": 12000,
+      "speed": 5000,
+      "charge_count": 3,
+      "cooltime": 900,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "ult": {
+      "buff_duration": 300,
+      "cooltime": 3000,
+      "duration": 2,
+      "start_timing": 1,
+      "cancelable": false
+    },
+    "heal": 200,
+    "add_attack": 5,
+    "add_attack_speed": 1,
+    "category": "Assassin",
+    "tags": [
+      "AD"
+    ]
+  },
+  "illusionist": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 40,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 20,
+      "hp": 100,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "illusionist_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 5000,
+      "cooltime": 90,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 60,
+      "attack_ratio": 100,
+      "taunt_duration": 60,
+      "range": 95000,
+      "attack_range": 20000,
+      "speed": 5000,
+      "cooltime": 300,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 120,
+      "magic_ratio": 100,
+      "range": 60000,
+      "cooltime": 300,
+      "fear_tick": 60,
+      "duration": 30,
+      "start_timing": 28,
+      "cancelable": false
+    },
+    "ult": {
+      "cooltime": 3000,
+      "illusion_duration": 600,
+      "range": 80000,
+      "duration": 34,
+      "start_timing": 28,
+      "cancelable": false
+    },
+    "category": "Magician",
+    "tags": [
+      "AP",
+      "CC",
+      "Magic"
+    ]
+  },
+  "lightning_mage": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 40,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 20,
+      "hp": 100,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "lightning_mage_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 5000,
+      "cooltime": 90,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill1": {
+      "action_name": "skill1",
+      "attack": 20,
+      "attack_ratio": 40,
+      "range": 80000,
+      "speed": 4000,
+      "cooltime": 300,
+      "splash_range": 50000,
+      "duration": 22,
+      "start_timing": 18,
+      "cancelable": false,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "Skill"
+    },
+    "skill2": {
+      "attack": 60,
+      "attack_ratio": 80,
+      "range": 80000,
+      "attack_range": 15000,
+      "applyed": 6,
+      "delayed": 36,
+      "cooltime": 360,
+      "duration": 25,
+      "stun_duration": 30,
+      "start_timing": 17,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 15,
+      "attack_ratio": 20,
+      "range": 80000,
+      "splash_range": 60000,
+      "channel_duration": 150,
+      "period": 24,
+      "cooltime": 3000,
+      "duration": 28,
+      "start_timing": 20,
+      "cancelable": false
+    },
+    "category": "Magician",
+    "tags": [
+      "AP",
+      "CC",
+      "Magic"
+    ]
+  },
+  "plague_doctor": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 0,
+      "hp": 1000,
+      "defence": 30,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 100,
+      "defence": 7,
+      "magic_resistance": 4,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 50,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill1": {
+      "buff_duration": 180,
+      "attack_speed": 100,
+      "move_speed": 50,
+      "range": 80000,
+      "cooltime": 300,
+      "duration": 15,
+      "start_timing": 9,
+      "cancelable": false,
+      "attack_speed_ap_ratio": 20
+    },
+    "skill2": {
+      "buff_duration": 180,
+      "range": 80000,
+      "cooltime": 300,
+      "range_increase": 20000,
+      "move_tick": 3,
+      "duration": 18,
+      "start_timing": 15,
+      "cancelable": false,
+      "range_increase_ap_ratio": 10
+    },
+    "category": "Util",
+    "ult": {
+      "range": 80000,
+      "attack_increase": 50,
+      "attack_speed_increase": 100,
+      "move_speed_increase": 50,
+      "buff_duration": 300,
+      "cooltime": 2400,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false,
+      "attack_speed_ap_ratio": 20
+    },
+    "tags": [
+      "AD",
+      "Tank"
+    ]
+  },
+  "poison_dart_hunter": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 15,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 15,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "poison_dart_hunter_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "poison_range": 30000,
+      "range": 50000,
+      "speed": 6000,
+      "cooltime": 60,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill1": {
+      "damage": 2,
+      "attack_ratio": 7,
+      "poison_duration": 180,
+      "poison_tick": 30,
+      "slow_ratio": 10,
+      "range": 50000,
+      "attack_range": 48000,
+      "attack_period": 30,
+      "attack_tick": 240,
+      "cooltime": 480,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false,
+      "speed": 8000
+    },
+    "add_move_speed": 200,
+    "skill2_range": 60000,
+    "category": "Range",
+    "ult": {
+      "damage": 8,
+      "attack_ratio": 10,
+      "poison_duration": 180,
+      "poison_tick": 30,
+      "range": 60000,
+      "buff_duration": 360,
+      "cooltime": 1800,
+      "duration": 30,
+      "start_timing": 10,
+      "cancelable": false
+    },
+    "tags": [
+      "AD",
+      "Dot"
+    ]
+  },
+  "shadowmancer": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 40,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 20,
+      "hp": 100,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "shadowmancer_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 6000,
+      "cooltime": 90,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 80,
+      "attack_ratio": 80,
+      "range": 80000,
+      "attack_range": 30000,
+      "applyed": 30,
+      "delayed": 40,
+      "bind_tick": 42,
+      "cooltime": 360,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 100,
+      "magic_ratio": 60,
+      "range": 150000,
+      "cooltime": 240,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 150,
+      "attack_ratio": 100,
+      "range": 80000,
+      "projectile_range": 120000,
+      "speed": 8000,
+      "width": 8000,
+      "banish_duration": 180,
+      "cooltime": 3000,
+      "duration": 30,
+      "start_timing": 20,
+      "cancelable": false
+    },
+    "category": "Magician",
+    "tags": [
+      "AP",
+      "CC",
+      "Magic"
+    ]
+  },
+  "taoist": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 30,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 15,
+      "hp": 100,
+      "defence": 8,
+      "magic_resistance": 4,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "taoist_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 5000,
+      "cooltime": 90,
+      "duration": 30,
+      "start_timing": 24,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "range": 75000,
+      "cooltime": 300,
+      "attack": 20,
+      "attack_ratio": 90,
+      "block_duration": 180,
+      "duration": 28,
+      "start_timing": 24,
+      "cancelable": false,
+      "block_duration_ap_ratio": 6
+    },
+    "skill2": {
+      "range": 75000,
+      "cooltime": 300,
+      "attack": 30,
+      "attack_ratio": 80,
+      "block_duration": 180,
+      "duration": 24,
+      "start_timing": 20,
+      "cancelable": false,
+      "block_duration_ap_ratio": 6
+    },
+    "ult": {
+      "attack": 100,
+      "attack_ratio": 100,
+      "range": 80000,
+      "speed": 5000,
+      "projectile_radius": 8000,
+      "seal_duration": 120,
+      "spread_range": 40000,
+      "cooltime": 1800,
+      "duration": 28,
+      "start_timing": 24,
+      "cancelable": false
+    },
+    "category": "Util",
+    "tags": [
+      "AP",
+      "CC",
+      "Magic"
+    ]
+  },
+  "siege_breaker": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 1000,
+      "defence": 30,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 100,
+      "defence": 9,
+      "magic_resistance": 4,
+      "move_speed": 12,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 50,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 30,
+      "attack_ratio": 120,
+      "structure_damage": 60,
+      "structure_damage_ratio": 160,
+      "range": 32000,
+      "cooltime": 180,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 60,
+      "attack_ratio": 120,
+      "offset": 15000,
+      "attack_range": 40000,
+      "cooltime": 300,
+      "duration": 21,
+      "start_timing": 19,
+      "cancelable": false
+    },
+    "ult": {
+      "cooltime": 2400,
+      "buff_duration": 480,
+      "attack_mult": 30,
+      "attack_speed_mult": 50,
+      "move_speed_mult": 30,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "category": "Melee",
+    "tags": [
+      "AD",
+      "Tank"
+    ]
+  },
+  "android": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 0,
+      "hp": 1100,
+      "defence": 40,
+      "magic_resistance": 30,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 0,
+      "hp": 120,
+      "defence": 10,
+      "magic_resistance": 5,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 25000,
+      "cooltime": 70,
+      "duration": 20,
+      "start_timing": 17,
+      "cancelable": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 100,
+      "attack_ratio": 100,
+      "range": 75000,
+      "attack_range": 10000,
+      "speed": 4000,
+      "explosion_range": 16000,
+      "slow_ratio": 30,
+      "slow_duration": 60,
+      "cooltime": 240,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "skill2": {
+      "buff_duration": 120,
+      "cooltime": 240,
+      "duration": 13,
+      "start_timing": 7,
+      "shield_amount": 300,
+      "shield_duration": 180,
+      "stun_duration": 60,
+      "stun_range": 35000,
+      "shield_hp_ratio": 10,
+      "cancelable": false
+    },
+    "ult": {
+      "range": 960000,
+      "cooltime": 3000,
+      "shield": 500,
+      "shield_duration": 180,
+      "duration": 14,
+      "charge_time": 48,
+      "start_timing": 13,
+      "cancelable": false,
+      "shield_hp_ratio": 20
+    },
+    "category": "Melee",
+    "tags": [
+      "AD",
+      "Tank",
+      "CC"
+    ]
+  },
+  "druid": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 10,
+      "hp": 1100,
+      "defence": 40,
+      "magic_resistance": 30,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 0,
+      "hp": 120,
+      "defence": 10,
+      "magic_resistance": 5,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "druid_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 4000,
+      "cooltime": 90,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "cooltime": 600,
+      "stat": {
+        "attack": 60,
+        "magic_power": 0,
+        "hp": 800,
+        "defence": 30,
+        "magic_resistance": 25,
+        "move_speed": 800,
+        "hp_regen": 0,
+        "stack": 0,
+        "crit_chance": 0
+      },
+      "stat_by_spell_power": {
+        "attack": 50,
+        "magic_power": 0,
+        "hp": 40,
+        "defence": 0,
+        "magic_resistance": 0,
+        "move_speed": 0,
+        "hp_regen": 0,
+        "stack": 0,
+        "crit_chance": 0
+      },
+      "attack": {
+        "action_name": "attack",
+        "attack_ratio": 100,
+        "attack": 0,
+        "range": 20000,
+        "cooltime": 60,
+        "duration": 20,
+        "start_timing": 12,
+        "cancelable": false,
+        "attack_type": "BaseAttack"
+      },
+      "heal_amount": 100,
+      "heal_ratio": 30,
+      "death_damage": 150,
+      "death_damage_ratio": 20,
+      "cooltime_reduction_per_level": 10,
+      "duration": 20,
+      "start_timing": 12,
+      "cancelable": false
+    },
+    "skill2": {
+      "cooltime": 500,
+      "stat": {
+        "attack": 40,
+        "magic_power": 0,
+        "hp": 600,
+        "defence": 20,
+        "magic_resistance": 20,
+        "move_speed": 1200,
+        "hp_regen": 0,
+        "stack": 0,
+        "crit_chance": 0
+      },
+      "stat_by_spell_power": {
+        "attack": 40,
+        "magic_power": 0,
+        "hp": 30,
+        "defence": 0,
+        "magic_resistance": 0,
+        "move_speed": 0,
+        "hp_regen": 0,
+        "stack": 0,
+        "crit_chance": 0
+      },
+      "attack": {
+        "action_name": "attack",
+        "attack_ratio": 100,
+        "attack": 0,
+        "range": 50000,
+        "cooltime": 50,
+        "duration": 18,
+        "start_timing": 10,
+        "cancelable": false,
+        "attack_type": "BaseAttack"
+      },
+      "death_damage": 120,
+      "death_damage_ratio": 15,
+      "skill_damage": 80,
+      "skill_damage_ratio": 60,
+      "skill_range": 35000,
+      "skill_lifesteal_ratio": 30,
+      "skill_pre_duration": 10,
+      "skill_dash_speed": 3000,
+      "skill_end_duration": 20,
+      "skill_effect_timing": 3,
+      "cooltime_reduction_per_level": 8,
+      "duration": 20,
+      "start_timing": 12,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 60,
+      "attack_ratio": 80,
+      "range": 80000,
+      "projectile_radius": 6000,
+      "lateral_spread": 15000,
+      "speed": 3500,
+      "projectile_count": 7,
+      "delay_per_projectile": 5,
+      "knockback_speed": 1500,
+      "knockback_tick": 8,
+      "cooltime": 1800,
+      "duration": 50,
+      "start_timing": 15,
+      "cancelable": false
+    },
+    "category": "Magician",
+    "tags": [
+      "AP",
+      "Magic"
+    ]
+  },
+  "prisoner": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 0,
+      "hp": 1100,
+      "defence": 40,
+      "magic_resistance": 30,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 0,
+      "hp": 120,
+      "defence": 10,
+      "magic_resistance": 5,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 28000,
+      "cooltime": 70,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 80,
+      "attack_ratio": 100,
+      "range": 70000,
+      "attack_range": 15000,
+      "speed": 4000,
+      "cooltime": 240,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack_range": 45000,
+      "shield_amount": 200,
+      "taunt_duration": 30,
+      "cooltime": 300,
+      "duration": 32,
+      "start_timing": 1,
+      "cancelable": false,
+      "shield_hp_ratio": 10
+    },
+    "ult": {
+      "attack": 100,
+      "attack_ratio": 100,
+      "attack_range": 40000,
+      "speed": 4000,
+      "range": 60000,
+      "stun_duration": 60,
+      "cooltime": 1800,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "category": "Melee",
+    "tags": [
+      "AD",
+      "Tank",
+      "CC"
+    ]
+  },
+  "bomber": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 15,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "bomber_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 6000,
+      "cooltime": 90,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 100,
+      "attack_ratio": 100,
+      "range": 75000,
+      "attack_range": 0,
+      "speed": 4000,
+      "explosion_range": 20000,
+      "cooltime": 160,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 80,
+      "attack_ratio": 100,
+      "bind_duration": 90,
+      "range": 70000,
+      "attack_range": 40000,
+      "speed": 4000,
+      "activation_delay": 60,
+      "cooltime": 480,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 150,
+      "attack_ratio": 100,
+      "range": 150000,
+      "explosion_range": 25000,
+      "travel_time": 60,
+      "slow": 30,
+      "slow_duration": 120,
+      "cooltime": 3600,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "category": "Range",
+    "tags": [
+      "AD"
+    ]
+  },
+  "voodoo_shaman": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 30,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 15,
+      "hp": 100,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "voodoo_shaman_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 6000,
+      "cooltime": 90,
+      "duration": 22,
+      "start_timing": 18,
+      "cancelable": false,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 30,
+      "attack_ratio": 80,
+      "range": 70000,
+      "attack_range": 5000,
+      "speed": 6000,
+      "slow_ratio": 60,
+      "slow_duration": 120,
+      "attack_speed_reduce": 40,
+      "attack_speed_reduce_duration": 120,
+      "cooltime": 360,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "skill2": {
+      "base_damage": 40,
+      "damage_ratio": 60,
+      "per_hit_damage": 10,
+      "per_hit_ratio": 5,
+      "max_hits": 20,
+      "curse_duration": 300,
+      "range": 60000,
+      "cooltime": 600,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "ult": {
+      "max_hp_damage_ratio": 4,
+      "magic_ratio": 30,
+      "range": 50000,
+      "cast_range": 70000,
+      "ult_duration": 300,
+      "period": 60,
+      "block_skill_tick": 120,
+      "cooltime": 3000,
+      "duration": 30,
+      "start_timing": 20,
+      "cancelable": false
+    },
+    "category": "Magician",
+    "tags": [
+      "AP",
+      "CC",
+      "Magic"
+    ]
+  },
+  "white_mage": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 40,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 20,
+      "hp": 100,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "white_mage_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 6000,
+      "cooltime": 90,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 130,
+      "attack_ratio": 50,
+      "range": 80000,
+      "attack_range": 16000,
+      "applyed": 22,
+      "delayed": 38,
+      "cooltime": 300,
+      "duration": 32,
+      "start_timing": 26,
+      "cancelable": false
+    },
+    "skill2": {
+      "damage": 40,
+      "attack_ratio": 10,
+      "range": 80000,
+      "attack_range": 20000,
+      "first_delay": 22,
+      "attack_period": 9,
+      "attack_tick": 66,
+      "slow": 20,
+      "slow_duration": 30,
+      "cooltime": 480,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 150,
+      "attack_ratio": 80,
+      "bind_duration": 60,
+      "range": 120000,
+      "attack_range": 15000,
+      "speed": 4000,
+      "cooltime": 3600,
+      "duration": 28,
+      "start_timing": 20,
+      "cancelable": false
+    },
+    "category": "Magician",
+    "tags": [
+      "AP",
+      "Dot",
+      "Magic"
+    ]
+  },
+  "wind_mage": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 40,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 20,
+      "hp": 100,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "wind_mage_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 6000,
+      "cooltime": 90,
+      "duration": 22,
+      "start_timing": 18,
+      "cancelable": false,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "damage": 15,
+      "attack_ratio": 5,
+      "range": 70000,
+      "attack_range": 30000,
+      "attack_period": 30,
+      "attack_tick": 240,
+      "move_speed": 25,
+      "cooltime": 480,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "skill2": {
+      "attack": 100,
+      "attack_ratio": 70,
+      "range": 70000,
+      "attack_range": 8000,
+      "speed": 2000,
+      "cooltime": 360,
+      "duration": 18,
+      "start_timing": 13,
+      "cancelable": false
+    },
+    "ult": {
+      "attack": 150,
+      "attack_ratio": 60,
+      "airborne_tick": 40,
+      "range": 100000,
+      "speed": 1500,
+      "radius": 12000,
+      "projectile_tick": 300,
+      "cooltime": 3600,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false,
+      "shrink_per_hit": 2000,
+      "min_radius": 4000,
+      "damage_decay": 25,
+      "airborne_decay": 8
+    },
+    "category": "Magician",
+    "tags": [
+      "AP",
+      "CC",
+      "Magic"
+    ]
+  },
+  "enchanter": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 30,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 15,
+      "hp": 100,
+      "defence": 8,
+      "magic_resistance": 4,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "enchanter_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 6000,
+      "cooltime": 90,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "range": 70000,
+      "range_increase": 20000,
+      "buff_duration": 300,
+      "cooltime": 600,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "skill2": {
+      "range": 70000,
+      "percent": 30,
+      "buff_duration": 300,
+      "cooltime": 720,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false
+    },
+    "increase": 0,
+    "percent": 30,
+    "category": "Util",
+    "ult": {
+      "range": 70000,
+      "attack_increase": 50,
+      "attack_ratio": 70,
+      "attack_speed_increase": 100,
+      "move_speed_increase": 50,
+      "buff_duration": 360,
+      "cooltime": 3000,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "tags": [
+      "AP"
+    ]
+  },
+  "hitman": {
+    "stat": {
+      "attack": 100,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 15,
+      "move_speed": 900,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 20,
+      "magic_power": 0,
+      "hp": 90,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 9,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "hitman_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 40000,
+      "speed": 5000,
+      "cooltime": 60,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "attack": 40,
+      "attack_ratio": 70,
+      "range": 40000,
+      "speed": 4000,
+      "stun_speed": 6000,
+      "stun": 45,
+      "cooltime": 420,
+      "duration": 48,
+      "start_timing": 14,
+      "shot2_timing": 34,
+      "shot3_timing": 43,
+      "cancelable": false
+    },
+    "skill2": {
+      "range": 250000,
+      "cooltime": 600,
+      "duration": 20,
+      "start_timing": 10,
+      "behind_offset": 1000,
+      "cancelable": false
+    },
+    "ult": {
+      "range": 40000,
+      "speed": 5000,
+      "mark_duration": 240,
+      "damage_ratio": 50,
+      "invisible_duration": 120,
+      "cooltime": 3000,
+      "duration": 20,
+      "start_timing": 16,
+      "cancelable": false,
+      "damage": 50
+    },
+    "category": "Assassin",
+    "tags": [
+      "AD",
+      "CC"
+    ]
+  },
+  "guardian_spirit": {
+    "stat": {
+      "attack": 80,
+      "magic_power": 30,
+      "hp": 900,
+      "defence": 20,
+      "magic_resistance": 20,
+      "move_speed": 1000,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 6,
+      "magic_power": 15,
+      "hp": 100,
+      "defence": 8,
+      "magic_resistance": 4,
+      "move_speed": 10,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "name": "guardian_spirit_attack",
+      "action_name": "attack",
+      "attack": 0,
+      "attack_ratio": 100,
+      "range": 60000,
+      "speed": 6000,
+      "cooltime": 90,
+      "duration": 40,
+      "start_timing": 32,
+      "cancelable": true,
+      "y_offset": 0,
+      "can_use_with_move": false,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "range": 50000,
+      "heal": 100,
+      "ap_ratio": 50,
+      "cooltime": 300,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "skill2": {
+      "range": 50000,
+      "shield": 150,
+      "shield_ap_ratio": 40,
+      "shield_tick": 180,
+      "move_speed": 20,
+      "buff_tick": 180,
+      "cooltime": 360,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "ult": {
+      "range": 80000,
+      "heal": 30,
+      "heal_ap_ratio": 20,
+      "heal_period": 30,
+      "tick": 360,
+      "revive_hp_ratio": 30,
+      "cooltime": 3600,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false
+    },
+    "category": "Util",
+    "tags": [
+      "Shield",
+      "Heal",
+      "Range",
+      "AP"
+    ]
+  },
+  "hunter": {
+    "stat": {
+      "attack": 120,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 25,
+      "magic_resistance": 15,
+      "move_speed": 1100,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 30,
+      "magic_power": 0,
+      "hp": 80,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 14,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 23000,
+      "cooltime": 50,
+      "duration": 20,
+      "start_timing": 13,
+      "cancelable": true,
+      "attack_type": "BaseAttack",
+      "ranged_speed": 4000,
+      "stack_duration": 120
+    },
+    "skill": {
+      "cooltime": 480,
+      "duration": 24,
+      "start_timing": 16,
+      "cancelable": false,
+      "range": 60000,
+      "buff_duration": 240,
+      "ranged_range_bonus": 27000
+    },
+    "skill2": {
+      "cooltime": 480,
+      "duration": 20,
+      "start_timing": 10,
+      "cancelable": false,
+      "attack": 60,
+      "attack_ratio": 100,
+      "range": 50000,
+      "speed": 5000,
+      "silence_duration": 60
+    },
+    "ult": {
+      "cooltime": 3000,
+      "duration": 38,
+      "start_timing": 16,
+      "cancelable": false,
+      "attack": 50,
+      "attack_ratio": 120,
+      "range": 100000,
+      "width": 20000,
+      "recast_duration": 240,
+      "kill_extend_count": 1
+    },
+    "category": "Assassin",
+    "tags": [
+      "AD"
+    ]
+  },
+  "circus_blade": {
+    "stat": {
+      "attack": 120,
+      "magic_power": 0,
+      "hp": 900,
+      "defence": 25,
+      "magic_resistance": 15,
+      "move_speed": 1100,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "growth": {
+      "attack": 30,
+      "magic_power": 0,
+      "hp": 80,
+      "defence": 7,
+      "magic_resistance": 3,
+      "move_speed": 14,
+      "hp_regen": 0,
+      "stack": 0,
+      "crit_chance": 0
+    },
+    "attack": {
+      "action_name": "attack",
+      "attack_ratio": 100,
+      "attack": 0,
+      "range": 23000,
+      "cooltime": 50,
+      "duration": 20,
+      "start_timing": 13,
+      "cancelable": true,
+      "attack_type": "BaseAttack"
+    },
+    "skill": {
+      "cooltime": 360,
+      "duration": 24,
+      "start_timing": 16,
+      "cancelable": false,
+      "attack": 60,
+      "attack_ratio": 80,
+      "range": 70000,
+      "speed": 5000,
+      "attack_range": 8000,
+      "charge_count": 2,
+      "slow": 30,
+      "slow_duration": 30
+    },
+    "skill2": {
+      "cooltime": 480,
+      "buff_duration": 240,
+      "move_speed": 30,
+      "attack_speed": 30,
+      "duration": 4,
+      "start_timing": 2,
+      "cancelable": false
+    },
+    "ult": {
+      "cooltime": 3000,
+      "duration": 24,
+      "start_timing": 18,
+      "cancelable": false,
+      "attack": 200,
+      "attack_ratio": 150,
+      "splash_attack": 80,
+      "splash_attack_ratio": 60,
+      "range": 80000,
+      "vanish_delay": 24,
+      "invisible_duration": 36,
+      "splash_range": 40000,
+      "knockback_speed": 3000,
+      "knockback_tick": 12,
+      "ult_end_duration": 12
+    },
+    "category": "Assassin",
+    "tags": [
+      "AD"
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "TFM2 Combat AI",
+  "author": "seyelive0",
+  "version": "0.1.0",
+  "description": "Adds custom champions whose passives encode in-match decisions the base AI lacks. First: Executioner (execute + takedown snowball).",
+  "last_updated": "2026-05-29",
+  "dependencies": [
+    {
+      "mod_id": "base",
+      "version": ">=0.4.6"
+    }
+  ]
+}

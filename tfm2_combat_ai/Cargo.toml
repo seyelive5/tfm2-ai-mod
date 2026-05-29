@@ -1,0 +1,19 @@
+# Mod id == folder name == ModRegistration::new("tfm2_combat_ai") == output DLL name.
+# NOTE: Do NOT add `mod-api` to [dependencies]. The TFM2 Mod SDK build script
+# (build_mod.bat / TFM2ModUploader) injects the matching prebuilt `mod_api`
+# crate automatically so the DLL is bound to the correct game SDK version.
+# For standalone `cargo check` in an editor, see CLAUDE.md > "Local dev against mod-api".
+[package]
+name = "tfm2_combat_ai"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# external crates.io deps go here (e.g. rand, serde_json) — NOT mod-api.
+
+# Empty workspace table so this mod is not pulled into a parent cargo workspace
+# (the SDK build dir is a workspace). See native-rust-mods.md.
+[workspace]

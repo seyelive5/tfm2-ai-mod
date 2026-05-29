@@ -1,0 +1,20 @@
+# Standalone Champion Creator (desktop GUI, egui) — the user-facing creation tool.
+# Reuses champion-gen for bundle parsing, generation and validation. Distributed as a normal
+# downloadable .exe (like the official TFM2ModUploader, which is also egui); users generate
+# champion mods here, then upload them to Steam Workshop via TFM2ModUploader.
+[package]
+name = "creator-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.27"
+egui = "0.27"
+egui_extras = { version = "0.27", features = ["image", "file"] }
+image = { version = "0.24", default-features = false, features = ["png"] }
+rfd = "0.14"
+serde_json = { version = "1", features = ["preserve_order"] }
+champion-gen = { path = "../champion-gen" }
+anyhow = "1"
+
+[workspace]

@@ -1,0 +1,13 @@
+{
+  "name": "TFM2 Champion Creator",
+  "author": "seyelive0",
+  "version": "0.0.1",
+  "description": "Phase 0: data-champion load proof. Will grow into an in-game champion creator.",
+  "last_updated": "2026-05-30",
+  "dependencies": [
+    {
+      "mod_id": "base",
+      "version": ">=0.4.6"
+    }
+  ]
+}

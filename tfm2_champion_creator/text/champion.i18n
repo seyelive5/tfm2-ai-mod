@@ -1,0 +1,22 @@
+{
+  "en": {
+    "description": {
+      "tfm2_cc_emberling": {
+        "name": "Emberling",
+        "skill": "Fires a piercing ember bolt dealing 80% AP.",
+        "skill2": "Focuses flame: gains magic power and faster cooldowns.",
+        "ult": "Erupts, dealing 100% AP and stunning nearby enemies."
+      }
+    }
+  },
+  "ko": {
+    "description": {
+      "tfm2_cc_emberling": {
+        "name": "엠벌링",
+        "skill": "관통하는 불씨를 발사해 주문력의 80% 피해를 줍니다.",
+        "skill2": "화염 집중: 주문력과 쿨다운 감소를 얻습니다.",
+        "ult": "폭발하여 주문력의 100% 피해를 주고 주변 적을 기절시킵니다."
+      }
+    }
+  }
+}
