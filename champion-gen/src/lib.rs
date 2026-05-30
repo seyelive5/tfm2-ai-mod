@@ -38,17 +38,21 @@ pub struct Catalog {
     pub effect_preview: BTreeMap<String, (Vec<u8>, Vec<[f32; 4]>)>,
 }
 
-/// Curated projectile sprites that read as actual projectiles (drops UI/background/map assets).
-const PROJECTILE_WHITELIST: &[&str] = &[
-    "arrow", "bullet", "gunner_bullet", "ice_mage_projectile", "executioner_skill",
-    "particle", "circle", "triangle", "triangle_l",
-];
-/// Effect-anim names that read as real combat impacts (drops recall/levelup/icons/tower projectiles).
+/// Keep a projectile sprite unless it is obviously a UI/background/map asset (blacklist only).
+fn is_usable_projectile(name: &str) -> bool {
+    const DROP: &[&str] = &[
+        "background", "bush", "bush_shadow", "down_line", "enemy_team_bg", "enemy_team_hp",
+        "gaming_house", "hp_outline", "logo", "minus", "my_team_bg", "my_team_hp", "plus",
+        "rect", "sp", "stadium", "wall_1", "wall_2", "wall_3", "wall_4", "wall_5", "wall_6",
+        "wall_7", "wall_shadow", "white", "x",
+    ];
+    !DROP.contains(&name)
+}
+/// Keep an effect anim unless it is clearly non-combat (recall/levelup/icons).
 fn is_combat_effect(name: &str) -> bool {
     const DROP: &[&str] = &[
         "recall_effect_back", "recall_effect_front", "levelup_effect", "buff_debuff_icon",
-        "shield_receive_effect", "sniper_target_effect", "gambler_dice", "gambler_projectile",
-        "blue_tower_projectile", "red_tower_projectile", "barrier_magician_projectile_ani",
+        "shield_receive_effect",
     ];
     !DROP.contains(&name)
 }
@@ -242,7 +246,7 @@ pub fn load_catalog(bundle_path: &Path) -> Result<Catalog> {
             }
         } else if let Some(rest) = path.strip_prefix("asset/base/sprite/") {
             let n = rest.split('#').next().unwrap_or(rest).to_string();
-            if !n.is_empty() && PROJECTILE_WHITELIST.contains(&n.as_str()) {
+            if !n.is_empty() && is_usable_projectile(&n) {
                 projectile_sprites.insert(n.clone());
                 if !rest.contains('#') {
                     projectile_png.insert(n, maybe_gunzip_bytes(&buf[data_start..data_start + dlen]));

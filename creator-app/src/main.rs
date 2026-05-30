@@ -827,34 +827,37 @@ impl App {
         let mut open = true;
         let mut chosen: Option<String> = None;
 
-        egui::Window::new(title).open(&mut open).resizable(true).default_width(560.0).collapsible(false).show(ctx, |ui| {
-            egui::ScrollArea::vertical().max_height(460.0).show(ui, |ui| {
+        const CELL: f32 = 150.0;
+        const IMG: f32 = 120.0;
+        egui::Window::new(title).open(&mut open).resizable(true).default_width(680.0).default_height(560.0).collapsible(false).show(ctx, |ui| {
+            ui.weak("그림을 클릭해서 선택하세요. (효과는 움직입니다)");
+            ui.add_space(4.0);
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     // "none/default" cell
                     let none_label = if kind == "proj" { "기본(화살)" } else { "없음" };
-                    ui.allocate_ui(egui::vec2(86.0, 96.0), |ui| {
+                    ui.allocate_ui(egui::vec2(CELL, CELL + 22.0), |ui| {
                         ui.vertical_centered(|ui| {
-                            if ui.button("  ✕  ").clicked() { chosen = Some(String::new()); }
-                            ui.label(none_label);
+                            if ui.add_sized(egui::vec2(IMG, IMG), egui::Button::new("✕\n해제")).clicked() { chosen = Some(String::new()); }
+                            ui.small(none_label);
                         });
                     });
                     for n in &names {
-                        ui.allocate_ui(egui::vec2(86.0, 96.0), |ui| {
+                        ui.allocate_ui(egui::vec2(CELL, CELL + 22.0), |ui| {
                             ui.vertical_centered(|ui| {
-                                let resp = egui::Frame::group(ui.style()).inner_margin(4.0).show(ui, |ui| {
-                                    let tex = vis_tex.get(&format!("{kind}:{n}"));
-                                    if let Some(Some(t)) = tex {
+                                let resp = egui::Frame::group(ui.style()).inner_margin(6.0).show(ui, |ui| {
+                                    if let Some(Some(t)) = vis_tex.get(&format!("{kind}:{n}")) {
                                         if kind == "fx" {
                                             if let Some(fr) = fx_uv.get(n) {
                                                 if !fr.is_empty() {
                                                     let idx = ((anim_time * 12.0) as usize) % fr.len();
-                                                    ui.add(egui::Image::new(egui::load::SizedTexture::new(t.id(), egui::vec2(60.0, 60.0))).uv(fr[idx]));
-                                                } else { ui.add_space(60.0); }
-                                            } else { ui.add_space(60.0); }
+                                                    ui.add(egui::Image::new(egui::load::SizedTexture::new(t.id(), egui::vec2(IMG, IMG))).uv(fr[idx]));
+                                                } else { ui.add_sized(egui::vec2(IMG, IMG), egui::Label::new("")); }
+                                            } else { ui.add_sized(egui::vec2(IMG, IMG), egui::Label::new("")); }
                                         } else {
-                                            ui.add(egui::Image::new(t).max_width(60.0).max_height(60.0));
+                                            ui.add(egui::Image::new(t).fit_to_exact_size(egui::vec2(IMG, IMG)));
                                         }
-                                    } else { ui.add_space(60.0); }
+                                    } else { ui.add_sized(egui::vec2(IMG, IMG), egui::Label::new("(미리보기 없음)")); }
                                 }).response;
                                 if resp.interact(egui::Sense::click()).clicked() { chosen = Some(n.clone()); }
                                 ui.small(n.as_str());
