@@ -28,26 +28,27 @@ pub struct Catalog {
     pub base_power_avg: f64,
     pub icon_sheet_png: Vec<u8>,
     pub icon_rects: BTreeMap<String, [f32; 4]>,
-    /// Names of base skill-effect animations (e.g. explosion, fire, freeze) for impact visuals.
-    pub effect_anims: Vec<String>,
-    /// Names of base projectile/effect sprites for projectile visuals.
-    pub projectile_sprites: Vec<String>,
-    /// PNG bytes per projectile sprite name (single-image sprites) — for previews.
-    pub projectile_png: BTreeMap<String, Vec<u8>>,
-    /// (#sheet PNG bytes, ALL frame pixel rects [x,y,w,h]) per effect anim name — for animated previews.
-    pub effect_preview: BTreeMap<String, (Vec<u8>, Vec<[f32; 4]>)>,
+    /// All selectable skill visuals (shared skill_effect/* + per-champion sheet effect/projectile tags),
+    /// keyed by a stable id. Used for BOTH the data-champion view binding and the in-app preview.
+    pub visuals: BTreeMap<String, VisualAsset>,
 }
 
-/// Keep a projectile sprite unless it is obviously a UI/background/map asset (blacklist only).
-fn is_usable_projectile(name: &str) -> bool {
-    const DROP: &[&str] = &[
-        "background", "bush", "bush_shadow", "down_line", "enemy_team_bg", "enemy_team_hp",
-        "gaming_house", "hp_outline", "logo", "minus", "my_team_bg", "my_team_hp", "plus",
-        "rect", "sp", "stadium", "wall_1", "wall_2", "wall_3", "wall_4", "wall_5", "wall_6",
-        "wall_7", "wall_shadow", "white", "x",
-    ];
-    !DROP.contains(&name)
+/// A selectable skill visual: how to bind it in a data champion + how to preview it.
+#[derive(Clone)]
+pub struct VisualAsset {
+    /// asset base path for the view binding (without #parts), e.g.
+    /// "asset/base/aseprite_resources/skill_effect/ice_mage_effect" or ".../champions/pyromancer".
+    pub anim_asset: String,
+    /// animation tag inside that asset's #anim (the looked-up animation), e.g. "ice_mage_effect" or "skill_boom_effect".
+    pub tag: String,
+    /// rough category for UI grouping/filtering: "projectile" or "impact".
+    pub kind: &'static str,
+    /// #sheet PNG bytes for preview (shared across a champion's tags).
+    pub sheet_png: Vec<u8>,
+    /// frame pixel rects [x,y,w,h] for this tag (animated preview).
+    pub frames: Vec<[f32; 4]>,
 }
+
 /// Keep an effect anim unless it is clearly non-combat (recall/levelup/icons).
 fn is_combat_effect(name: &str) -> bool {
     const DROP: &[&str] = &[
@@ -182,11 +183,33 @@ pub fn load_catalog(bundle_path: &Path) -> Result<Catalog> {
     let mut champion_info: Option<Value> = None;
     let mut icon_sheet_png: Vec<u8> = Vec::new();
     let mut icon_rects: BTreeMap<String, [f32; 4]> = BTreeMap::new();
-    let mut effect_anims: BTreeSet<String> = BTreeSet::new();
-    let mut projectile_sprites: BTreeSet<String> = BTreeSet::new();
-    let mut projectile_png: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    let mut effect_sheets: BTreeMap<String, Vec<u8>> = BTreeMap::new();   // name -> #sheet PNG
-    let mut effect_frames: BTreeMap<String, Vec<[f32; 4]>> = BTreeMap::new(); // name -> all frame pixel rects
+
+    // Skill-visual sources. We collect raw pieces then assemble into `visuals`.
+    // champions: name -> (#sheet PNG, tag -> frame rects). skill_effect: name -> (#sheet PNG, frames).
+    let mut champ_sheet: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut champ_tag_frames: BTreeMap<String, BTreeMap<String, Vec<[f32; 4]>>> = BTreeMap::new();
+    let mut fx_sheet: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut fx_frames: BTreeMap<String, Vec<[f32; 4]>> = BTreeMap::new();
+
+    // parse #anim json -> tag -> frame rects
+    let parse_anim = |txt: &str| -> BTreeMap<String, Vec<[f32; 4]>> {
+        let mut out = BTreeMap::new();
+        if let Ok(v) = serde_json::from_str::<Value>(txt) {
+            if let Some(anims) = v.get("anims").and_then(|a| a.as_object()) {
+                for (tag, a) in anims {
+                    if let Some(frames) = a.get("frames").and_then(|f| f.as_array()) {
+                        let rects: Vec<[f32; 4]> = frames.iter().filter_map(|fr| {
+                            let d = fr.get("data")?;
+                            let g = |k: &str| d.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+                            Some([g("x"), g("y"), g("w"), g("h")])
+                        }).collect();
+                        if !rects.is_empty() { out.insert(tag.clone(), rects); }
+                    }
+                }
+            }
+        }
+        out
+    };
 
     while pos + 8 < buf.len() {
         let _ext = read_str(&buf, &mut pos)?;
@@ -194,12 +217,13 @@ pub fn load_catalog(bundle_path: &Path) -> Result<Catalog> {
         let dlen = read_u32(&buf, &mut pos)? as usize;
         let data_start = pos;
         pos += dlen;
+        let bytes = || &buf[data_start..data_start + dlen];
 
         if path == "asset/base/text/champion" {
-            let txt = maybe_gunzip(&buf[data_start..data_start + dlen]);
+            let txt = maybe_gunzip(bytes());
             base_champion_i18n = Some(serde_json::from_str(&txt).context("parsing base champion i18n")?);
         } else if path == "asset/base/aseprite_resources/UI_aseprite/skill_icon#data" {
-            let txt = maybe_gunzip(&buf[data_start..data_start + dlen]);
+            let txt = maybe_gunzip(bytes());
             let v: Value = serde_json::from_str(&txt).context("parsing skill_icon #data")?;
             if let Some(imgs) = v.get("images").and_then(|x| x.as_object()) {
                 skill_icon_tags = imgs.keys().cloned().collect();
@@ -209,47 +233,31 @@ pub fn load_catalog(bundle_path: &Path) -> Result<Catalog> {
                 }
             }
         } else if path == "asset/base/aseprite_resources/UI_aseprite/skill_icon#sheet" {
-            icon_sheet_png = maybe_gunzip_bytes(&buf[data_start..data_start + dlen]);
+            icon_sheet_png = maybe_gunzip_bytes(bytes());
         } else if path == "asset/base/setting/champion_info" {
-            let txt = maybe_gunzip(&buf[data_start..data_start + dlen]);
+            let txt = maybe_gunzip(bytes());
             champion_info = Some(serde_json::from_str(&txt).context("parsing base champion_info")?);
         } else if let Some(rest) = path.strip_prefix("asset/base/aseprite_resources/champions/") {
-            let name = rest.split('#').next().unwrap_or(rest);
-            if !name.is_empty() && name != "character_sheet" && !name.ends_with("_ult") {
-                sprites.insert(name.to_string());
+            let name = rest.split('#').next().unwrap_or(rest).to_string();
+            if !name.is_empty() && name != "character_sheet" {
+                if !name.ends_with("_ult") { sprites.insert(name.clone()); }
+                if rest.ends_with("#sheet") {
+                    champ_sheet.insert(name, maybe_gunzip_bytes(bytes()));
+                } else if rest.ends_with("#anim") {
+                    champ_tag_frames.insert(name, parse_anim(&maybe_gunzip(bytes())));
+                }
             }
         } else if let Some(rest) = path.strip_prefix("asset/base/aseprite_resources/skill_effect/") {
             let n = rest.split('#').next().unwrap_or(rest).to_string();
             if !n.is_empty() && is_combat_effect(&n) {
-                effect_anims.insert(n.clone());
                 if rest.ends_with("#sheet") {
-                    effect_sheets.insert(n, maybe_gunzip_bytes(&buf[data_start..data_start + dlen]));
+                    fx_sheet.insert(n, maybe_gunzip_bytes(bytes()));
                 } else if rest.ends_with("#anim") {
-                    // collect ALL frame pixel rects from the first (longest) animation tag
-                    let txt = maybe_gunzip(&buf[data_start..data_start + dlen]);
-                    if let Ok(v) = serde_json::from_str::<Value>(&txt) {
-                        if let Some(anims) = v.get("anims").and_then(|a| a.as_object()) {
-                            // pick the tag with the most frames (the "main" animation)
-                            let best = anims.values()
-                                .max_by_key(|a| a.get("frames").and_then(|f| f.as_array()).map(|x| x.len()).unwrap_or(0));
-                            if let Some(frames) = best.and_then(|a| a.get("frames")).and_then(|f| f.as_array()) {
-                                let rects: Vec<[f32; 4]> = frames.iter().filter_map(|fr| {
-                                    let d = fr.get("data")?;
-                                    let g = |k: &str| d.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
-                                    Some([g("x"), g("y"), g("w"), g("h")])
-                                }).collect();
-                                if !rects.is_empty() { effect_frames.insert(n, rects); }
-                            }
-                        }
+                    // shared effects: pick the longest animation tag
+                    let frames = parse_anim(&maybe_gunzip(bytes()));
+                    if let Some((_, longest)) = frames.into_iter().max_by_key(|(_, f)| f.len()) {
+                        if !longest.is_empty() { fx_frames.insert(n, longest); }
                     }
-                }
-            }
-        } else if let Some(rest) = path.strip_prefix("asset/base/sprite/") {
-            let n = rest.split('#').next().unwrap_or(rest).to_string();
-            if !n.is_empty() && is_usable_projectile(&n) {
-                projectile_sprites.insert(n.clone());
-                if !rest.contains('#') {
-                    projectile_png.insert(n, maybe_gunzip_bytes(&buf[data_start..data_start + dlen]));
                 }
             }
         }
@@ -272,22 +280,48 @@ pub fn load_catalog(bundle_path: &Path) -> Result<Catalog> {
         if n > 0.0 { base_power_avg = sum / n; }
     }
 
+    // ---- assemble the unified visual catalog ----
+    let mut visuals: BTreeMap<String, VisualAsset> = BTreeMap::new();
+    // shared skill_effect/* (id = "fx:<name>")
+    for (name, frames) in fx_frames {
+        if let Some(png) = fx_sheet.get(&name) {
+            let kind = if name.contains("projectile") { "projectile" } else { "impact" };
+            visuals.insert(format!("fx:{name}"), VisualAsset {
+                anim_asset: format!("asset/base/aseprite_resources/skill_effect/{name}"),
+                tag: name.clone(), kind, sheet_png: png.clone(), frames,
+            });
+        }
+    }
+    // per-champion sheet effect/projectile tags (id = "ch:<champ>:<tag>")
+    for (champ, tags) in &champ_tag_frames {
+        let Some(png) = champ_sheet.get(champ) else { continue };
+        for (tag, frames) in tags {
+            if !is_visual_tag(tag) { continue; }
+            let kind = if tag.contains("projectile") { "projectile" } else { "impact" };
+            visuals.insert(format!("ch:{champ}:{tag}"), VisualAsset {
+                anim_asset: format!("asset/base/aseprite_resources/champions/{champ}"),
+                tag: tag.clone(), kind, sheet_png: png.clone(), frames: frames.clone(),
+            });
+        }
+    }
+
     Ok(Catalog {
         base_champion_i18n: base_champion_i18n.ok_or_else(|| anyhow!("asset/base/text/champion not found"))?,
         skill_icon_tags,
         champion_sprites: sprites.into_iter().collect(),
         category_stat_avg, category_growth_avg, stat_ranges, growth_ranges,
         base_power_avg, icon_sheet_png, icon_rects,
-        effect_anims: effect_anims.into_iter().collect(),
-        projectile_sprites: projectile_sprites.into_iter().collect(),
-        projectile_png,
-        effect_preview: effect_sheets.into_iter()
-            .filter_map(|(name, png)| {
-                let frames = effect_frames.get(&name).cloned().unwrap_or_default();
-                if frames.is_empty() { None } else { Some((name, (png, frames))) }
-            })
-            .collect(),
+        visuals,
     })
+}
+
+/// Is this champion-sheet animation tag a usable skill VISUAL (projectile/impact), not a body pose?
+fn is_visual_tag(tag: &str) -> bool {
+    // body/locomotion poses we never want as a skill visual
+    const BODY: &[&str] = &["idle", "run", "attack", "dead", "skill", "skill2", "ult", "hit"];
+    if BODY.contains(&tag) { return false; }
+    tag.contains("projectile") || tag.contains("effect") || tag.contains("boom")
+        || tag.contains("explos") || tag.contains("hit") || tag.contains("boomerang")
 }
 
 pub fn category_for_role(role: Role) -> &'static str {
@@ -705,7 +739,6 @@ pub fn build_champion(spec: &ChampionSpec, cat: &Catalog, rng: &mut impl rand::R
     champ.insert("growth".into(), growth);
     champ.insert("attack".into(), basic_attack(&spec.id, preset.ranged));
 
-    let is_fx = |n: &str| cat.effect_anims.iter().any(|x| x == n);
     let mut view_projectiles = vec![
         json!({ "type": "Sprite", "name": format!("{}_attack", spec.id), "sprite": "asset/base/sprite/arrow" }),
     ];
@@ -714,20 +747,19 @@ pub fn build_champion(spec: &ChampionSpec, cat: &Catalog, rng: &mut impl rand::R
         let slot = s.slot.action_name();
         let action = build_skill(&spec.id, s)?;
         champ.insert(slot.into(), action);
+        // projectile visual: a chosen visual id, else default arrow sprite
         if matches!(s.delivery, Delivery::LinearProjectile | Delivery::HomingProjectile | Delivery::AreaTarget) {
             let pname = format!("{}_{}", spec.id, slot);
-            if s.projectile.is_empty() {
-                view_projectiles.push(json!({"type":"Sprite","name":pname,"sprite":"asset/base/sprite/arrow"}));
-            } else if is_fx(&s.projectile) {
-                view_projectiles.push(json!({"type":"Animated","name":pname,
-                    "anim":format!("asset/base/aseprite_resources/skill_effect/{}", s.projectile),"tag":s.projectile,"repeat":true}));
-            } else {
-                view_projectiles.push(json!({"type":"Sprite","name":pname,"sprite":format!("asset/base/sprite/{}", s.projectile)}));
+            match cat.visuals.get(&s.projectile) {
+                Some(v) => view_projectiles.push(json!({"type":"Animated","name":pname,
+                    "anim": v.anim_asset, "tag": v.tag, "repeat": true})),
+                None => view_projectiles.push(json!({"type":"Sprite","name":pname,"sprite":"asset/base/sprite/arrow"})),
             }
         }
-        if !s.impact.is_empty() {
+        // impact visual: a chosen visual id -> view_effects binding (ViewEffect emitted in build_skill)
+        if let Some(v) = cat.visuals.get(&s.impact) {
             view_effects.push(json!({"type":"Animation","name":format!("{}_{}_impact", spec.id, slot),
-                "anim":format!("asset/base/aseprite_resources/skill_effect/{}", s.impact),"tag":s.impact}));
+                "anim": v.anim_asset, "tag": v.tag}));
         }
     }
     champ.insert("view_projectiles".into(), json!(view_projectiles));

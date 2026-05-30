@@ -264,16 +264,22 @@ struct App {
     icon_sheet_png: Vec<u8>,
     icon_rects: BTreeMap<String, [f32; 4]>,
     icon_texture: Option<egui::TextureHandle>,
-    effect_anims: Vec<String>,
-    projectile_sprites: Vec<String>,
-    projectile_png: BTreeMap<String, Vec<u8>>,
-    effect_preview: BTreeMap<String, (Vec<u8>, Vec<[f32; 4]>)>,
-    /// lazily-decoded textures for skill visual previews (keyed "proj:<name>" / "fx:<name>")
-    vis_tex: std::collections::HashMap<String, Option<egui::TextureHandle>>,
-    /// effect name -> all frame UV rects (normalized) for animated preview
-    fx_uv_frames: BTreeMap<String, Vec<egui::Rect>>,
-    /// which gallery picker is open: Some((skill_index, "proj"|"fx")) or None
+    /// raw unified visuals from the catalog (id -> VisualAsset)
+    visuals: BTreeMap<String, champion_gen::VisualAsset>,
+    /// per-visual decoded UI state (id -> VisualUi), built lazily on first frame after load
+    vis_ui: BTreeMap<String, VisualUi>,
+    vis_built: bool,
+    /// which gallery picker is open: Some((skill_index, "projectile"|"impact")) or None
     gallery: Option<(usize, &'static str)>,
+    gallery_filter: String,
+}
+
+/// Decoded preview for one visual: texture + normalized animation frames + kind.
+struct VisualUi {
+    tex: Option<egui::TextureHandle>,
+    frames: Vec<egui::Rect>, // normalized UV rects
+    kind: &'static str,      // "projectile" | "impact"
+    label: String,           // human label e.g. "archer · ult_projectile"
 }
 
 /// Decode PNG bytes into an egui texture.
@@ -312,13 +318,11 @@ impl Default for App {
             icon_sheet_png: Vec::new(),
             icon_rects: BTreeMap::new(),
             icon_texture: None,
-            effect_anims: Vec::new(),
-            projectile_sprites: Vec::new(),
-            projectile_png: BTreeMap::new(),
-            effect_preview: BTreeMap::new(),
-            vis_tex: std::collections::HashMap::new(),
-            fx_uv_frames: BTreeMap::new(),
+            visuals: BTreeMap::new(),
+            vis_ui: BTreeMap::new(),
+            vis_built: false,
             gallery: None,
+            gallery_filter: String::new(),
         };
         app.load_catalog();
         app
@@ -344,12 +348,9 @@ impl App {
                 self.icon_sheet_png = cat.icon_sheet_png.clone();
                 self.icon_rects = cat.icon_rects.clone();
                 self.icon_texture = None; // rebuilt lazily in update()
-                self.effect_anims = cat.effect_anims.clone();
-                self.projectile_sprites = cat.projectile_sprites.clone();
-                self.projectile_png = cat.projectile_png.clone();
-                self.effect_preview = cat.effect_preview.clone();
-                self.vis_tex.clear();
-                self.fx_uv_frames.clear();
+                self.visuals = cat.visuals.clone();
+                self.vis_ui.clear();
+                self.vis_built = false;
                 self.status = format!("준비 완료 — 스프라이트 {}종, 아이콘 {}종 (실측 데이터 반영)",
                     self.sprite_list.len(), self.icon_list.len());
                 let first_sprite = self.sprite_list.first().cloned().unwrap_or_default();
@@ -422,24 +423,29 @@ impl eframe::App for App {
         if self.icon_texture.is_none() && !self.icon_sheet_png.is_empty() {
             self.icon_texture = decode_texture(ctx, "skill_icons", &self.icon_sheet_png);
         }
-        // lazily decode skill-visual textures (projectile sprites + effect sheets) once per catalog,
-        // and precompute normalized UV rects per effect frame for animated preview.
-        if self.vis_tex.is_empty() && (!self.projectile_png.is_empty() || !self.effect_preview.is_empty()) {
-            for (n, png) in &self.projectile_png {
-                self.vis_tex.insert(format!("proj:{n}"), decode_texture(ctx, &format!("proj_{n}"), png));
-            }
-            for (n, (png, frames)) in &self.effect_preview {
-                let tex = decode_texture(ctx, &format!("fx_{n}"), png);
-                if let Some(t) = &tex {
-                    let sz = t.size_vec2();
-                    if sz.x > 0.0 && sz.y > 0.0 {
-                        let uvs: Vec<egui::Rect> = frames.iter().map(|r| egui::Rect::from_min_size(
-                            egui::pos2(r[0] / sz.x, r[1] / sz.y), egui::vec2(r[2] / sz.x, r[3] / sz.y))).collect();
-                        self.fx_uv_frames.insert(n.clone(), uvs);
+        // lazily decode all skill-visual previews once per catalog. Many visuals share the same
+        // champion #sheet (only the tag/frames differ), so decode each sheet PNG only once.
+        if !self.vis_built && !self.visuals.is_empty() {
+            let mut sheet_cache: std::collections::HashMap<String, Option<egui::TextureHandle>> = std::collections::HashMap::new();
+            for (id, v) in &self.visuals {
+                let tex = sheet_cache.entry(v.anim_asset.clone())
+                    .or_insert_with(|| decode_texture(ctx, &v.anim_asset, &v.sheet_png)).clone();
+                let frames = match &tex {
+                    Some(t) => {
+                        let sz = t.size_vec2();
+                        if sz.x > 0.0 && sz.y > 0.0 {
+                            v.frames.iter().map(|r| egui::Rect::from_min_size(
+                                egui::pos2(r[0] / sz.x, r[1] / sz.y), egui::vec2(r[2] / sz.x, r[3] / sz.y))).collect()
+                        } else { Vec::new() }
                     }
-                }
-                self.vis_tex.insert(format!("fx:{n}"), tex);
+                    None => Vec::new(),
+                };
+                // label: "champ · tag" for ch:..., "tag" for fx:...
+                let label = id.strip_prefix("ch:").map(|r| r.replacen(':', " · ", 1))
+                    .unwrap_or_else(|| v.tag.clone());
+                self.vis_ui.insert(id.clone(), VisualUi { tex, frames, kind: v.kind, label });
             }
+            self.vis_built = true;
         }
 
         // ---------- Top bar ----------
@@ -530,27 +536,27 @@ impl eframe::App for App {
             let base_power = self.catalog.as_ref().map(|c| c.base_power_avg).filter(|v| *v > 0.0).unwrap_or(1500.0);
             let icon_tex = self.icon_texture.clone();
             let icon_rects_uv = self.icon_rects.clone();
-            let vis_tex = self.vis_tex.clone();
-            let fx_uv = self.fx_uv_frames.clone();
+            // snapshot minimal preview data (id -> texture + animation frames) + labels
+            let vis_prev: BTreeMap<String, (Option<egui::TextureHandle>, Vec<egui::Rect>)> =
+                self.vis_ui.iter().map(|(k, u)| (k.clone(), (u.tex.clone(), u.frames.clone()))).collect();
+            let vis_labels: BTreeMap<String, String> =
+                self.vis_ui.iter().map(|(k, u)| (k.clone(), u.label.clone())).collect();
             let anim_time = ctx.input(|inp| inp.time);
-            if !fx_uv.is_empty() { ctx.request_repaint(); } // keep effect animations playing
-            let mut gallery_open = self.gallery; // capture & possibly set by skill buttons
+            if !vis_prev.is_empty() { ctx.request_repaint(); } // keep animations playing
+            let mut gallery_open = self.gallery;
             let c = &mut self.champions[i];
-            // preview a chosen skill visual at `sz`px. fx = animated effect (cycles frames).
-            let show_vis = |ui: &mut egui::Ui, kind: &str, name: &str, sz: f32| {
-                if name.is_empty() { return; }
-                let Some(Some(tex)) = vis_tex.get(&format!("{kind}:{name}")) else { return };
-                if kind == "fx" {
-                    if let Some(frames) = fx_uv.get(name) {
-                        if !frames.is_empty() {
-                            let idx = ((anim_time * 12.0) as usize) % frames.len(); // ~12 fps
-                            ui.add(egui::Image::new(egui::load::SizedTexture::new(tex.id(), egui::vec2(sz, sz))).uv(frames[idx]));
-                            return;
-                        }
-                    }
+            // preview a chosen skill visual (by id) at `sz`px, animated.
+            let show_vis = |ui: &mut egui::Ui, id: &str, sz: f32| {
+                if id.is_empty() { return; }
+                let Some((Some(tex), frames)) = vis_prev.get(id) else { return };
+                if !frames.is_empty() {
+                    let idx = ((anim_time * 12.0) as usize) % frames.len(); // ~12 fps
+                    ui.add(egui::Image::new(egui::load::SizedTexture::new(tex.id(), egui::vec2(sz, sz))).uv(frames[idx]));
+                } else {
+                    ui.add(egui::Image::new(tex).max_width(sz).max_height(sz));
                 }
-                ui.add(egui::Image::new(tex).max_width(sz).max_height(sz));
             };
+            let vis_label = |id: &str| -> String { vis_labels.get(id).cloned().unwrap_or_default() };
 
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.add_space(8.0);
@@ -714,16 +720,18 @@ impl eframe::App for App {
                                 if matches!(dl, "linear_projectile" | "homing_projectile" | "area_target") {
                                     ui.horizontal(|ui| {
                                         ui.label("투사체 그림");
-                                        show_vis(ui, "proj", &s.projectile, 40.0);
-                                        ui.label(if s.projectile.is_empty() { "기본(화살)" } else { s.projectile.as_str() });
-                                        if ui.button("그림 선택…").clicked() { gallery_open = Some((si, "proj")); }
+                                        show_vis(ui, &s.projectile, 48.0);
+                                        let lbl = if s.projectile.is_empty() { "기본(화살)".to_string() } else { vis_label(&s.projectile) };
+                                        ui.label(lbl);
+                                        if ui.button("그림 선택…").clicked() { gallery_open = Some((si, "projectile")); }
                                     });
                                 }
                                 ui.horizontal(|ui| {
                                     ui.label("적중 효과");
-                                    show_vis(ui, "fx", &s.impact, 40.0);
-                                    ui.label(if s.impact.is_empty() { "없음" } else { s.impact.as_str() });
-                                    if ui.button("효과 선택…").clicked() { gallery_open = Some((si, "fx")); }
+                                    show_vis(ui, &s.impact, 48.0);
+                                    let lbl = if s.impact.is_empty() { "없음".to_string() } else { vis_label(&s.impact) };
+                                    ui.label(lbl);
+                                    if ui.button("효과 선택…").clicked() { gallery_open = Some((si, "impact")); }
                                 });
                                 ui.add_space(4.0);
                             }
@@ -815,52 +823,55 @@ impl eframe::App for App {
 }
 
 impl App {
-    /// Grid gallery to pick a projectile sprite or impact effect by image. Larger thumbnails, click to select.
+    /// Image gallery to pick a projectile or impact visual. Big animated thumbnails, search, click to select.
     fn draw_gallery(&mut self, ctx: &egui::Context) {
         let Some((si, kind)) = self.gallery else { return };
-        let title = if kind == "proj" { "투사체 그림 선택" } else { "적중 효과 선택" };
-        let names: Vec<String> = if kind == "proj" { self.projectile_sprites.clone() } else { self.effect_anims.clone() };
-        let vis_tex = self.vis_tex.clone();
-        let fx_uv = self.fx_uv_frames.clone();
+        let title = if kind == "projectile" { "투사체 그림 선택" } else { "적중 효과 선택" };
+        // candidate visuals of this kind, matching the search filter
+        let filt = self.gallery_filter.to_lowercase();
+        let items: Vec<(String, Vec<egui::Rect>, Option<egui::TextureHandle>, String)> = self.vis_ui.iter()
+            .filter(|(_, u)| u.kind == kind)
+            .filter(|(_, u)| filt.is_empty() || u.label.to_lowercase().contains(&filt))
+            .map(|(id, u)| (id.clone(), u.frames.clone(), u.tex.clone(), u.label.clone()))
+            .collect();
         let anim_time = ctx.input(|inp| inp.time);
-        if kind == "fx" { ctx.request_repaint(); }
+        ctx.request_repaint();
         let mut open = true;
         let mut chosen: Option<String> = None;
+        let mut filter = self.gallery_filter.clone();
 
-        const CELL: f32 = 150.0;
+        const CELL: f32 = 156.0;
         const IMG: f32 = 120.0;
-        egui::Window::new(title).open(&mut open).resizable(true).default_width(680.0).default_height(560.0).collapsible(false).show(ctx, |ui| {
-            ui.weak("그림을 클릭해서 선택하세요. (효과는 움직입니다)");
+        egui::Window::new(title).open(&mut open).resizable(true).default_width(820.0).default_height(620.0).collapsible(false).show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("검색");
+                ui.add(egui::TextEdit::singleline(&mut filter).hint_text("챔피언/태그 이름…").desired_width(260.0));
+                ui.weak(format!("{}개", items.len()));
+            });
+            ui.weak("그림을 클릭해서 선택하세요. (움직이는 미리보기)");
             ui.add_space(4.0);
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    // "none/default" cell
-                    let none_label = if kind == "proj" { "기본(화살)" } else { "없음" };
-                    ui.allocate_ui(egui::vec2(CELL, CELL + 22.0), |ui| {
+                    ui.allocate_ui(egui::vec2(CELL, CELL + 24.0), |ui| {
                         ui.vertical_centered(|ui| {
-                            if ui.add_sized(egui::vec2(IMG, IMG), egui::Button::new("✕\n해제")).clicked() { chosen = Some(String::new()); }
-                            ui.small(none_label);
+                            if ui.add_sized(egui::vec2(IMG, IMG), egui::Button::new("✕\n해제(기본)")).clicked() { chosen = Some(String::new()); }
                         });
                     });
-                    for n in &names {
-                        ui.allocate_ui(egui::vec2(CELL, CELL + 22.0), |ui| {
+                    for (id, frames, tex, label) in &items {
+                        ui.allocate_ui(egui::vec2(CELL, CELL + 24.0), |ui| {
                             ui.vertical_centered(|ui| {
                                 let resp = egui::Frame::group(ui.style()).inner_margin(6.0).show(ui, |ui| {
-                                    if let Some(Some(t)) = vis_tex.get(&format!("{kind}:{n}")) {
-                                        if kind == "fx" {
-                                            if let Some(fr) = fx_uv.get(n) {
-                                                if !fr.is_empty() {
-                                                    let idx = ((anim_time * 12.0) as usize) % fr.len();
-                                                    ui.add(egui::Image::new(egui::load::SizedTexture::new(t.id(), egui::vec2(IMG, IMG))).uv(fr[idx]));
-                                                } else { ui.add_sized(egui::vec2(IMG, IMG), egui::Label::new("")); }
-                                            } else { ui.add_sized(egui::vec2(IMG, IMG), egui::Label::new("")); }
-                                        } else {
-                                            ui.add(egui::Image::new(t).fit_to_exact_size(egui::vec2(IMG, IMG)));
+                                    match (tex, frames.is_empty()) {
+                                        (Some(t), false) => {
+                                            let idx = ((anim_time * 12.0) as usize) % frames.len();
+                                            ui.add(egui::Image::new(egui::load::SizedTexture::new(t.id(), egui::vec2(IMG, IMG))).uv(frames[idx]));
                                         }
-                                    } else { ui.add_sized(egui::vec2(IMG, IMG), egui::Label::new("(미리보기 없음)")); }
+                                        (Some(t), true) => { ui.add(egui::Image::new(t).fit_to_exact_size(egui::vec2(IMG, IMG))); }
+                                        _ => { ui.add_sized(egui::vec2(IMG, IMG), egui::Label::new("(미리보기 없음)")); }
+                                    }
                                 }).response;
-                                if resp.interact(egui::Sense::click()).clicked() { chosen = Some(n.clone()); }
-                                ui.small(n.as_str());
+                                if resp.interact(egui::Sense::click()).clicked() { chosen = Some(id.clone()); }
+                                ui.small(label.as_str());
                             });
                         });
                     }
@@ -868,16 +879,19 @@ impl App {
             });
         });
 
-        if let Some(name) = chosen {
+        self.gallery_filter = filter;
+        if let Some(id) = chosen {
             let idx = self.selected.min(self.champions.len().saturating_sub(1));
             if let Some(c) = self.champions.get_mut(idx) {
                 if let Some(sk) = c.skills.get_mut(si) {
-                    if kind == "proj" { sk.projectile = name; } else { sk.impact = name; }
+                    if kind == "projectile" { sk.projectile = id; } else { sk.impact = id; }
                 }
             }
             self.gallery = None;
+            self.gallery_filter.clear();
         } else if !open {
             self.gallery = None;
+            self.gallery_filter.clear();
         }
     }
 }
