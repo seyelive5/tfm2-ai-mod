@@ -91,6 +91,8 @@ struct SkillDraft {
     b_attack: i64, b_mp: i64, b_aspd: i64, b_mspd: i64, b_vamp: i64, b_cdr: i64, b_tick: i64,
     ally_target: bool,
     range: i64, radius: i64, speed: i64, cooltime: i64, penetrate: bool,
+    projectile: String, // projectile sprite/effect name ("" = default arrow)
+    impact: String,     // impact effect anim name ("" = none)
 }
 impl SkillDraft {
     fn offensive(delivery: usize, damage: usize, ratio: i64, statuses: Vec<StatusDraft>, cooltime: i64) -> Self {
@@ -98,6 +100,7 @@ impl SkillDraft {
             delivery, damage, damage_ratio: ratio, damage_flat: 0, statuses,
             heal: 0, shield: 0, b_attack: 0, b_mp: 0, b_aspd: 0, b_mspd: 0, b_vamp: 0, b_cdr: 0, b_tick: 180,
             ally_target: false, range: 60000, radius: 13000, speed: 4200, cooltime, penetrate: false,
+            projectile: String::new(), impact: String::new(),
         }
     }
     fn support(shield: i64, cooltime: i64) -> Self {
@@ -115,6 +118,7 @@ impl SkillDraft {
                 "move_speed_mult": self.b_mspd, "vamp": self.b_vamp, "skill_cooldown_mult": self.b_cdr, "tick": self.b_tick},
             "ally_target": self.ally_target, "range": self.range, "radius": self.radius,
             "speed": self.speed, "cooltime": self.cooltime, "penetrate": self.penetrate,
+            "projectile": self.projectile, "impact": self.impact,
         })
     }
 }
@@ -260,6 +264,12 @@ struct App {
     icon_sheet_png: Vec<u8>,
     icon_rects: BTreeMap<String, [f32; 4]>,
     icon_texture: Option<egui::TextureHandle>,
+    effect_anims: Vec<String>,
+    projectile_sprites: Vec<String>,
+    projectile_png: BTreeMap<String, Vec<u8>>,
+    effect_preview: BTreeMap<String, (Vec<u8>, [f32; 4])>,
+    /// lazily-decoded textures for skill visual previews (keyed "proj:<name>" / "fx:<name>")
+    vis_tex: std::collections::HashMap<String, Option<egui::TextureHandle>>,
 }
 
 /// Decode PNG bytes into an egui texture.
@@ -298,6 +308,11 @@ impl Default for App {
             icon_sheet_png: Vec::new(),
             icon_rects: BTreeMap::new(),
             icon_texture: None,
+            effect_anims: Vec::new(),
+            projectile_sprites: Vec::new(),
+            projectile_png: BTreeMap::new(),
+            effect_preview: BTreeMap::new(),
+            vis_tex: std::collections::HashMap::new(),
         };
         app.load_catalog();
         app
@@ -323,6 +338,11 @@ impl App {
                 self.icon_sheet_png = cat.icon_sheet_png.clone();
                 self.icon_rects = cat.icon_rects.clone();
                 self.icon_texture = None; // rebuilt lazily in update()
+                self.effect_anims = cat.effect_anims.clone();
+                self.projectile_sprites = cat.projectile_sprites.clone();
+                self.projectile_png = cat.projectile_png.clone();
+                self.effect_preview = cat.effect_preview.clone();
+                self.vis_tex.clear();
                 self.status = format!("준비 완료 — 스프라이트 {}종, 아이콘 {}종 (실측 데이터 반영)",
                     self.sprite_list.len(), self.icon_list.len());
                 let first_sprite = self.sprite_list.first().cloned().unwrap_or_default();
@@ -394,6 +414,15 @@ impl eframe::App for App {
         // lazily build the skill-icon atlas texture (once per catalog load)
         if self.icon_texture.is_none() && !self.icon_sheet_png.is_empty() {
             self.icon_texture = decode_texture(ctx, "skill_icons", &self.icon_sheet_png);
+        }
+        // lazily decode skill-visual textures (projectile sprites + effect sheets) once per catalog
+        if self.vis_tex.is_empty() && (!self.projectile_png.is_empty() || !self.effect_preview.is_empty()) {
+            for (n, png) in &self.projectile_png {
+                self.vis_tex.insert(format!("proj:{n}"), decode_texture(ctx, &format!("proj_{n}"), png));
+            }
+            for (n, (png, _)) in &self.effect_preview {
+                self.vis_tex.insert(format!("fx:{n}"), decode_texture(ctx, &format!("fx_{n}"), png));
+            }
         }
 
         // ---------- Top bar ----------
@@ -484,7 +513,29 @@ impl eframe::App for App {
             let base_power = self.catalog.as_ref().map(|c| c.base_power_avg).filter(|v| *v > 0.0).unwrap_or(1500.0);
             let icon_tex = self.icon_texture.clone();
             let icon_rects_uv = self.icon_rects.clone();
+            let fx_list = self.effect_anims.clone();
+            let proj_list = self.projectile_sprites.clone();
+            let vis_tex = self.vis_tex.clone();
+            let fx_rects = self.effect_preview.iter().map(|(k, (_, r))| (k.clone(), *r)).collect::<BTreeMap<_, _>>();
             let c = &mut self.champions[i];
+            // preview a chosen skill visual (projectile sprite OR effect first-frame), 32px
+            let show_vis = |ui: &mut egui::Ui, kind: &str, name: &str| {
+                if name.is_empty() { return; }
+                if let Some(Some(tex)) = vis_tex.get(&format!("{kind}:{name}")) {
+                    if kind == "fx" {
+                        if let Some(r) = fx_rects.get(name) {
+                            let sz = tex.size_vec2(); // sheet pixel size
+                            if sz.x > 0.0 && sz.y > 0.0 {
+                                let uv = egui::Rect::from_min_size(
+                                    egui::pos2(r[0] / sz.x, r[1] / sz.y), egui::vec2(r[2] / sz.x, r[3] / sz.y));
+                                ui.add(egui::Image::new(egui::load::SizedTexture::new(tex.id(), egui::vec2(32.0, 32.0))).uv(uv));
+                                return;
+                            }
+                        }
+                    }
+                    ui.add(egui::Image::new(tex).max_width(32.0).max_height(32.0));
+                }
+            };
 
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.add_space(8.0);
@@ -641,6 +692,32 @@ impl eframe::App for App {
                             });
                             ui.add_space(4.0);
                             let is_support = DELIVERY[s.delivery] == "support";
+
+                            // skill VISUALS (offensive only): projectile sprite + impact effect, with preview
+                            if !is_support {
+                                let dl = DELIVERY[s.delivery];
+                                if matches!(dl, "linear_projectile" | "homing_projectile" | "area_target") {
+                                    ui.horizontal(|ui| {
+                                        ui.label("투사체 그림");
+                                        egui::ComboBox::from_id_source(format!("pj{si}")).width(150.0)
+                                            .selected_text(if s.projectile.is_empty() { "기본(화살)" } else { s.projectile.as_str() }).show_ui(ui, |ui| {
+                                            ui.selectable_value(&mut s.projectile, String::new(), "기본(화살)");
+                                            for n in &proj_list { ui.selectable_value(&mut s.projectile, n.clone(), n.as_str()); }
+                                        });
+                                        show_vis(ui, "proj", &s.projectile);
+                                    });
+                                }
+                                ui.horizontal(|ui| {
+                                    ui.label("적중 효과");
+                                    egui::ComboBox::from_id_source(format!("ix{si}")).width(150.0)
+                                        .selected_text(if s.impact.is_empty() { "없음" } else { s.impact.as_str() }).show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut s.impact, String::new(), "없음");
+                                        for n in &fx_list { ui.selectable_value(&mut s.impact, n.clone(), n.as_str()); }
+                                    });
+                                    show_vis(ui, "fx", &s.impact);
+                                });
+                                ui.add_space(4.0);
+                            }
 
                             if is_support {
                                 ui.checkbox(&mut s.ally_target, "아군 대상 (해제 시 자신)");

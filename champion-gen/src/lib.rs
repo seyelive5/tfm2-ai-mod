@@ -32,6 +32,10 @@ pub struct Catalog {
     pub effect_anims: Vec<String>,
     /// Names of base projectile/effect sprites for projectile visuals.
     pub projectile_sprites: Vec<String>,
+    /// PNG bytes per projectile sprite name (single-image sprites) — for previews.
+    pub projectile_png: BTreeMap<String, Vec<u8>>,
+    /// (#sheet PNG bytes, first-frame pixel rect [x,y,w,h]) per effect anim name — for previews.
+    pub effect_preview: BTreeMap<String, (Vec<u8>, [f32; 4])>,
 }
 
 pub const STAT_FIELDS: &[&str] = &[
@@ -161,6 +165,9 @@ pub fn load_catalog(bundle_path: &Path) -> Result<Catalog> {
     let mut icon_rects: BTreeMap<String, [f32; 4]> = BTreeMap::new();
     let mut effect_anims: BTreeSet<String> = BTreeSet::new();
     let mut projectile_sprites: BTreeSet<String> = BTreeSet::new();
+    let mut projectile_png: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut effect_sheets: BTreeMap<String, Vec<u8>> = BTreeMap::new();   // name -> #sheet PNG
+    let mut effect_first_rect: BTreeMap<String, [f32; 4]> = BTreeMap::new(); // name -> first-frame pixel rect
 
     while pos + 8 < buf.len() {
         let _ext = read_str(&buf, &mut pos)?;
@@ -193,11 +200,34 @@ pub fn load_catalog(bundle_path: &Path) -> Result<Catalog> {
                 sprites.insert(name.to_string());
             }
         } else if let Some(rest) = path.strip_prefix("asset/base/aseprite_resources/skill_effect/") {
-            let n = rest.split('#').next().unwrap_or(rest);
-            if !n.is_empty() { effect_anims.insert(n.to_string()); }
+            let n = rest.split('#').next().unwrap_or(rest).to_string();
+            if !n.is_empty() {
+                effect_anims.insert(n.clone());
+                if rest.ends_with("#sheet") {
+                    effect_sheets.insert(n, maybe_gunzip_bytes(&buf[data_start..data_start + dlen]));
+                } else if rest.ends_with("#anim") {
+                    // first frame's pixel rect: anims.<firstTag>.frames[0].data {x,y,w,h}
+                    let txt = maybe_gunzip(&buf[data_start..data_start + dlen]);
+                    if let Ok(v) = serde_json::from_str::<Value>(&txt) {
+                        if let Some(anims) = v.get("anims").and_then(|a| a.as_object()) {
+                            if let Some(first) = anims.values().next() {
+                                if let Some(d) = first.get("frames").and_then(|f| f.get(0)).and_then(|f0| f0.get("data")) {
+                                    let g = |k: &str| d.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+                                    effect_first_rect.insert(n, [g("x"), g("y"), g("w"), g("h")]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         } else if let Some(rest) = path.strip_prefix("asset/base/sprite/") {
-            let n = rest.split('#').next().unwrap_or(rest);
-            if !n.is_empty() { projectile_sprites.insert(n.to_string()); }
+            let n = rest.split('#').next().unwrap_or(rest).to_string();
+            if !n.is_empty() && !rest.contains('#') {
+                projectile_sprites.insert(n.clone());
+                projectile_png.insert(n, maybe_gunzip_bytes(&buf[data_start..data_start + dlen]));
+            } else if !n.is_empty() {
+                projectile_sprites.insert(n);
+            }
         }
     }
 
@@ -226,6 +256,13 @@ pub fn load_catalog(bundle_path: &Path) -> Result<Catalog> {
         base_power_avg, icon_sheet_png, icon_rects,
         effect_anims: effect_anims.into_iter().collect(),
         projectile_sprites: projectile_sprites.into_iter().collect(),
+        projectile_png,
+        effect_preview: effect_sheets.into_iter()
+            .filter_map(|(name, png)| {
+                let rect = effect_first_rect.get(&name).copied().unwrap_or([0.0, 0.0, 0.0, 0.0]);
+                Some((name, (png, rect)))
+            })
+            .collect(),
     })
 }
 
