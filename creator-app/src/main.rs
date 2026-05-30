@@ -16,10 +16,12 @@ const DEFAULT_OUT: &str =
 
 const ROLES: &[&str] = &["mage", "ad_carry", "assassin", "tank", "support"];
 const ROLES_KO: &[&str] = &["메이지", "원거리 딜러", "암살자", "탱커", "서포터"];
-const TEMPLATES: &[&str] = &["skillshot_ap", "skillshot_ad", "self_buff", "dash", "heal", "aoe_stun",
-    "shield_self", "stun_shot", "knockback_shot", "dot_poison"];
-const TEMPLATES_KO: &[&str] = &["투사체(마법)", "투사체(물리)", "자기강화", "돌진", "치유", "광역기절",
-    "자기보호막", "기절투사체", "넉백투사체", "독도트"];
+const DELIVERY: &[&str] = &["linear_projectile", "homing_projectile", "area_self", "area_target", "dash", "support"];
+const DELIVERY_KO: &[&str] = &["직선 투사체", "유도 투사체", "주변 광역", "지정 광역", "돌진", "지원(힐·실드·버프)"];
+const DAMAGE: &[&str] = &["none", "ad", "ap", "fixed"];
+const DAMAGE_KO: &[&str] = &["없음", "물리(공격력)", "마법(주문력)", "고정"];
+const STATUS: &[&str] = &["stun", "bind", "fear", "knockback", "slow", "poison_dot", "fire_dot"];
+const STATUS_KO: &[&str] = &["기절", "속박", "공포", "넉백", "슬로우", "독 도트", "화상 도트"];
 const SLOTS: &[&str] = &["skill", "skill2", "ult"];
 const SLOTS_KO: &[&str] = &["스킬", "스킬2", "궁극기"];
 const ALL_TAGS: &[&str] = &["AD", "AP", "Heal", "Shield", "Dot", "CC", "Range", "Melee", "Tank", "Magic"];
@@ -66,30 +68,88 @@ fn setup_style(ctx: &egui::Context) {
 // ============================================================================
 
 #[derive(Clone)]
-struct SkillDraft { template: usize, params: Vec<(String, i64)> }
-
-impl SkillDraft {
-    fn new(template: usize) -> Self {
-        let params = template_params(TEMPLATES[template]).iter()
-            .map(|(k, _, d, _)| (k.to_string(), *d)).collect();
-        Self { template, params }
+struct StatusDraft { kind: usize, v: i64, v2: i64 }
+impl StatusDraft {
+    fn new(kind: usize) -> Self {
+        let (v, v2) = match STATUS[kind] {
+            "knockback" => (10, 2200), "slow" => (120, 30),
+            "poison_dot" | "fire_dot" => (180, 25), _ => (45, 0),
+        };
+        Self { kind, v, v2 }
     }
 }
 
-/// Per-template tunable params: (json_key, korean_label, default, max). Mirrors champion-gen build_skill.
-fn template_params(t: &str) -> &'static [(&'static str, &'static str, i64, i64)] {
-    match t {
-        "skillshot_ap" => &[("ap_ratio","주문력계수%",80,400),("damage","고정피해",50,1000),("range","사거리",65000,90000),("radius","반경",8000,40000),("cooltime","쿨타임(틱)",360,3600)],
-        "skillshot_ad" => &[("ad_ratio","공격력계수%",110,400),("damage","고정피해",40,1000),("range","사거리",60000,90000),("radius","반경",8000,40000),("cooltime","쿨타임(틱)",340,3600)],
-        "self_buff" => &[("magic_power","주문력",0,200),("attack","공격력",0,200),("attack_speed_mult","공속%",0,200),("move_speed_mult","이속%",0,100),("skill_cooldown_mult","쿨감%",0,100),("vamp","흡혈",0,100),("tick","지속(틱)",180,1200),("cooltime","쿨타임(틱)",600,3600)],
-        "dash" => &[("ad_ratio","공격력계수%",60,400),("damage","고정피해",30,1000),("range","사거리",40000,90000),("speed","속도",3800,9000),("cooltime","쿨타임(틱)",420,3600)],
-        "heal" => &[("amount","회복량",80,1000),("ap_ratio","주문력계수%",40,400),("range","사거리",55000,90000),("cooltime","쿨타임(틱)",540,3600)],
-        "aoe_stun" => &[("ap_ratio","주문력계수%",100,400),("damage","고정피해",120,1000),("radius","반경",42000,90000),("stun","기절(틱)",45,300),("cooltime","쿨타임(틱)",1200,3600)],
-        "shield_self" => &[("amount","보호막량",120,1000),("ap_ratio","주문력계수%",50,400),("tick","지속(틱)",300,1200),("cooltime","쿨타임(틱)",540,3600)],
-        "stun_shot" => &[("ap_ratio","주문력계수%",60,400),("damage","고정피해",40,1000),("range","사거리",60000,90000),("radius","반경",8000,40000),("stun","기절(틱)",45,300),("cooltime","쿨타임(틱)",480,3600)],
-        "knockback_shot" => &[("ad_ratio","공격력계수%",90,400),("damage","고정피해",30,1000),("range","사거리",55000,90000),("radius","반경",9000,40000),("knockback_speed","넉백속도",2200,6000),("knockback_tick","넉백(틱)",10,40),("cooltime","쿨타임(틱)",420,3600)],
-        "dot_poison" => &[("ap_ratio","계수%",20,400),("dot_damage","틱당피해",20,500),("dot_duration","지속(틱)",180,600),("dot_period","주기(틱)",30,120),("range","사거리",62000,90000),("radius","반경",8000,40000),("cooltime","쿨타임(틱)",420,3600)],
-        _ => &[],
+#[derive(Clone)]
+struct SkillDraft {
+    delivery: usize,         // index into DELIVERY
+    damage: usize,           // index into DAMAGE
+    damage_ratio: i64,
+    damage_flat: i64,
+    statuses: Vec<StatusDraft>,
+    heal: i64,
+    shield: i64,
+    b_attack: i64, b_mp: i64, b_aspd: i64, b_mspd: i64, b_vamp: i64, b_cdr: i64, b_tick: i64,
+    ally_target: bool,
+    range: i64, radius: i64, speed: i64, cooltime: i64, penetrate: bool,
+}
+impl SkillDraft {
+    fn offensive(delivery: usize, damage: usize, ratio: i64, statuses: Vec<StatusDraft>, cooltime: i64) -> Self {
+        Self {
+            delivery, damage, damage_ratio: ratio, damage_flat: 0, statuses,
+            heal: 0, shield: 0, b_attack: 0, b_mp: 0, b_aspd: 0, b_mspd: 0, b_vamp: 0, b_cdr: 0, b_tick: 180,
+            ally_target: false, range: 60000, radius: 13000, speed: 4200, cooltime, penetrate: false,
+        }
+    }
+    fn support(shield: i64, cooltime: i64) -> Self {
+        let mut s = Self::offensive(5, 0, 0, vec![], cooltime); // 5 = support
+        s.shield = shield; s
+    }
+    fn to_value(&self, slot: &str) -> Value {
+        let statuses: Vec<Value> = self.statuses.iter()
+            .map(|st| json!({"kind": STATUS[st.kind], "v": st.v, "v2": st.v2})).collect();
+        json!({
+            "slot": slot, "delivery": DELIVERY[self.delivery], "damage": DAMAGE[self.damage],
+            "damage_ratio": self.damage_ratio, "damage_flat": self.damage_flat, "statuses": statuses,
+            "heal": self.heal, "shield": self.shield,
+            "buff": {"attack": self.b_attack, "magic_power": self.b_mp, "attack_speed_mult": self.b_aspd,
+                "move_speed_mult": self.b_mspd, "vamp": self.b_vamp, "skill_cooldown_mult": self.b_cdr, "tick": self.b_tick},
+            "ally_target": self.ally_target, "range": self.range, "radius": self.radius,
+            "speed": self.speed, "cooltime": self.cooltime, "penetrate": self.penetrate,
+        })
+    }
+}
+
+/// One-line Korean summary of a skill (live feedback under the editor).
+fn skill_summary(s: &SkillDraft) -> String {
+    let d = DELIVERY_KO[s.delivery];
+    let mut parts: Vec<String> = Vec::new();
+    if DELIVERY[s.delivery] == "support" {
+        if s.heal > 0 { parts.push(format!("치유 {}", s.heal)); }
+        if s.shield > 0 { parts.push(format!("보호막 {}", s.shield)); }
+        if s.b_attack != 0 || s.b_mp != 0 || s.b_aspd != 0 || s.b_mspd != 0 || s.b_vamp != 0 || s.b_cdr != 0 {
+            parts.push("강화".to_string());
+        }
+    } else {
+        match DAMAGE[s.damage] {
+            "ad" => parts.push(format!("공격력 {}% 피해", s.damage_ratio)),
+            "ap" => parts.push(format!("주문력 {}% 피해", s.damage_ratio)),
+            "fixed" => parts.push(format!("고정 {} 피해", s.damage_flat)),
+            _ => {}
+        }
+        for st in &s.statuses { parts.push(STATUS_KO[st.kind].to_string()); }
+    }
+    if parts.is_empty() { d.to_string() } else { format!("{d} — {}", parts.join(", ")) }
+}
+
+/// Korean label + max for a status's secondary fields, by status kind.
+fn status_fields(kind: usize) -> (&'static str, i64, &'static str, i64) {
+    // (v_label, v_max, v2_label, v2_max) ; v2_label empty = hide v2
+    match STATUS[kind] {
+        "stun" | "bind" | "fear" => ("지속(틱)", 300, "", 0),
+        "knockback" => ("지속(틱)", 40, "속도", 6000),
+        "slow" => ("지속(틱)", 600, "감소%", 90),
+        "poison_dot" | "fire_dot" => ("지속(틱)", 600, "틱당피해", 500),
+        _ => ("값", 600, "", 0),
     }
 }
 
@@ -124,7 +184,11 @@ impl ChampionDraft {
             icon_mode: 0,
             icon: String::new(),
             icon_paths: [String::new(), String::new(), String::new()],
-            skills: vec![SkillDraft::new(0), SkillDraft::new(2), SkillDraft::new(5)],
+            skills: vec![
+                SkillDraft::offensive(0, 2, 80, vec![], 480),                          // 직선 투사체 + 마법 80%
+                SkillDraft::support(120, 540),                                         // 지원 + 실드 120
+                SkillDraft::offensive(2, 2, 120, vec![StatusDraft::new(0)], 1200),     // 주변 광역 + 마법 120% + 기절
+            ],
             stats: role_base_stats(ROLES[0]),
             growth: role_base_growth(ROLES[0]),
             tags: role_base_tags(ROLES[0]),
@@ -136,11 +200,8 @@ impl ChampionDraft {
             2 => json!({ "mode": "upload", "path": up }),
             _ => json!({ "mode": "random" }),
         };
-        let skills: Vec<Value> = self.skills.iter().enumerate().map(|(i, s)| {
-            let mut p = serde_json::Map::new();
-            for (k, v) in &s.params { p.insert(k.clone(), json!(v)); }
-            json!({ "slot": SLOTS[i], "template": TEMPLATES[s.template], "params": p })
-        }).collect();
+        let skills: Vec<Value> = self.skills.iter().enumerate()
+            .map(|(i, s)| s.to_value(SLOTS[i])).collect();
         let mut overrides = serde_json::Map::new();
         for (k, v) in &self.stats { overrides.insert(k.clone(), json!(v)); }
         let mut growth_ov = serde_json::Map::new();
@@ -565,33 +626,95 @@ impl eframe::App for App {
                 });
 
                 // --- 스킬 ---
-                section(ui, "스킬", |ui| {
+                section(ui, "스킬 (효과 빌더)", |ui| {
                     for si in 0..3 {
                         let s = &mut c.skills[si];
                         egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(8.0)).rounding(5.0).show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.label(egui::RichText::new(SLOTS_KO[si]).strong());
-                                let old = s.template;
-                                egui::ComboBox::from_id_source(format!("tmpl{si}")).width(160.0)
-                                    .selected_text(TEMPLATES_KO[s.template]).show_ui(ui, |ui| {
-                                    for ti in 0..TEMPLATES.len() { ui.selectable_value(&mut s.template, ti, TEMPLATES_KO[ti]); }
+                                ui.label("전달방식");
+                                egui::ComboBox::from_id_source(format!("dlv{si}")).width(150.0)
+                                    .selected_text(DELIVERY_KO[s.delivery]).show_ui(ui, |ui| {
+                                    for di in 0..DELIVERY.len() { ui.selectable_value(&mut s.delivery, di, DELIVERY_KO[di]); }
                                 });
-                                if s.template != old { *s = SkillDraft::new(s.template); }
                             });
                             ui.add_space(4.0);
-                            let specs = template_params(TEMPLATES[s.template]);
-                            egui::Grid::new(format!("p{si}")).num_columns(4).spacing([12.0, 5.0]).show(ui, |ui| {
-                                for (idx, (k, v)) in s.params.iter_mut().enumerate() {
-                                    let label = specs.iter().find(|(pk, ..)| pk == k).map(|(_, l, ..)| *l).unwrap_or(k.as_str());
-                                    let max = specs.iter().find(|(pk, ..)| pk == k).map(|(.., m)| *m).unwrap_or(1000);
-                                    ui.label(label);
-                                    ui.add(egui::DragValue::new(v).clamp_range(0..=max));
-                                    if idx % 2 == 1 { ui.end_row(); }
+                            let is_support = DELIVERY[s.delivery] == "support";
+
+                            if is_support {
+                                ui.checkbox(&mut s.ally_target, "아군 대상 (해제 시 자신)");
+                                egui::Grid::new(format!("sup{si}")).num_columns(4).spacing([10.0, 5.0]).show(ui, |ui| {
+                                    ui.label("치유"); ui.add(egui::DragValue::new(&mut s.heal).clamp_range(0..=2000));
+                                    ui.label("보호막"); ui.add(egui::DragValue::new(&mut s.shield).clamp_range(0..=2000)); ui.end_row();
+                                    ui.label("공격력+"); ui.add(egui::DragValue::new(&mut s.b_attack).clamp_range(0..=200));
+                                    ui.label("주문력+"); ui.add(egui::DragValue::new(&mut s.b_mp).clamp_range(0..=200)); ui.end_row();
+                                    ui.label("공속%+"); ui.add(egui::DragValue::new(&mut s.b_aspd).clamp_range(0..=200));
+                                    ui.label("이속%+"); ui.add(egui::DragValue::new(&mut s.b_mspd).clamp_range(0..=100)); ui.end_row();
+                                    ui.label("흡혈+"); ui.add(egui::DragValue::new(&mut s.b_vamp).clamp_range(0..=100));
+                                    ui.label("쿨감%+"); ui.add(egui::DragValue::new(&mut s.b_cdr).clamp_range(0..=100)); ui.end_row();
+                                    ui.label("버프지속(틱)"); ui.add(egui::DragValue::new(&mut s.b_tick).clamp_range(0..=1200)); ui.end_row();
+                                });
+                            } else {
+                                ui.horizontal(|ui| {
+                                    ui.label("피해");
+                                    egui::ComboBox::from_id_source(format!("dmg{si}")).width(120.0)
+                                        .selected_text(DAMAGE_KO[s.damage]).show_ui(ui, |ui| {
+                                        for di in 0..DAMAGE.len() { ui.selectable_value(&mut s.damage, di, DAMAGE_KO[di]); }
+                                    });
+                                    match DAMAGE[s.damage] {
+                                        "none" => {}
+                                        "fixed" => { ui.label("고정값"); ui.add(egui::DragValue::new(&mut s.damage_flat).clamp_range(0..=2000)); }
+                                        _ => {
+                                            ui.label("계수%"); ui.add(egui::DragValue::new(&mut s.damage_ratio).clamp_range(0..=500));
+                                            ui.label("+고정"); ui.add(egui::DragValue::new(&mut s.damage_flat).clamp_range(0..=2000));
+                                        }
+                                    }
+                                });
+                                ui.add_space(2.0);
+                                ui.horizontal(|ui| {
+                                    ui.label("상태이상");
+                                    if ui.small_button("+ 추가").clicked() { s.statuses.push(StatusDraft::new(0)); }
+                                });
+                                let mut remove = None;
+                                for (sti, st) in s.statuses.iter_mut().enumerate() {
+                                    ui.horizontal(|ui| {
+                                        egui::ComboBox::from_id_source(format!("st{si}_{sti}")).width(90.0)
+                                            .selected_text(STATUS_KO[st.kind]).show_ui(ui, |ui| {
+                                            for ki in 0..STATUS.len() { ui.selectable_value(&mut st.kind, ki, STATUS_KO[ki]); }
+                                        });
+                                        let (vl, vmax, v2l, v2max) = status_fields(st.kind);
+                                        ui.label(vl); ui.add(egui::DragValue::new(&mut st.v).clamp_range(0..=vmax));
+                                        if !v2l.is_empty() { ui.label(v2l); ui.add(egui::DragValue::new(&mut st.v2).clamp_range(0..=v2max)); }
+                                        if ui.small_button("삭제").clicked() { remove = Some(sti); }
+                                    });
                                 }
+                                if let Some(r) = remove { s.statuses.remove(r); }
+                            }
+
+                            ui.add_space(4.0);
+                            let dl = DELIVERY[s.delivery];
+                            egui::Grid::new(format!("num{si}")).num_columns(4).spacing([10.0, 5.0]).show(ui, |ui| {
+                                ui.label("쿨타임(틱)"); ui.add(egui::DragValue::new(&mut s.cooltime).clamp_range(0..=3600));
+                                if matches!(dl, "linear_projectile" | "homing_projectile" | "area_target" | "dash") {
+                                    ui.label("사거리"); ui.add(egui::DragValue::new(&mut s.range).clamp_range(0..=120000));
+                                }
+                                ui.end_row();
+                                if matches!(dl, "linear_projectile" | "homing_projectile" | "area_self" | "area_target") {
+                                    ui.label("반경/폭"); ui.add(egui::DragValue::new(&mut s.radius).clamp_range(0..=90000));
+                                }
+                                if matches!(dl, "linear_projectile" | "homing_projectile" | "area_target" | "dash") {
+                                    ui.label("속도"); ui.add(egui::DragValue::new(&mut s.speed).clamp_range(0..=9000));
+                                }
+                                ui.end_row();
                             });
+                            if matches!(dl, "linear_projectile" | "dash") {
+                                ui.checkbox(&mut s.penetrate, "관통");
+                            }
+                            ui.add_space(2.0);
+                            ui.weak(skill_summary(s));
                         });
-                        ui.add_space(6.0);
+                        ui.add_space(8.0);
                     }
                 });
 

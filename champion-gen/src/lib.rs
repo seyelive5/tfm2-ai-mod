@@ -28,6 +28,10 @@ pub struct Catalog {
     pub base_power_avg: f64,
     pub icon_sheet_png: Vec<u8>,
     pub icon_rects: BTreeMap<String, [f32; 4]>,
+    /// Names of base skill-effect animations (e.g. explosion, fire, freeze) for impact visuals.
+    pub effect_anims: Vec<String>,
+    /// Names of base projectile/effect sprites for projectile visuals.
+    pub projectile_sprites: Vec<String>,
 }
 
 pub const STAT_FIELDS: &[&str] = &[
@@ -155,6 +159,8 @@ pub fn load_catalog(bundle_path: &Path) -> Result<Catalog> {
     let mut champion_info: Option<Value> = None;
     let mut icon_sheet_png: Vec<u8> = Vec::new();
     let mut icon_rects: BTreeMap<String, [f32; 4]> = BTreeMap::new();
+    let mut effect_anims: BTreeSet<String> = BTreeSet::new();
+    let mut projectile_sprites: BTreeSet<String> = BTreeSet::new();
 
     while pos + 8 < buf.len() {
         let _ext = read_str(&buf, &mut pos)?;
@@ -186,6 +192,12 @@ pub fn load_catalog(bundle_path: &Path) -> Result<Catalog> {
             if !name.is_empty() && name != "character_sheet" && !name.ends_with("_ult") {
                 sprites.insert(name.to_string());
             }
+        } else if let Some(rest) = path.strip_prefix("asset/base/aseprite_resources/skill_effect/") {
+            let n = rest.split('#').next().unwrap_or(rest);
+            if !n.is_empty() { effect_anims.insert(n.to_string()); }
+        } else if let Some(rest) = path.strip_prefix("asset/base/sprite/") {
+            let n = rest.split('#').next().unwrap_or(rest);
+            if !n.is_empty() { projectile_sprites.insert(n.to_string()); }
         }
     }
 
@@ -212,6 +224,8 @@ pub fn load_catalog(bundle_path: &Path) -> Result<Catalog> {
         champion_sprites: sprites.into_iter().collect(),
         category_stat_avg, category_growth_avg, stat_ranges, growth_ranges,
         base_power_avg, icon_sheet_png, icon_rects,
+        effect_anims: effect_anims.into_iter().collect(),
+        projectile_sprites: projectile_sprites.into_iter().collect(),
     })
 }
 
@@ -283,6 +297,10 @@ pub struct SkillSpec {
     #[serde(default = "d_speed")] pub speed: i64,
     #[serde(default = "d_cool")] pub cooltime: i64,
     #[serde(default)] pub penetrate: bool,
+    /// impact effect animation name (from Catalog.effect_anims); "" = none.
+    #[serde(default)] pub impact: String,
+    /// projectile visual name (sprite from projectile_sprites, or effect anim); "" = default arrow.
+    #[serde(default)] pub projectile: String,
 }
 fn d_range() -> i64 { 60000 }
 fn d_radius() -> i64 { 13000 }
@@ -445,6 +463,7 @@ fn build_skill(id: &str, s: &SkillSpec) -> Result<Value> {
         DamageKind::None => {}
     }
     for st in &s.statuses { payload.push(status_effect(st)); }
+    if !s.impact.is_empty() { payload.push(json!({"type":"ViewEffect","name":format!("{id}_{name}_impact")})); }
     let wrapped: Vec<Value> = payload.iter().map(|e| json!({"effect": e, "casting_type":"Targeting"})).collect();
     let shape = json!({"Circle": {"radius": s.radius}});
 
@@ -625,18 +644,33 @@ pub fn build_champion(spec: &ChampionSpec, cat: &Catalog, rng: &mut impl rand::R
     champ.insert("growth".into(), growth);
     champ.insert("attack".into(), basic_attack(&spec.id, preset.ranged));
 
+    let is_fx = |n: &str| cat.effect_anims.iter().any(|x| x == n);
     let mut view_projectiles = vec![
         json!({ "type": "Sprite", "name": format!("{}_attack", spec.id), "sprite": "asset/base/sprite/arrow" }),
     ];
+    let mut view_effects: Vec<Value> = Vec::new();
     for s in &spec.skills {
+        let slot = s.slot.action_name();
         let action = build_skill(&spec.id, s)?;
-        champ.insert(s.slot.action_name().into(), action);
+        champ.insert(slot.into(), action);
         if matches!(s.delivery, Delivery::LinearProjectile | Delivery::HomingProjectile | Delivery::AreaTarget) {
-            view_projectiles.push(json!({ "type": "Sprite",
-                "name": format!("{}_{}", spec.id, s.slot.action_name()), "sprite": "asset/base/sprite/arrow" }));
+            let pname = format!("{}_{}", spec.id, slot);
+            if s.projectile.is_empty() {
+                view_projectiles.push(json!({"type":"Sprite","name":pname,"sprite":"asset/base/sprite/arrow"}));
+            } else if is_fx(&s.projectile) {
+                view_projectiles.push(json!({"type":"Animated","name":pname,
+                    "anim":format!("asset/base/aseprite_resources/skill_effect/{}", s.projectile),"tag":s.projectile,"repeat":true}));
+            } else {
+                view_projectiles.push(json!({"type":"Sprite","name":pname,"sprite":format!("asset/base/sprite/{}", s.projectile)}));
+            }
+        }
+        if !s.impact.is_empty() {
+            view_effects.push(json!({"type":"Animation","name":format!("{}_{}_impact", spec.id, slot),
+                "anim":format!("asset/base/aseprite_resources/skill_effect/{}", s.impact),"tag":s.impact}));
         }
     }
     champ.insert("view_projectiles".into(), json!(view_projectiles));
+    if !view_effects.is_empty() { champ.insert("view_effects".into(), json!(view_effects)); }
 
     let mk = |name: &str| {
         let mut m = Map::new();
