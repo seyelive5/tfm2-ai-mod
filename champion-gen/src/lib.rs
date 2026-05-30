@@ -34,8 +34,23 @@ pub struct Catalog {
     pub projectile_sprites: Vec<String>,
     /// PNG bytes per projectile sprite name (single-image sprites) — for previews.
     pub projectile_png: BTreeMap<String, Vec<u8>>,
-    /// (#sheet PNG bytes, first-frame pixel rect [x,y,w,h]) per effect anim name — for previews.
-    pub effect_preview: BTreeMap<String, (Vec<u8>, [f32; 4])>,
+    /// (#sheet PNG bytes, ALL frame pixel rects [x,y,w,h]) per effect anim name — for animated previews.
+    pub effect_preview: BTreeMap<String, (Vec<u8>, Vec<[f32; 4]>)>,
+}
+
+/// Curated projectile sprites that read as actual projectiles (drops UI/background/map assets).
+const PROJECTILE_WHITELIST: &[&str] = &[
+    "arrow", "bullet", "gunner_bullet", "ice_mage_projectile", "executioner_skill",
+    "particle", "circle", "triangle", "triangle_l",
+];
+/// Effect-anim names that read as real combat impacts (drops recall/levelup/icons/tower projectiles).
+fn is_combat_effect(name: &str) -> bool {
+    const DROP: &[&str] = &[
+        "recall_effect_back", "recall_effect_front", "levelup_effect", "buff_debuff_icon",
+        "shield_receive_effect", "sniper_target_effect", "gambler_dice", "gambler_projectile",
+        "blue_tower_projectile", "red_tower_projectile", "barrier_magician_projectile_ani",
+    ];
+    !DROP.contains(&name)
 }
 
 pub const STAT_FIELDS: &[&str] = &[
@@ -167,7 +182,7 @@ pub fn load_catalog(bundle_path: &Path) -> Result<Catalog> {
     let mut projectile_sprites: BTreeSet<String> = BTreeSet::new();
     let mut projectile_png: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut effect_sheets: BTreeMap<String, Vec<u8>> = BTreeMap::new();   // name -> #sheet PNG
-    let mut effect_first_rect: BTreeMap<String, [f32; 4]> = BTreeMap::new(); // name -> first-frame pixel rect
+    let mut effect_frames: BTreeMap<String, Vec<[f32; 4]>> = BTreeMap::new(); // name -> all frame pixel rects
 
     while pos + 8 < buf.len() {
         let _ext = read_str(&buf, &mut pos)?;
@@ -201,20 +216,25 @@ pub fn load_catalog(bundle_path: &Path) -> Result<Catalog> {
             }
         } else if let Some(rest) = path.strip_prefix("asset/base/aseprite_resources/skill_effect/") {
             let n = rest.split('#').next().unwrap_or(rest).to_string();
-            if !n.is_empty() {
+            if !n.is_empty() && is_combat_effect(&n) {
                 effect_anims.insert(n.clone());
                 if rest.ends_with("#sheet") {
                     effect_sheets.insert(n, maybe_gunzip_bytes(&buf[data_start..data_start + dlen]));
                 } else if rest.ends_with("#anim") {
-                    // first frame's pixel rect: anims.<firstTag>.frames[0].data {x,y,w,h}
+                    // collect ALL frame pixel rects from the first (longest) animation tag
                     let txt = maybe_gunzip(&buf[data_start..data_start + dlen]);
                     if let Ok(v) = serde_json::from_str::<Value>(&txt) {
                         if let Some(anims) = v.get("anims").and_then(|a| a.as_object()) {
-                            if let Some(first) = anims.values().next() {
-                                if let Some(d) = first.get("frames").and_then(|f| f.get(0)).and_then(|f0| f0.get("data")) {
+                            // pick the tag with the most frames (the "main" animation)
+                            let best = anims.values()
+                                .max_by_key(|a| a.get("frames").and_then(|f| f.as_array()).map(|x| x.len()).unwrap_or(0));
+                            if let Some(frames) = best.and_then(|a| a.get("frames")).and_then(|f| f.as_array()) {
+                                let rects: Vec<[f32; 4]> = frames.iter().filter_map(|fr| {
+                                    let d = fr.get("data")?;
                                     let g = |k: &str| d.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
-                                    effect_first_rect.insert(n, [g("x"), g("y"), g("w"), g("h")]);
-                                }
+                                    Some([g("x"), g("y"), g("w"), g("h")])
+                                }).collect();
+                                if !rects.is_empty() { effect_frames.insert(n, rects); }
                             }
                         }
                     }
@@ -222,11 +242,11 @@ pub fn load_catalog(bundle_path: &Path) -> Result<Catalog> {
             }
         } else if let Some(rest) = path.strip_prefix("asset/base/sprite/") {
             let n = rest.split('#').next().unwrap_or(rest).to_string();
-            if !n.is_empty() && !rest.contains('#') {
+            if !n.is_empty() && PROJECTILE_WHITELIST.contains(&n.as_str()) {
                 projectile_sprites.insert(n.clone());
-                projectile_png.insert(n, maybe_gunzip_bytes(&buf[data_start..data_start + dlen]));
-            } else if !n.is_empty() {
-                projectile_sprites.insert(n);
+                if !rest.contains('#') {
+                    projectile_png.insert(n, maybe_gunzip_bytes(&buf[data_start..data_start + dlen]));
+                }
             }
         }
     }
@@ -259,8 +279,8 @@ pub fn load_catalog(bundle_path: &Path) -> Result<Catalog> {
         projectile_png,
         effect_preview: effect_sheets.into_iter()
             .filter_map(|(name, png)| {
-                let rect = effect_first_rect.get(&name).copied().unwrap_or([0.0, 0.0, 0.0, 0.0]);
-                Some((name, (png, rect)))
+                let frames = effect_frames.get(&name).cloned().unwrap_or_default();
+                if frames.is_empty() { None } else { Some((name, (png, frames))) }
             })
             .collect(),
     })

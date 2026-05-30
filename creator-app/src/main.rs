@@ -267,9 +267,13 @@ struct App {
     effect_anims: Vec<String>,
     projectile_sprites: Vec<String>,
     projectile_png: BTreeMap<String, Vec<u8>>,
-    effect_preview: BTreeMap<String, (Vec<u8>, [f32; 4])>,
+    effect_preview: BTreeMap<String, (Vec<u8>, Vec<[f32; 4]>)>,
     /// lazily-decoded textures for skill visual previews (keyed "proj:<name>" / "fx:<name>")
     vis_tex: std::collections::HashMap<String, Option<egui::TextureHandle>>,
+    /// effect name -> all frame UV rects (normalized) for animated preview
+    fx_uv_frames: BTreeMap<String, Vec<egui::Rect>>,
+    /// which gallery picker is open: Some((skill_index, "proj"|"fx")) or None
+    gallery: Option<(usize, &'static str)>,
 }
 
 /// Decode PNG bytes into an egui texture.
@@ -313,6 +317,8 @@ impl Default for App {
             projectile_png: BTreeMap::new(),
             effect_preview: BTreeMap::new(),
             vis_tex: std::collections::HashMap::new(),
+            fx_uv_frames: BTreeMap::new(),
+            gallery: None,
         };
         app.load_catalog();
         app
@@ -343,6 +349,7 @@ impl App {
                 self.projectile_png = cat.projectile_png.clone();
                 self.effect_preview = cat.effect_preview.clone();
                 self.vis_tex.clear();
+                self.fx_uv_frames.clear();
                 self.status = format!("준비 완료 — 스프라이트 {}종, 아이콘 {}종 (실측 데이터 반영)",
                     self.sprite_list.len(), self.icon_list.len());
                 let first_sprite = self.sprite_list.first().cloned().unwrap_or_default();
@@ -415,13 +422,23 @@ impl eframe::App for App {
         if self.icon_texture.is_none() && !self.icon_sheet_png.is_empty() {
             self.icon_texture = decode_texture(ctx, "skill_icons", &self.icon_sheet_png);
         }
-        // lazily decode skill-visual textures (projectile sprites + effect sheets) once per catalog
+        // lazily decode skill-visual textures (projectile sprites + effect sheets) once per catalog,
+        // and precompute normalized UV rects per effect frame for animated preview.
         if self.vis_tex.is_empty() && (!self.projectile_png.is_empty() || !self.effect_preview.is_empty()) {
             for (n, png) in &self.projectile_png {
                 self.vis_tex.insert(format!("proj:{n}"), decode_texture(ctx, &format!("proj_{n}"), png));
             }
-            for (n, (png, _)) in &self.effect_preview {
-                self.vis_tex.insert(format!("fx:{n}"), decode_texture(ctx, &format!("fx_{n}"), png));
+            for (n, (png, frames)) in &self.effect_preview {
+                let tex = decode_texture(ctx, &format!("fx_{n}"), png);
+                if let Some(t) = &tex {
+                    let sz = t.size_vec2();
+                    if sz.x > 0.0 && sz.y > 0.0 {
+                        let uvs: Vec<egui::Rect> = frames.iter().map(|r| egui::Rect::from_min_size(
+                            egui::pos2(r[0] / sz.x, r[1] / sz.y), egui::vec2(r[2] / sz.x, r[3] / sz.y))).collect();
+                        self.fx_uv_frames.insert(n.clone(), uvs);
+                    }
+                }
+                self.vis_tex.insert(format!("fx:{n}"), tex);
             }
         }
 
@@ -513,28 +530,26 @@ impl eframe::App for App {
             let base_power = self.catalog.as_ref().map(|c| c.base_power_avg).filter(|v| *v > 0.0).unwrap_or(1500.0);
             let icon_tex = self.icon_texture.clone();
             let icon_rects_uv = self.icon_rects.clone();
-            let fx_list = self.effect_anims.clone();
-            let proj_list = self.projectile_sprites.clone();
             let vis_tex = self.vis_tex.clone();
-            let fx_rects = self.effect_preview.iter().map(|(k, (_, r))| (k.clone(), *r)).collect::<BTreeMap<_, _>>();
+            let fx_uv = self.fx_uv_frames.clone();
+            let anim_time = ctx.input(|inp| inp.time);
+            if !fx_uv.is_empty() { ctx.request_repaint(); } // keep effect animations playing
+            let mut gallery_open = self.gallery; // capture & possibly set by skill buttons
             let c = &mut self.champions[i];
-            // preview a chosen skill visual (projectile sprite OR effect first-frame), 32px
-            let show_vis = |ui: &mut egui::Ui, kind: &str, name: &str| {
+            // preview a chosen skill visual at `sz`px. fx = animated effect (cycles frames).
+            let show_vis = |ui: &mut egui::Ui, kind: &str, name: &str, sz: f32| {
                 if name.is_empty() { return; }
-                if let Some(Some(tex)) = vis_tex.get(&format!("{kind}:{name}")) {
-                    if kind == "fx" {
-                        if let Some(r) = fx_rects.get(name) {
-                            let sz = tex.size_vec2(); // sheet pixel size
-                            if sz.x > 0.0 && sz.y > 0.0 {
-                                let uv = egui::Rect::from_min_size(
-                                    egui::pos2(r[0] / sz.x, r[1] / sz.y), egui::vec2(r[2] / sz.x, r[3] / sz.y));
-                                ui.add(egui::Image::new(egui::load::SizedTexture::new(tex.id(), egui::vec2(32.0, 32.0))).uv(uv));
-                                return;
-                            }
+                let Some(Some(tex)) = vis_tex.get(&format!("{kind}:{name}")) else { return };
+                if kind == "fx" {
+                    if let Some(frames) = fx_uv.get(name) {
+                        if !frames.is_empty() {
+                            let idx = ((anim_time * 12.0) as usize) % frames.len(); // ~12 fps
+                            ui.add(egui::Image::new(egui::load::SizedTexture::new(tex.id(), egui::vec2(sz, sz))).uv(frames[idx]));
+                            return;
                         }
                     }
-                    ui.add(egui::Image::new(tex).max_width(32.0).max_height(32.0));
                 }
+                ui.add(egui::Image::new(tex).max_width(sz).max_height(sz));
             };
 
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -693,28 +708,22 @@ impl eframe::App for App {
                             ui.add_space(4.0);
                             let is_support = DELIVERY[s.delivery] == "support";
 
-                            // skill VISUALS (offensive only): projectile sprite + impact effect, with preview
+                            // skill VISUALS (offensive only): pick via gallery, show animated preview
                             if !is_support {
                                 let dl = DELIVERY[s.delivery];
                                 if matches!(dl, "linear_projectile" | "homing_projectile" | "area_target") {
                                     ui.horizontal(|ui| {
                                         ui.label("투사체 그림");
-                                        egui::ComboBox::from_id_source(format!("pj{si}")).width(150.0)
-                                            .selected_text(if s.projectile.is_empty() { "기본(화살)" } else { s.projectile.as_str() }).show_ui(ui, |ui| {
-                                            ui.selectable_value(&mut s.projectile, String::new(), "기본(화살)");
-                                            for n in &proj_list { ui.selectable_value(&mut s.projectile, n.clone(), n.as_str()); }
-                                        });
-                                        show_vis(ui, "proj", &s.projectile);
+                                        show_vis(ui, "proj", &s.projectile, 40.0);
+                                        ui.label(if s.projectile.is_empty() { "기본(화살)" } else { s.projectile.as_str() });
+                                        if ui.button("그림 선택…").clicked() { gallery_open = Some((si, "proj")); }
                                     });
                                 }
                                 ui.horizontal(|ui| {
                                     ui.label("적중 효과");
-                                    egui::ComboBox::from_id_source(format!("ix{si}")).width(150.0)
-                                        .selected_text(if s.impact.is_empty() { "없음" } else { s.impact.as_str() }).show_ui(ui, |ui| {
-                                        ui.selectable_value(&mut s.impact, String::new(), "없음");
-                                        for n in &fx_list { ui.selectable_value(&mut s.impact, n.clone(), n.as_str()); }
-                                    });
-                                    show_vis(ui, "fx", &s.impact);
+                                    show_vis(ui, "fx", &s.impact, 40.0);
+                                    ui.label(if s.impact.is_empty() { "없음" } else { s.impact.as_str() });
+                                    if ui.button("효과 선택…").clicked() { gallery_open = Some((si, "fx")); }
                                 });
                                 ui.add_space(4.0);
                             }
@@ -797,7 +806,76 @@ impl eframe::App for App {
 
                 ui.add_space(8.0);
             });
+            self.gallery = gallery_open; // commit any "그림 선택…" button press
         });
+
+        // ---------- Visual gallery picker (modal-ish window) ----------
+        self.draw_gallery(ctx);
+    }
+}
+
+impl App {
+    /// Grid gallery to pick a projectile sprite or impact effect by image. Larger thumbnails, click to select.
+    fn draw_gallery(&mut self, ctx: &egui::Context) {
+        let Some((si, kind)) = self.gallery else { return };
+        let title = if kind == "proj" { "투사체 그림 선택" } else { "적중 효과 선택" };
+        let names: Vec<String> = if kind == "proj" { self.projectile_sprites.clone() } else { self.effect_anims.clone() };
+        let vis_tex = self.vis_tex.clone();
+        let fx_uv = self.fx_uv_frames.clone();
+        let anim_time = ctx.input(|inp| inp.time);
+        if kind == "fx" { ctx.request_repaint(); }
+        let mut open = true;
+        let mut chosen: Option<String> = None;
+
+        egui::Window::new(title).open(&mut open).resizable(true).default_width(560.0).collapsible(false).show(ctx, |ui| {
+            egui::ScrollArea::vertical().max_height(460.0).show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    // "none/default" cell
+                    let none_label = if kind == "proj" { "기본(화살)" } else { "없음" };
+                    ui.allocate_ui(egui::vec2(86.0, 96.0), |ui| {
+                        ui.vertical_centered(|ui| {
+                            if ui.button("  ✕  ").clicked() { chosen = Some(String::new()); }
+                            ui.label(none_label);
+                        });
+                    });
+                    for n in &names {
+                        ui.allocate_ui(egui::vec2(86.0, 96.0), |ui| {
+                            ui.vertical_centered(|ui| {
+                                let resp = egui::Frame::group(ui.style()).inner_margin(4.0).show(ui, |ui| {
+                                    let tex = vis_tex.get(&format!("{kind}:{n}"));
+                                    if let Some(Some(t)) = tex {
+                                        if kind == "fx" {
+                                            if let Some(fr) = fx_uv.get(n) {
+                                                if !fr.is_empty() {
+                                                    let idx = ((anim_time * 12.0) as usize) % fr.len();
+                                                    ui.add(egui::Image::new(egui::load::SizedTexture::new(t.id(), egui::vec2(60.0, 60.0))).uv(fr[idx]));
+                                                } else { ui.add_space(60.0); }
+                                            } else { ui.add_space(60.0); }
+                                        } else {
+                                            ui.add(egui::Image::new(t).max_width(60.0).max_height(60.0));
+                                        }
+                                    } else { ui.add_space(60.0); }
+                                }).response;
+                                if resp.interact(egui::Sense::click()).clicked() { chosen = Some(n.clone()); }
+                                ui.small(n.as_str());
+                            });
+                        });
+                    }
+                });
+            });
+        });
+
+        if let Some(name) = chosen {
+            let idx = self.selected.min(self.champions.len().saturating_sub(1));
+            if let Some(c) = self.champions.get_mut(idx) {
+                if let Some(sk) = c.skills.get_mut(si) {
+                    if kind == "proj" { sk.projectile = name; } else { sk.impact = name; }
+                }
+            }
+            self.gallery = None;
+        } else if !open {
+            self.gallery = None;
+        }
     }
 }
 
