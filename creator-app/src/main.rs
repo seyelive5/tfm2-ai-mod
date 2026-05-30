@@ -22,8 +22,8 @@ const DAMAGE: &[&str] = &["none", "ad", "ap", "fixed"];
 const DAMAGE_KO: &[&str] = &["없음", "물리(공격력)", "마법(주문력)", "고정"];
 const STATUS: &[&str] = &["stun", "bind", "fear", "knockback", "slow", "poison_dot", "fire_dot"];
 const STATUS_KO: &[&str] = &["기절", "속박", "공포", "넉백", "슬로우", "독 도트", "화상 도트"];
-const SLOTS: &[&str] = &["skill", "skill2", "ult"];
-const SLOTS_KO: &[&str] = &["스킬", "스킬2", "궁극기"];
+const SLOTS: &[&str] = &["attack", "skill", "skill2", "ult"];
+const SLOTS_KO: &[&str] = &["평타", "스킬", "스킬2", "궁극기"];
 const ALL_TAGS: &[&str] = &["AD", "AP", "Heal", "Shield", "Dot", "CC", "Range", "Melee", "Tank", "Magic"];
 const MODES: &[&str] = &["랜덤", "선택", "업로드"];
 
@@ -107,6 +107,11 @@ impl SkillDraft {
         let mut s = Self::offensive(5, 0, 0, vec![], cooltime); // 5 = support
         s.shield = shield; s
     }
+    /// default basic attack: ranged projectile, 100% AD, short cooltime (attack speed), default arrow.
+    fn basic_attack() -> Self {
+        let mut s = Self::offensive(0, 1, 100, vec![], 90); // delivery=linear_projectile, damage=ad
+        s.range = 52000; s.speed = 6000; s
+    }
     fn to_value(&self, slot: &str) -> Value {
         let statuses: Vec<Value> = self.statuses.iter()
             .map(|st| json!({"kind": STATUS[st.kind], "v": st.v, "v2": st.v2})).collect();
@@ -189,6 +194,7 @@ impl ChampionDraft {
             icon: String::new(),
             icon_paths: [String::new(), String::new(), String::new()],
             skills: vec![
+                SkillDraft::basic_attack(),                                            // 평타: 원거리 투사체 + 공격력 100%
                 SkillDraft::offensive(0, 2, 80, vec![], 480),                          // 직선 투사체 + 마법 80%
                 SkillDraft::support(120, 540),                                         // 지원 + 실드 120
                 SkillDraft::offensive(2, 2, 120, vec![StatusDraft::new(0)], 1200),     // 주변 광역 + 마법 120% + 기절
@@ -698,8 +704,8 @@ impl eframe::App for App {
                 });
 
                 // --- 스킬 ---
-                section(ui, "스킬 (효과 빌더)", |ui| {
-                    for si in 0..3 {
+                section(ui, "평타 · 스킬 (효과 빌더)", |ui| {
+                    for si in 0..4 {
                         let s = &mut c.skills[si];
                         egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(8.0)).rounding(5.0).show(ui, |ui| {
                             ui.set_width(ui.available_width());

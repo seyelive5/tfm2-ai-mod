@@ -447,11 +447,12 @@ impl BuffSpec {
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum Slot { Skill, Skill2, Ult }
+pub enum Slot { Attack, Skill, Skill2, Ult }
 impl Slot {
     fn action_name(self) -> &'static str {
-        match self { Slot::Skill => "skill", Slot::Skill2 => "skill2", Slot::Ult => "ult" }
+        match self { Slot::Attack => "attack", Slot::Skill => "skill", Slot::Skill2 => "skill2", Slot::Ult => "ult" }
     }
+    fn is_attack(self) -> bool { matches!(self, Slot::Attack) }
 }
 
 // ============================================================================
@@ -561,34 +562,35 @@ fn build_skill(id: &str, s: &SkillSpec) -> Result<Value> {
     if !s.impact.is_empty() { payload.push(json!({"type":"ViewEffect","name":format!("{id}_{name}_impact")})); }
     let wrapped: Vec<Value> = payload.iter().map(|e| json!({"effect": e, "casting_type":"Targeting"})).collect();
     let shape = json!({"Circle": {"radius": s.radius}});
+    let at = if s.slot.is_attack() { "BaseAttack" } else { "Skill" }; // action attack_type by slot
 
     let action = match s.delivery {
         Delivery::LinearProjectile => json!({
             "action_name":name,"description":desc,"duration":20,"cooltime":s.cooltime,"start_timing":10,"range":s.range,
-            "casting_type":"Direction","casting_target":"Enemy","attack_type":"Skill",
+            "casting_type":"Direction","casting_target":"Enemy","attack_type":at,
             "effect":{"type":"LinearProjectile","penetrate":s.penetrate,"speed":s.speed,"range":s.range,"name":format!("{id}_{name}"),
                 "shape":shape,"applied_target":"Enemy","applied_effects": wrapped}
         }),
         Delivery::HomingProjectile => json!({
             "action_name":name,"description":desc,"duration":20,"cooltime":s.cooltime,"start_timing":10,"range":s.range,
-            "casting_type":"Targeting","casting_target":"Enemy","attack_type":"Skill",
+            "casting_type":"Targeting","casting_target":"Enemy","attack_type":at,
             "effect":{"type":"TargetProjectile","speed":s.speed,"name":format!("{id}_{name}"),
                 "applied_target":"Enemy","applied_effects": wrapped}
         }),
         Delivery::AreaSelf => json!({
             "action_name":name,"description":desc,"duration":22,"cooltime":s.cooltime,"start_timing":10,"range":s.radius,
-            "casting_type":"None","casting_target":"Enemy","attack_type":"Skill",
+            "casting_type":"None","casting_target":"Enemy","attack_type":at,
             "effect":{"type":"RangeEffect","shape":shape,"target":"Enemy","apply_type":"AroundCaster","effects": payload}
         }),
         Delivery::AreaTarget => json!({
             "action_name":name,"description":desc,"duration":22,"cooltime":s.cooltime,"start_timing":12,"range":s.range,
-            "casting_type":"Position","casting_target":"Enemy","attack_type":"Skill",
+            "casting_type":"Position","casting_target":"Enemy","attack_type":at,
             "effect":{"type":"RangeProjectile","name":format!("{id}_{name}"),"delay":24,"apply":30,"shape":shape,
                 "applied_target":"Enemy","applied_effects": wrapped}
         }),
         Delivery::Dash => json!({
             "action_name":name,"description":desc,"duration":14,"cooltime":s.cooltime,"start_timing":2,"range":s.range,
-            "casting_type":"Position","casting_target":"None","attack_type":"Skill",
+            "casting_type":"Position","casting_target":"None","attack_type":at,
             "effect":{"type":"Rush","speed":s.speed,"range":s.range,"casting_target":"Enemy","penetrate":s.penetrate,
                 "applied_effects": wrapped}
         }),
@@ -607,7 +609,7 @@ fn build_skill(id: &str, s: &SkillSpec) -> Result<Value> {
             if eff.is_empty() { eff.push(json!({"type":"Heal","amount":1,"heal_type":"Caster"})); }
             json!({
                 "action_name":name,"description":desc,"duration":16,"cooltime":s.cooltime,"start_timing":6,"range":0,
-                "casting_type":"None","casting_target":target,"attack_type":"Skill",
+                "casting_type":"None","casting_target":target,"attack_type":at,
                 "effect":{"type":"RangeEffect","shape":shape,"target":target,"apply_type":"AroundCaster","effects": eff}
             })
         }
@@ -737,14 +739,13 @@ pub fn build_champion(spec: &ChampionSpec, cat: &Catalog, rng: &mut impl rand::R
     champ.insert(icon_field, icon_val);
     champ.insert("stat".into(), stat);
     champ.insert("growth".into(), growth);
-    champ.insert("attack".into(), basic_attack(&spec.id, preset.ranged));
 
-    let mut view_projectiles = vec![
-        json!({ "type": "Sprite", "name": format!("{}_attack", spec.id), "sprite": "asset/base/sprite/arrow" }),
-    ];
+    let mut view_projectiles: Vec<Value> = Vec::new();
     let mut view_effects: Vec<Value> = Vec::new();
+    let mut has_attack = false;
     for s in &spec.skills {
         let slot = s.slot.action_name();
+        if s.slot.is_attack() { has_attack = true; }
         let action = build_skill(&spec.id, s)?;
         champ.insert(slot.into(), action);
         // projectile visual: a chosen visual id, else default arrow sprite
@@ -761,6 +762,11 @@ pub fn build_champion(spec: &ChampionSpec, cat: &Catalog, rng: &mut impl rand::R
             view_effects.push(json!({"type":"Animation","name":format!("{}_{}_impact", spec.id, slot),
                 "anim": v.anim_asset, "tag": v.tag}));
         }
+    }
+    // fallback default basic attack (role-based) if the spec didn't define an attack slot
+    if !has_attack {
+        champ.insert("attack".into(), basic_attack(&spec.id, preset.ranged));
+        view_projectiles.push(json!({"type":"Sprite","name":format!("{}_attack", spec.id),"sprite":"asset/base/sprite/arrow"}));
     }
     champ.insert("view_projectiles".into(), json!(view_projectiles));
     if !view_effects.is_empty() { champ.insert("view_effects".into(), json!(view_effects)); }
