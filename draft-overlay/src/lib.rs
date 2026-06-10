@@ -381,7 +381,10 @@ impl Overlay {
             show_settings: false,
             show_help: false,
             pick_order: 0,
-            visible: true,
+            // start HIDDEN: the in-game display (tier text / rec borders / header
+            // line / AI panel) replaced the window; the engine keeps running and
+            // Ctrl+F10 summons the window for settings / 통계 새로고침 / debugging.
+            visible: false,
             prev_combo: false,
             font_loaded: false,
             frames: 0,
