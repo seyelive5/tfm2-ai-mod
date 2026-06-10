@@ -336,6 +336,13 @@ impl Tables {
     fn role(&self, c: &str) -> (f32, f32) { self.role.get(c).copied().unwrap_or((0.0, 0.0)) }
     /// dedicated healer/enchanter by data (heals far more than it deals).
     fn is_healer_data(&self, c: &str) -> bool { self.role(c).1 >= HEAL_RATIO }
+    /// (tanks, healers) among the given champ ids — comp summary for the AI panel.
+    pub fn comp_counts(&self, ids: &[&str]) -> (usize, usize) {
+        (
+            ids.iter().filter(|c| self.is_tank_data(c)).count(),
+            ids.iter().filter(|c| self.is_healer_data(c)).count(),
+        )
+    }
     /// hard frontline/tank by data (soaks much more than it deals, and isn't a healer).
     fn is_tank_data(&self, c: &str) -> bool {
         let (t, h) = self.role(c);

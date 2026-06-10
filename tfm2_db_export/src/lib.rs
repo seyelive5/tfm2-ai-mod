@@ -412,10 +412,10 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
 /// last (mtime, champ → (tier label text, tier index 0..=4)) parsed from the TSV.
 static TIER_STATE: Mutex<Option<(std::time::SystemTime, HashMap<String, (String, usize)>)>> =
     Mutex::new(None);
-/// last (mtime, ban-phase?, ranked (id, ko name, score), swap "라인:이름" pairs)
-/// parsed from recs.txt.
+/// last (mtime, ban-phase?, ranked (id, ko name, score), swap "라인:이름" pairs,
+/// commentary lines) parsed from recs.txt.
 static REC_STATE: Mutex<
-    Option<(std::time::SystemTime, bool, Vec<(String, String, String)>, Vec<String>)>,
+    Option<(std::time::SystemTime, bool, Vec<(String, String, String)>, Vec<String>, String)>,
 > = Mutex::new(None);
 /// each cell's border (width, rgba) as first seen — restored when not recommended.
 static ORIG_BORDER: Mutex<Option<HashMap<String, (f32, [f32; 4])>>> = Mutex::new(None);
@@ -425,6 +425,10 @@ static ORIG_TIER: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 static HDR_ORIG: Mutex<String> = Mutex::new(String::new());
 
 const RANK_GLYPH: [&str; 5] = ["①", "②", "③", "④", "⑤"];
+
+/// diag for the coach-popup injection (written on change → ai_say_diag.txt).
+static SAY_DIAG: Mutex<String> = Mutex::new(String::new());
+
 
 const REC_PICK_COLOR: [f32; 4] = [0.22, 0.84, 0.70, 1.0]; // teal (overlay accent)
 const REC_BAN_COLOR: [f32; 4] = [0.78, 0.40, 0.95, 1.0]; // violet (≠ coach red/blue)
@@ -489,7 +493,7 @@ unsafe fn as_label(n: &mut Node) -> &mut LabelRunner {
     &mut *(n.runner.as_any_mut() as *mut dyn std::any::Any as *mut LabelRunner)
 }
 
-fn stamp_grid(ui: &mut GameUI) {
+fn stamp_grid(ui: &mut GameUI, assets: &Assets) {
     // banpick screen only
     if ui.query("main.timer_area.timer_text").is_none() {
         return;
@@ -516,11 +520,12 @@ fn stamp_grid(ui: &mut GameUI) {
     };
     let rpath = format!("{}/recs.txt", base());
     if let Ok(mt) = std::fs::metadata(&rpath).and_then(|m| m.modified()) {
-        if rec_guard.as_ref().map(|(t, _, _, _)| *t != mt).unwrap_or(true) {
+        if rec_guard.as_ref().map(|(t, _, _, _, _)| *t != mt).unwrap_or(true) {
             let s = std::fs::read_to_string(&rpath).unwrap_or_default();
             let mut ban = false;
             let mut ids = Vec::new();
             let mut swap = Vec::new();
+            let mut say = String::new();
             for l in s.lines() {
                 if let Some(v) = l.strip_prefix("phase=") {
                     ban = v.trim() == "BAN";
@@ -544,15 +549,17 @@ fn stamp_grid(ui: &mut GameUI) {
                         .filter(|x| !x.is_empty())
                         .map(|x| x.replace(':', " "))
                         .collect();
+                } else if let Some(v) = l.strip_prefix("say=") {
+                    say = v.replace('|', "\n");
                 }
             }
-            *rec_guard = Some((mt, ban, ids, swap));
+            *rec_guard = Some((mt, ban, ids, swap, say));
         }
     }
-    let (rec_ban, recs, swap): (bool, &[(String, String, String)], &[String]) =
+    let (rec_ban, recs, swap, say): (bool, &[(String, String, String)], &[String], &str) =
         match rec_guard.as_ref() {
-            Some((_, b, v, s)) => (*b, v.as_slice(), s.as_slice()),
-            None => (false, &[], &[]),
+            Some((_, b, v, s, t)) => (*b, v.as_slice(), s.as_slice(), t.as_str()),
+            None => (false, &[], &[], ""),
         };
 
     let mut orig_guard = match ORIG_BORDER.lock() {
@@ -568,6 +575,77 @@ fn stamp_grid(ui: &mut GameUI) {
 
     let Some(root) = ui.query_mut("main") else { return };
 
+    // ── AI panel = a CLONE of the 코치진 대화 내역 popup: native draggable window,
+    // close button, opacity slider — all inherited. Title → "AI 추천기", messages
+    // trimmed to ONE row carrying our commentary (one row = no stacking/scroll
+    // issues). Recreated automatically if the screen rebuilds; NOT re-shown every
+    // frame, so the user can close it with the X (next banpick brings it back).
+    if !say.is_empty() {
+        let mut diag = String::new();
+        if find_mut(root, "ai_panel").is_none() {
+            let panel = if let Some(popup) = find_mut(root, "coach_dialogue_popup") {
+                let has_rows = find_mut(popup, "messages").map(|m| !m.child.is_empty()).unwrap_or(false);
+                if has_rows {
+                    let mut p = popup.clone();
+                    p.id = "ai_panel".to_string();
+                    p.visible = true;
+                    if let Some(msgs) = find_mut(&mut p, "messages") {
+                        // keep the LAST row (its inherited position matches the
+                        // popup's bottom-resting scroll → visible immediately)
+                        if let Some(last) = msgs.child.pop() {
+                            msgs.child.clear();
+                            msgs.child.push(last);
+                        }
+                        if let Some(row) = msgs.child.first_mut() {
+                            row.id = "ai_row".to_string();
+                            row.visible = true;
+                        }
+                    }
+                    if let Some(t) = find_mut(&mut p, "title") {
+                        unsafe { as_label(t) }.text = "AI 추천기".to_string();
+                        t.runner.set_dirty(true);
+                    }
+                    Some(p)
+                } else {
+                    diag.push_str("popup-empty;");
+                    None
+                }
+            } else {
+                diag.push_str("popup-not-found;");
+                None
+            };
+            if let Some(p) = panel {
+                root.add_child(assets, p);
+                diag.push_str("panel-created;");
+            }
+        }
+        if let Some(panel) = find_mut(root, "ai_panel") {
+            if let Some(row) = find_mut(panel, "ai_row") {
+                if let Some(nm) = find_mut(row, "name") {
+                    let lr = unsafe { as_label(nm) };
+                    if lr.text != "AI 추천기" {
+                        lr.text = "AI 추천기".to_string();
+                        nm.runner.set_dirty(true);
+                    }
+                }
+                if let Some(tx) = find_mut(row, "text") {
+                    let lr = unsafe { as_label(tx) };
+                    if lr.text != say {
+                        lr.text = say.to_string();
+                        tx.runner.set_dirty(true);
+                    }
+                    diag.push_str("ok;");
+                }
+            }
+        }
+        if let Ok(mut last) = SAY_DIAG.lock() {
+            if *last != diag {
+                let _ = std::fs::write(format!("{}/ai_say_diag.txt", base()), &diag);
+                *last = diag;
+            }
+        }
+    }
+
     // ── header line: the explicit ranked list, names + scores, in the top banner.
     if let Some(hdr) = find_mut(root, "header") {
         if let Some(desc) = find_mut(hdr, "desc") {
@@ -577,14 +655,16 @@ fn stamp_grid(ui: &mut GameUI) {
                 let line = if !swap.is_empty() {
                     Some(format!("추천 배치 ▶  {}", swap.join("  ·  ")))
                 } else if !recs.is_empty() {
+                    // top 3 only — 5 entries overflowed into the phase label
                     Some(format!(
-                        "추천 {} ▶  {}",
+                        "추천 {} ▶ {}",
                         if rec_ban { "밴" } else { "픽" },
                         recs.iter()
+                            .take(3)
                             .enumerate()
-                            .map(|(i, (_, ko, sc))| format!("{}{} {}", RANK_GLYPH[i.min(4)], ko, sc))
+                            .map(|(i, (_, ko, sc))| format!("{}{}{}", RANK_GLYPH[i.min(4)], ko, sc))
                             .collect::<Vec<_>>()
-                            .join("   ")
+                            .join("  ")
                     ))
                 } else {
                     None
@@ -663,10 +743,10 @@ fn stamp_grid(ui: &mut GameUI) {
 
 struct E;
 impl ModExtension for E {
-    fn post_update(&self, _scene: &mut Scene, ui: &mut GameUI, _a: &mut Assets, _dt: f32) {
+    fn post_update(&self, _scene: &mut Scene, ui: &mut GameUI, a: &mut Assets, _dt: f32) {
         // in-game tier + recommendation display — after the game's own UI updates
         // so our writes win.
-        stamp_grid(ui);
+        stamp_grid(ui, a);
     }
 
     fn pre_update(&self, scene: &mut Scene, ui: &mut GameUI, _a: &mut Assets, dt: f32) {

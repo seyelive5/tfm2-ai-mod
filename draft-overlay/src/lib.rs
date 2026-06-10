@@ -708,11 +708,132 @@ impl ImguiRenderLoop for Overlay {
                     .join(","),
                 None => String::new(),
             };
+            // template commentary ("A안"): compose Korean sentences from the factors
+            // the engine already computed — shown in-game as an AI-coach message.
+            // '|' separates lines (the kv file format can't hold raw newlines).
+            let say: String = {
+                let mut parts: Vec<String> = Vec::new();
+                if !swap.is_empty() {
+                    parts.push("픽이 끝났습니다. 전체 승률이 가장 높아지는 배치는 위 추천 배치입니다.".to_string());
+                } else if let Some(lv) = lane_view.as_ref().filter(|lv| lv.has_pos) {
+                    if let Some(star) = lv.lanes.iter().find(|l| l.star) {
+                        if let Some(c) = star.cands.first() {
+                            let mut s = format!("{} 라인을 먼저 확보하는 편이 좋아 보입니다. 1순위는 {}", star.name, c.ko);
+                            if !c.tier.is_empty() {
+                                s.push_str(&format!("({}티어)", c.tier));
+                            }
+                            s.push_str(&format!(", 평점 {:+.0}", c.score * 100.0));
+                            if !c.label.is_empty() {
+                                s.push_str(&format!(" — 근거: {}", c.label));
+                            }
+                            if !c.chg.is_empty() {
+                                s.push_str(&format!(" (이번 패치 변경 {})", c.chg));
+                            }
+                            if c.low_conf {
+                                s.push_str(". 다만 표본이 적어 확신은 낮습니다");
+                            }
+                            s.push('.');
+                            parts.push(s);
+                            if star.cands.len() > 1 {
+                                parts.push(format!(
+                                    "같은 라인 대안: {}.",
+                                    star.cands
+                                        .iter()
+                                        .skip(1)
+                                        .map(|c| format!("{} {:+.0}", c.ko, c.score * 100.0))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ));
+                            }
+                            if let Some(cof) = &star.counter_of {
+                                parts.push(format!("1순위 픽은 상대 {} 상대로 실측 카운터 우위가 있습니다.", cof));
+                            }
+                            if lv.tip != "" {
+                                parts.push(format!("전략 메모: {}.", lv.tip));
+                            }
+                        }
+                    }
+                } else if let Some(r) = view.rows.first() {
+                    let mut s = format!("밴 1순위는 {}", r.ko);
+                    if !r.tier.is_empty() {
+                        s.push_str(&format!("({}티어)", r.tier));
+                    }
+                    s.push_str(&format!(", 평점 {:+.0}", r.score * 100.0));
+                    if !r.label.is_empty() {
+                        s.push_str(&format!(" — 근거: {}", r.label));
+                    }
+                    if !r.chg.is_empty() {
+                        s.push_str(&format!(" (이번 패치 변경 {})", r.chg));
+                    }
+                    s.push('.');
+                    parts.push(s);
+                    if view.rows.len() > 1 {
+                        parts.push(format!(
+                            "차순위 밴 후보: {}.",
+                            view.rows
+                                .iter()
+                                .skip(1)
+                                .take(3)
+                                .map(|r| format!("{} {:+.0}", r.ko, r.score * 100.0))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                    }
+                }
+                // ── 상대 조합 분석 (탱/힐 구성 → 한 줄 코멘트)
+                let enemy_ids: Vec<&str> = CHAMPS
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| self.slots[*i] == Slot::EnemyPick)
+                    .map(|(_, (id, _))| *id)
+                    .collect();
+                if !enemy_ids.is_empty() {
+                    let (tanks, heals) = self.tables.comp_counts(&enemy_ids);
+                    let mut s = format!("상대 조합 {}픽 — 탱커 {} · 힐러 {}", enemy_ids.len(), tanks, heals);
+                    if tanks == 0 {
+                        s.push_str(". 앞라인이 없어 돌진·암살 가치가 높습니다");
+                    } else if heals >= 1 {
+                        s.push_str(". 힐러가 있어 장기전 불리 — 폭딜이나 CC 연계를 고려하세요");
+                    }
+                    s.push('.');
+                    parts.push(s);
+                }
+                // ── 이번 패치 변경 챔프 (▲버프 ▼너프 ⚡리워크)
+                let changed: Vec<String> = CHAMPS
+                    .iter()
+                    .filter_map(|(id, ko)| {
+                        let m = self.tables.chg_mark(id);
+                        if m.is_empty() { None } else { Some(format!("{}{}", ko, m)) }
+                    })
+                    .take(10)
+                    .collect();
+                if !changed.is_empty() {
+                    parts.push(format!("이번 패치 변경: {} — 변경 챔프는 통계가 리셋되어 티어가 비어있을 수 있습니다.", changed.join(" ")));
+                }
+                // ── 피어리스 현황
+                if self.fearless != Fearless::Off {
+                    parts.push(format!(
+                        "피어리스 {}세트({}) — 사용 불가: 내 {}챔 · 상대 {}챔.",
+                        self.series_game,
+                        if self.fearless == Fearless::Hard { "하드" } else { "노멀" },
+                        self.series_my.len(),
+                        self.series_enemy.len()
+                    ));
+                }
+                // ── 데이터 신뢰도
+                parts.push(format!(
+                    "데이터: 현재 패치 {}판{}",
+                    view.matches,
+                    if view.matches < 50 { " — 콜드스타트 구간, 이론 비중이 큽니다." } else { "." }
+                ));
+                parts.join("|")
+            };
             let body = format!(
-                "phase={}\nrec={}\nswap={}\n",
+                "phase={}\nrec={}\nswap={}\nsay={}\n",
                 if self.rec_ban { "BAN" } else { "PICK" },
                 recs.join(","),
-                swap
+                swap,
+                say
             );
             if body != self.last_recs {
                 let tmp = shared("recs.txt.tmp");
