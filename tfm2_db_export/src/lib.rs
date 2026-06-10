@@ -21,7 +21,7 @@
 //! Also one-time auto-launches the overlay injector, so enabling this single mod
 //! makes the whole recommender run. Read-only w.r.t. the game.
 
-use engine_ui::runner::LabelRunner;
+use engine_ui::runner::{LabelRunner, ScrollViewRunner};
 use game_view::{BanpickChampionSlotRunner, MatchUIRunner};
 use mod_api::*;
 use std::collections::HashMap;
@@ -605,6 +605,15 @@ fn stamp_grid(ui: &mut GameUI, assets: &Assets) {
                         unsafe { as_label(t) }.text = "AI 추천기".to_string();
                         t.runner.set_dirty(true);
                     }
+                    // the cloned scroll view remembers the original's bottom-rest
+                    // offset → reset to the top so the row shows without scrolling.
+                    if let Some(sc) = find_mut(&mut p, "chat_scroll") {
+                        let sv = unsafe {
+                            &mut *(sc.runner.as_any_mut() as *mut dyn std::any::Any as *mut ScrollViewRunner)
+                        };
+                        sv.ratio = 0.0;
+                        sc.runner.set_dirty(true);
+                    }
                     Some(p)
                 } else {
                     diag.push_str("popup-empty;");
@@ -621,6 +630,10 @@ fn stamp_grid(ui: &mut GameUI, assets: &Assets) {
         }
         if let Some(panel) = find_mut(root, "ai_panel") {
             if let Some(row) = find_mut(panel, "ai_row") {
+                // the cloned coach message's champion chips are stale → hide
+                if let Some(ent) = find_mut(row, "entities") {
+                    ent.visible = false;
+                }
                 if let Some(nm) = find_mut(row, "name") {
                     let lr = unsafe { as_label(nm) };
                     if lr.text != "AI 추천기" {

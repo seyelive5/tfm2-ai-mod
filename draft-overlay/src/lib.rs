@@ -353,6 +353,8 @@ struct Overlay {
     // set-boundary tracking for fearless (replays only attach post-match)
     bp_teams: String,
     bp_full_board: Option<(Vec<String>, Vec<String>)>,
+    /// detected at the draft's FIRST pick (unambiguous moment): am I first-pick?
+    bp_first_pick: Option<bool>,
 }
 
 impl Overlay {
@@ -394,6 +396,7 @@ impl Overlay {
             last_recs: String::new(),
             bp_teams: String::new(),
             bp_full_board: None,
+            bp_first_pick: None,
         }
     }
 
@@ -401,7 +404,16 @@ impl Overlay {
         let mut st = DraftState::default();
         st.ok = true;
         st.phase = if self.rec_ban { "BAN".into() } else { "PICK".into() };
-        st.pick_order = self.pick_order;
+        // 자동(0)일 때 라이브 밴픽에서 감지한 선픽/후픽을 적용 (수동 선택은 우선)
+        st.pick_order = if self.pick_order == 0 {
+            match self.bp_first_pick {
+                Some(true) => 1,  // 내가 선픽
+                Some(false) => 2, // 내가 후픽
+                None => 0,
+            }
+        } else {
+            self.pick_order
+        };
         for (i, (id, _ko)) in CHAMPS.iter().enumerate() {
             match self.slots[i] {
                 Slot::MyPick => st.ally_pick.push(id.to_string()),
@@ -571,6 +583,7 @@ impl ImguiRenderLoop for Overlay {
                                 self.series_my.clear();
                                 self.series_enemy.clear();
                                 self.bp_full_board = None;
+                                self.bp_first_pick = None;
                             } else if let Some((pm, pe)) = self.bp_full_board.take() {
                                 let total_now = bp.my_pick.len() + bp.enemy_pick.len() + bp.my_ban.len() + bp.enemy_ban.len();
                                 if total_now < pm.len() + pe.len() {
@@ -578,7 +591,13 @@ impl ImguiRenderLoop for Overlay {
                                     self.series_game += 1;
                                     self.series_my.extend(pm);
                                     self.series_enemy.extend(pe);
+                                    self.bp_first_pick = None;
                                 } // (not a reset → keep waiting; restored below)
+                            }
+                            // 선픽/후픽 감지 — 드래프트의 첫 픽 시점(전체 픽 1개)이
+                            // 유일하게 모호하지 않은 순간: 그때 픽한 쪽이 선픽.
+                            if bp.my_pick.len() + bp.enemy_pick.len() == 1 && self.bp_first_pick.is_none() {
+                                self.bp_first_pick = Some(bp.my_pick.len() == 1);
                             }
                             if bp.my_pick.len() == 5 && bp.enemy_pick.len() == 5 {
                                 self.bp_full_board = Some((bp.my_pick.clone(), bp.enemy_pick.clone()));
