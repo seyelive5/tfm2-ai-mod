@@ -21,12 +21,20 @@
 //! Also one-time auto-launches the overlay injector, so enabling this single mod
 //! makes the whole recommender run. Read-only w.r.t. the game.
 
+mod recommender;
+
 use engine_ui::runner::{LabelRunner, ScrollViewRunner};
 use game_view::{BanpickChampionSlotRunner, MatchUIRunner};
 use mod_api::*;
+use recommender::{Board, ChgInfo, Output};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Mutex;
+
+/// engine tables built from the live stats (rebuilt whenever the export fires).
+static TABLES: Mutex<Option<recommender::engine::Tables>> = Mutex::new(None);
+/// this frame's recommendations/commentary/tiers for the in-game display.
+static OUT_NOW: Mutex<Option<Output>> = Mutex::new(None);
 
 /// Shared dir = %LOCALAPPDATA%/tfm2-overlay (user-agnostic; the launcher + overlay use
 /// the same). Falls back to C:/tmp if the env var is missing.
@@ -39,7 +47,6 @@ fn base() -> String {
 static LAST_SIG: AtomicUsize = AtomicUsize::new(usize::MAX);
 /// Accumulated in-game ms since the last write, to throttle big dumps during fast sim.
 static ACC_MS: AtomicU32 = AtomicU32::new(0);
-static SPAWNED: AtomicBool = AtomicBool::new(false);
 const THROTTLE_MS: u32 = 8000;
 
 fn atomic_write(path: &str, body: &str) {
@@ -360,6 +367,30 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
         }
     }
 
+    // ── feed the in-mod recommender directly (no file round-trip): resolve sides,
+    // run the engine when the board changed, stash the Output for stamp_grid.
+    if let Some(my_id) = my_team.parse::<usize>().ok() {
+        if my_id == m.team1 || my_id == m.team2 {
+            let mine_is_t1 = my_id == m.team1;
+            let board = Board {
+                my_ban: if mine_is_t1 { m.team1_ban.clone() } else { m.team2_ban.clone() },
+                enemy_ban: if mine_is_t1 { m.team2_ban.clone() } else { m.team1_ban.clone() },
+                my_pick: if mine_is_t1 { m.team1_pick.clone() } else { m.team2_pick.clone() },
+                enemy_pick: if mine_is_t1 { m.team2_pick.clone() } else { m.team1_pick.clone() },
+                ban_count: m.ban_count,
+                teams: format!("{}|{}", m.team1, m.team2),
+                locked: locked_d.clone(),
+            };
+            if let Ok(mut tg) = TABLES.lock() {
+                let tables = tg.get_or_insert_with(|| recommender::build_tables("", &[], &ChgInfo::default()));
+                let out = recommender::update(&board, tables);
+                if let Ok(mut og) = OUT_NOW.lock() {
+                    *og = Some(out);
+                }
+            }
+        }
+    }
+
     let key = format!(
         "my_team={}\nteam1={}\nteam2={}\nban_count={}\nteam1_ban={}\nteam2_ban={}\nteam1_pick={}\nteam2_pick={}\nteam1_order={}\nteam2_order={}\nset={}\nprev_my={}\nprev_enemy={}\nlocked_x={}\nlocked_i={}\n",
         my_team,
@@ -400,23 +431,12 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
 // ───────────────── in-game grid display (banpick champion grid) ─────────────────
 // Two layers, restamped every frame (the game only rewrites on its own signature-
 // gated change events, so our writes win):
-//  1. TIER TEXT — each cell's #tier label gets OUR tier (S~D from draft_weights.tsv
-//     C-row winrate deltas) + ▲▼⚡ patch tags (CHG rows).
-//  2. RECOMMENDATION BORDERS — recs.txt (written live by the overlay from the
-//     auto-synced board) tints recommended cells: teal=pick, violet=ban, rank 1
-//     thicker. Non-recommended cells get their ORIGINAL border back (snapshotted on
-//     first sight), so the marker MOVES as the draft progresses. The game's own
-//     coach highlights (red/blue) stay distinguishable.
+//  1. TIER TEXT — each cell's #tier label gets OUR tier (S~D) + ▲▼⚡ patch tags.
+//  2. RECOMMENDATION BORDERS — teal=pick, violet=ban, rank 1 thicker. Cells get
+//     their ORIGINAL border back when no longer recommended, so the marker MOVES.
+// All data comes from the in-mod recommender (OUT_NOW) — no file round-trips.
 // Cell ids ARE champion ids (runtime-verified).
 
-/// last (mtime, champ → (tier label text, tier index 0..=4)) parsed from the TSV.
-static TIER_STATE: Mutex<Option<(std::time::SystemTime, HashMap<String, (String, usize)>)>> =
-    Mutex::new(None);
-/// last (mtime, ban-phase?, ranked (id, ko name, score), swap "라인:이름" pairs,
-/// commentary lines) parsed from recs.txt.
-static REC_STATE: Mutex<
-    Option<(std::time::SystemTime, bool, Vec<(String, String, String)>, Vec<String>, String)>,
-> = Mutex::new(None);
 /// each cell's border (width, rgba) as first seen — restored when not recommended.
 static ORIG_BORDER: Mutex<Option<HashMap<String, (f32, [f32; 4])>>> = Mutex::new(None);
 /// each cell's #tier label text as first seen — restored when we have nothing to say.
@@ -432,46 +452,6 @@ static SAY_DIAG: Mutex<String> = Mutex::new(String::new());
 
 const REC_PICK_COLOR: [f32; 4] = [0.22, 0.84, 0.70, 1.0]; // teal (overlay accent)
 const REC_BAN_COLOR: [f32; 4] = [0.78, 0.40, 0.95, 1.0]; // violet (≠ coach red/blue)
-
-fn parse_tiers(tsv: &str) -> HashMap<String, (String, usize)> {
-    let mut delta: HashMap<&str, f64> = HashMap::new();
-    let mut chg: HashMap<&str, char> = HashMap::new();
-    for l in tsv.lines() {
-        let f: Vec<&str> = l.split('\t').collect();
-        match f[0] {
-            "C" if f.len() >= 3 => {
-                delta.insert(f[1], f[2].parse().unwrap_or(0.0));
-            }
-            "CHG" if f.len() >= 2 => {
-                chg.insert(f[1], f.get(2).and_then(|x| x.chars().next()).unwrap_or('~'));
-            }
-            _ => {}
-        }
-    }
-    delta
-        .iter()
-        .map(|(c, d)| {
-            let (letter, idx) = if *d >= 0.06 {
-                ("S", 0)
-            } else if *d >= 0.02 {
-                ("A", 1)
-            } else if *d >= -0.02 {
-                ("B", 2)
-            } else if *d >= -0.06 {
-                ("C", 3)
-            } else {
-                ("D", 4)
-            };
-            let mark = match chg.get(c) {
-                Some('+') => "▲",
-                Some('-') => "▼",
-                Some(_) => "⚡",
-                None => "",
-            };
-            (c.to_string(), (format!("{}{}", letter, mark), idx))
-        })
-        .collect()
-}
 
 /// Depth-first search for a node id in the subtree.
 fn find_mut<'a>(n: &'a mut Node, id: &str) -> Option<&'a mut Node> {
@@ -498,69 +478,16 @@ fn stamp_grid(ui: &mut GameUI, assets: &Assets) {
     if ui.query("main.timer_area.timer_text").is_none() {
         return;
     }
-    // tier map (mtime-cached)
-    let mut tier_guard = match TIER_STATE.lock() {
+    // everything to display comes from the in-mod recommender (computed in
+    // pre_update's bp_export from the live board + live stats — no files).
+    let out_guard = match OUT_NOW.lock() {
         Ok(g) => g,
         Err(_) => return,
     };
-    let path = format!("{}/draft_weights.tsv", base());
-    if let Ok(mt) = std::fs::metadata(&path).and_then(|m| m.modified()) {
-        if tier_guard.as_ref().map(|(t, _)| *t != mt).unwrap_or(true) {
-            let map = parse_tiers(&std::fs::read_to_string(&path).unwrap_or_default());
-            *tier_guard = Some((mt, map));
-        }
-    }
-    let empty_tiers = HashMap::new();
-    let tiers = tier_guard.as_ref().map(|(_, m)| m).unwrap_or(&empty_tiers);
-
-    // live recommendations (mtime-cached; absent file → no rec borders)
-    let mut rec_guard = match REC_STATE.lock() {
-        Ok(g) => g,
-        Err(_) => return,
-    };
-    let rpath = format!("{}/recs.txt", base());
-    if let Ok(mt) = std::fs::metadata(&rpath).and_then(|m| m.modified()) {
-        if rec_guard.as_ref().map(|(t, _, _, _, _)| *t != mt).unwrap_or(true) {
-            let s = std::fs::read_to_string(&rpath).unwrap_or_default();
-            let mut ban = false;
-            let mut ids = Vec::new();
-            let mut swap = Vec::new();
-            let mut say = String::new();
-            for l in s.lines() {
-                if let Some(v) = l.strip_prefix("phase=") {
-                    ban = v.trim() == "BAN";
-                } else if let Some(v) = l.strip_prefix("rec=") {
-                    // "<id>:<ko>:<score>" per entry
-                    ids = v
-                        .split(',')
-                        .filter(|x| !x.is_empty())
-                        .map(|x| {
-                            let mut it = x.split(':');
-                            (
-                                it.next().unwrap_or("").to_string(),
-                                it.next().unwrap_or("").to_string(),
-                                it.next().unwrap_or("").to_string(),
-                            )
-                        })
-                        .collect();
-                } else if let Some(v) = l.strip_prefix("swap=") {
-                    swap = v
-                        .split(',')
-                        .filter(|x| !x.is_empty())
-                        .map(|x| x.replace(':', " "))
-                        .collect();
-                } else if let Some(v) = l.strip_prefix("say=") {
-                    say = v.replace('|', "\n");
-                }
-            }
-            *rec_guard = Some((mt, ban, ids, swap, say));
-        }
-    }
-    let (rec_ban, recs, swap, say): (bool, &[(String, String, String)], &[String], &str) =
-        match rec_guard.as_ref() {
-            Some((_, b, v, s, t)) => (*b, v.as_slice(), s.as_slice(), t.as_str()),
-            None => (false, &[], &[], ""),
-        };
+    let Some(o) = out_guard.as_ref() else { return };
+    let o = o.clone();
+    drop(out_guard);
+    let (rec_ban, recs, swap, say, tiers) = (o.rec_ban, &o.recs, &o.swap, o.say.as_str(), &o.tiers);
 
     let mut orig_guard = match ORIG_BORDER.lock() {
         Ok(g) => g,
@@ -713,7 +640,7 @@ fn stamp_grid(ui: &mut GameUI, assets: &Assets) {
         if let Some(tl) = find_mut(cell, "tier") {
             let cur = unsafe { as_label(tl) }.text.clone();
             let orig_text = tier_orig.entry(champ.clone()).or_insert_with(|| cur.clone());
-            let tier_txt = tiers.get(&champ).map(|(t, _)| t.as_str()).unwrap_or("");
+            let tier_txt = tiers.get(&champ).map(|t| t.as_str()).unwrap_or("");
             let desired = match rank {
                 Some(rk) => format!("{}{}", RANK_GLYPH[rk.min(4)], tier_txt),
                 None if !tier_txt.is_empty() => tier_txt.to_string(),
@@ -806,23 +733,45 @@ impl ModExtension for E {
         let out = format!("{}/probe", b);
         let _ = std::fs::create_dir_all(&out);
         // which champs were buffed/nerfed this patch (defs-snapshot rotation) → the
-        // recommender drops their stale prev-patch winrate blend. Written BEFORE the
-        // stats TSV so a launcher regen racing this export can never pair NEW stats
-        // with the PREVIOUS export's changed-set. The career fingerprint reseeds the
-        // snapshot on a save switch (patches are per-career; cross-career diffs lie).
+        // recommender drops their stale prev-patch winrate blend. The career
+        // fingerprint reseeds the snapshot on a save switch (patches are per-career;
+        // cross-career diffs lie).
         let fp = format!(
             "{}|{}|{}",
             data.player_team_id(),
             db.teams.len(),
             db.champion_patch_statistics.keys().min_by_key(|v| vkey(v.as_str())).map(|s| s.as_str()).unwrap_or("0")
         );
-        atomic_write(&format!("{}/champ_changes.tsv", out), &champ_changes_update(&db, &out, &fp));
-        atomic_write(&format!("{}/champion_patch_statistics.tsv", out), &patch_tsv(&db));
+        let chg_tsv = champ_changes_update(&db, &out, &fp);
+        atomic_write(&format!("{}/champ_changes.tsv", out), &chg_tsv);
+        let pt = patch_tsv(&db);
+        atomic_write(&format!("{}/champion_patch_statistics.tsv", out), &pt);
         atomic_write(&format!("{}/solo_rank_matches.debug.txt", out), &format!("{:#?}", db.solo_rank_matches));
         atomic_write(&format!("{}/match_replays.debug.txt", out), &format!("{:#?}", db.match_replays));
-        let mut pool: Vec<&str> = db.available_champions.iter().map(|s| s.as_str()).collect();
+        let mut pool: Vec<String> = db.available_champions.iter().cloned().collect();
         pool.sort_unstable();
         atomic_write(&format!("{}/pool.txt", b), &pool.join(","));
+
+        // ── rebuild the in-mod recommender tables from the fresh stats. The chg
+        // anchor/dirs are parsed back from the TSV we just rendered (single source).
+        let chg_info = {
+            let mut info = ChgInfo::default();
+            for l in chg_tsv.lines() {
+                if let Some(v) = l.strip_prefix("#prev_version\t") {
+                    info.anchor = Some(v.trim().to_string());
+                } else if !l.starts_with('#') && !l.starts_with("champion\t") {
+                    let mut f = l.split('\t');
+                    if let Some(c) = f.next().filter(|c| !c.is_empty()) {
+                        let dir = f.nth(1).and_then(|x| x.chars().next()).unwrap_or('~');
+                        info.dirs.push((c.to_string(), dir));
+                    }
+                }
+            }
+            info
+        };
+        if let Ok(mut tg) = TABLES.lock() {
+            *tg = Some(recommender::build_tables(&pt, &pool, &chg_info));
+        }
         atomic_write(
             &format!("{}/_stamp.txt", out),
             &format!("{},{},{},{}", solo, replay, patch_total, pool_n),
@@ -852,11 +801,8 @@ impl ModExtension for E {
         }
         atomic_write(&format!("{}/probe/teams.tsv", b), &tt);
 
-        // one-time: auto-launch the overlay injector AFTER probe/ is populated (so the
-        // launcher never reads stale data on startup). It self-guards against doubles.
-        if !SPAWNED.swap(true, Ordering::Relaxed) {
-            let _ = std::process::Command::new(format!("{}/inject-overlay.exe", b)).spawn();
-        }
+        // (v3.0: no external launcher/overlay anymore — the whole recommender runs
+        // inside this mod. File exports above remain for the report tool/debugging.)
     }
 }
 
