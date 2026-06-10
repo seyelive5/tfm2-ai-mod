@@ -372,6 +372,17 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
     if let Some(my_id) = my_team.parse::<usize>().ok() {
         if my_id == m.team1 || my_id == m.team2 {
             let mine_is_t1 = my_id == m.team1;
+            // fearless locks: runtime showed locked cells are NOT `disabled` — the
+            // icon marks are the live signal; keep disabled-derivation as a backup.
+            let mut locked = locked_d.clone();
+            if locked.is_empty() {
+                locked = locked_x.clone();
+                for c in &locked_i {
+                    if !locked.contains(c) {
+                        locked.push(c.clone());
+                    }
+                }
+            }
             let board = Board {
                 my_ban: if mine_is_t1 { m.team1_ban.clone() } else { m.team2_ban.clone() },
                 enemy_ban: if mine_is_t1 { m.team2_ban.clone() } else { m.team1_ban.clone() },
@@ -379,7 +390,7 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                 enemy_pick: if mine_is_t1 { m.team2_pick.clone() } else { m.team1_pick.clone() },
                 ban_count: m.ban_count,
                 teams: format!("{}|{}", m.team1, m.team2),
-                locked: locked_d.clone(),
+                locked,
             };
             if let Ok(mut tg) = TABLES.lock() {
                 let tables = tg.get_or_insert_with(|| recommender::build_tables("", &[], &ChgInfo::default()));
