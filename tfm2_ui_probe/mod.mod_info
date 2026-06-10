@@ -1,0 +1,8 @@
+{
+  "name": "TFM2 UI 쓰기 실험 (임시)",
+  "author": "seyelive0",
+  "version": "0.1.0",
+  "description": "밴픽 그리드에 텍스트/테두리를 그릴 수 있는지 확인하는 일회성 실험. 확인 후 비활성화.",
+  "last_updated": "2026-06-11",
+  "dependencies": [ { "mod_id": "base", "version": ">=0.4.11" } ]
+}

@@ -1,0 +1,3 @@
+# SDK 0.4.11 — rustc 1.98.0-nightly (f20a92ec0 2026-06-07)
+[toolchain]
+channel = "nightly-2026-06-08"

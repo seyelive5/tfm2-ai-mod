@@ -1,0 +1,3 @@
+# Pin the EXACT nightly the TFM2 SDK 0.4.6 was built with (ABI-critical).
+[toolchain]
+channel = "nightly-2026-05-29"

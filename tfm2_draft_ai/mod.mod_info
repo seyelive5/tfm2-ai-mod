@@ -1,0 +1,8 @@
+{
+  "name": "TFM2 Draft AI",
+  "author": "seyelive0",
+  "version": "0.1.0",
+  "description": "Improves the base ban/pick AI using real match statistics (winrate/synergy/counter) plus pro-MOBA draft theory (team-comp needs, counter timing). Additive ModDraftScoreHook.",
+  "last_updated": "2026-05-31",
+  "dependencies": [ { "mod_id": "base", "version": ">=0.4.6" } ]
+}

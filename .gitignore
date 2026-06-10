@@ -1,21 +1,4 @@
-# Rust build artifacts
-**/target/
-**/Cargo.lock
-
-# Built mod DLL (produced by the SDK build, copied into the mod folder)
+target/
 *.dll
-
-# Steam Workshop linkage (regenerated per machine/account; keep out of VCS)
-**/mod.workshop_id
-**/database_pack.workshop_id
-
-# Local SDK copy / large downloads (vendored separately, not committed)
-/sdk/
-/_sdk-*/
-*.zip
-
-# OS / editor
-Thumbs.db
-.DS_Store
-.vscode/
-.idea/
+*.exe
+*.pdb

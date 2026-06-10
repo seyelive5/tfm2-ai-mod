@@ -1,0 +1,8 @@
+{
+  "name": "Banpick Probe (test)",
+  "author": "seyelive0",
+  "version": "0.1.0",
+  "description": "TEST: logs whether a mod's handle_command fires DURING banpick and whether server_state.running_matches reflects the live draft. Writes C:\\tmp\\bp_probe.log. No gameplay change.",
+  "last_updated": "2026-06-01",
+  "dependencies": [ { "mod_id": "base", "version": ">=0.4.6" } ]
+}

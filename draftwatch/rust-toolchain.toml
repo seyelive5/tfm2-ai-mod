@@ -1,0 +1,8 @@
+# Pin the EXACT nightly the TFM2 SDK 0.4.6 was built with, for ABI compatibility.
+# The prebuilt libmod_api-*.rlib in sdk/mod-sdk/deps was compiled with:
+#   rustc 1.98.0-nightly (cced03bfd 2026-05-28)
+# NOTE: the rustup channel that ships this exact rustc commit is nightly-2026-05-29
+# (nightlies are published the day after the commit). nightly-2026-05-28 ships
+# 57d06900f and is REJECTED by the prebuilt rlib (error E0514). Verified by build.
+[toolchain]
+channel = "nightly-2026-05-29"

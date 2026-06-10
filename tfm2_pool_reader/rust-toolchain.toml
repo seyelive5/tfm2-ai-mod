@@ -1,0 +1,4 @@
+# Pin the EXACT nightly the TFM2 SDK 0.4.7 was built with (ABI-critical).
+# rustc 1.98.0-nightly (6bdf43094 2026-06-01)
+[toolchain]
+channel = "nightly-2026-06-02"

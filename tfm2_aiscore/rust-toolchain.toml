@@ -1,0 +1,3 @@
+# SDK 0.4.7
+[toolchain]
+channel = "nightly-2026-06-02"

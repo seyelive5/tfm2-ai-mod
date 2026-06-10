@@ -1,0 +1,8 @@
+{
+  "name": "TFM2 밴픽 프로브 (임시)",
+  "author": "seyelive0",
+  "version": "0.1.0",
+  "description": "TEST: 밴픽 중 db.scene/db.matches에 라이브 보드가 있는지 확인. C:/tmp/bp2 에 기록. 읽기 전용. 실험 후 끄세요.",
+  "last_updated": "2026-06-03",
+  "dependencies": [ { "mod_id": "base", "version": ">=0.4.7" } ]
+}

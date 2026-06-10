@@ -1,0 +1,8 @@
+{
+  "name": "TFM2 드래프트 추천기",
+  "author": "seyelive0",
+  "version": "2.0.0",
+  "description": "드래프트 추천기 올인원: 라이브 게임 DB(현재 패치 통계/매치/풀) 추출 + 밴픽 화면 실시간 읽기(오버레이 자동연동) + 오버레이 런처 자동 실행. 읽기 전용, 게임 변경 없음.",
+  "last_updated": "2026-06-11",
+  "dependencies": [ { "mod_id": "base", "version": ">=0.4.11" } ]
+}

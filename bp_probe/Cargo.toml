@@ -1,0 +1,11 @@
+# mod id == folder name == ModRegistration::new("bp_probe") == output DLL name.
+# Do NOT add mod-api here; the SDK build script injects it.
+[package]
+name = "bp_probe"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[workspace]

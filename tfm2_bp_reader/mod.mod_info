@@ -1,0 +1,8 @@
+{
+  "name": "TFM2 라이브 밴픽 리더",
+  "author": "seyelive0",
+  "version": "1.0.0",
+  "description": "밴픽 화면의 라이브 보드(픽/밴)를 읽어 추천기 오버레이에 자동 반영합니다(자동연동). 읽기 전용, 게임 변경 없음. 추천기 사용 시 켜두세요.",
+  "last_updated": "2026-06-11",
+  "dependencies": [ { "mod_id": "base", "version": ">=0.4.11" } ]
+}
