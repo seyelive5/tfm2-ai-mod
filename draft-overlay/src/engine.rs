@@ -336,6 +336,10 @@ impl Tables {
     fn role(&self, c: &str) -> (f32, f32) { self.role.get(c).copied().unwrap_or((0.0, 0.0)) }
     /// dedicated healer/enchanter by data (heals far more than it deals).
     fn is_healer_data(&self, c: &str) -> bool { self.role(c).1 >= HEAL_RATIO }
+    /// does this champ have DATA-driven role info (an RP row)? Without it,
+    /// comp_counts silently reads as "no tank/heal" — callers must not draw
+    /// conclusions from absence of data.
+    pub fn role_known(&self, c: &str) -> bool { self.role.contains_key(c) }
     /// (tanks, healers) among the given champ ids — comp summary for the AI panel.
     pub fn comp_counts(&self, ids: &[&str]) -> (usize, usize) {
         (

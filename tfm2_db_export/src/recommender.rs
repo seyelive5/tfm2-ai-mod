@@ -9,11 +9,12 @@
 //! winrate; the engine's tag-based theory terms (T rows, baked) remain.
 
 #[path = "../../draft-overlay/src/engine.rs"]
+#[allow(dead_code)] // shared source: the retired overlay's surface stays in-tree
 pub mod engine;
 
 use engine::{parse_tables_from_str, recommend, recommend_lanes, DraftState, Tables, CHAMPS};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 // ───────────────────────── tables (stats → engine) ─────────────────────────
 
@@ -201,7 +202,9 @@ fn compute_roles(patch: &str, reworked: &HashSet<String>, anchor: Option<&str>) 
         .collect()
 }
 
-/// B rows: banrate per champ on the latest patch (bans / total_match).
+/// B rows: SEASON banrate per champ (bans summed over all patch versions ÷ the
+/// season's total matches) — a single fresh patch's handful of games must not
+/// swing the W_BAN_META term.
 fn compute_banrate(patch: &str) -> Vec<String> {
     let rows: Vec<Vec<&str>> = patch
         .lines()
@@ -209,19 +212,22 @@ fn compute_banrate(patch: &str) -> Vec<String> {
         .map(|l| l.split('\t').collect::<Vec<&str>>())
         .filter(|f| f.len() >= 7)
         .collect();
-    let mut vers: Vec<&str> = rows.iter().map(|f| f[0]).collect();
-    vers.sort_by(|a, b| vkey(a).cmp(&vkey(b)));
-    vers.dedup();
-    let Some(latest) = vers.last().copied() else { return vec![] };
-    let total: f64 = rows.iter().find(|f| f[0] == latest).and_then(|f| f[1].parse().ok()).unwrap_or(0.0);
-    if total <= 0.0 {
+    // per-version total (first row of that version) + per-(version,champ) bans
+    let mut ver_total: BTreeMap<&str, f64> = BTreeMap::new();
+    let mut bans: BTreeMap<(&str, &str), f64> = BTreeMap::new();
+    for f in &rows {
+        ver_total.entry(f[0]).or_insert_with(|| f[1].parse().unwrap_or(0.0));
+        bans.entry((f[0], f[2])).or_insert_with(|| f[4].parse().unwrap_or(0.0));
+    }
+    let season_total: f64 = ver_total.values().sum();
+    if season_total <= 0.0 {
         return vec![];
     }
-    let mut bans: BTreeMap<&str, f64> = BTreeMap::new();
-    for f in rows.iter().filter(|f| f[0] == latest) {
-        bans.entry(f[2]).or_insert_with(|| f[4].parse().unwrap_or(0.0));
+    let mut per_champ: BTreeMap<&str, f64> = BTreeMap::new();
+    for ((_, c), b) in &bans {
+        *per_champ.entry(c).or_insert(0.0) += b;
     }
-    bans.iter().map(|(c, b)| format!("B\t{}\t{:.3}", c, b / total)).collect()
+    per_champ.iter().map(|(c, b)| format!("B\t{}\t{:.3}", c, b / season_total)).collect()
 }
 
 /// Patch-change info handed over by champ_changes_update (lib.rs).
@@ -247,7 +253,14 @@ pub fn build_tables(patch_tsv: &str, pool: &[String], chg: &ChgInfo) -> Tables {
     let (c_rows, cp_rows, total) = patch_current(patch_tsv, &changed, anchor);
     out.extend(c_rows);
     out.extend(cp_rows);
-    out.extend(compute_pos(patch_tsv, &reworked, anchor));
+    // POS: live data, falling back to the BAKED rows when stats are empty (fresh
+    // career) — without POS the lane board/swap assignment dies in cold start.
+    let pos_rows = compute_pos(patch_tsv, &reworked, anchor);
+    if pos_rows.is_empty() {
+        out.extend(engine::WEIGHTS_TSV.lines().filter(|l| l.starts_with("POS\t")).map(|s| s.to_string()));
+    } else {
+        out.extend(pos_rows);
+    }
     out.extend(compute_roles(patch_tsv, &reworked, anchor));
     out.extend(compute_banrate(patch_tsv));
     out.extend(chg.dirs.iter().map(|(c, d)| format!("CHG\t{}\t{}", c, d)));
@@ -301,17 +314,20 @@ pub struct Output {
 }
 
 static SERIES: Mutex<Option<Series>> = Mutex::new(None);
-static OUTPUT: Mutex<Option<(String, Output)>> = Mutex::new(None); // (board key, out)
+static OUTPUT: Mutex<Option<(String, Arc<Output>)>> = Mutex::new(None); // (board key, out)
 
 /// Per-frame: feed the live board; recompute recommendations only on change.
-pub fn update(board: &Board, tables: &Tables) -> Output {
+/// `tables_gen` = a counter bumped on every tables rebuild, so a mid-banpick
+/// stats/pool refresh invalidates the cache even when the board is unchanged.
+pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> {
     let mut sg = match SERIES.lock() {
         Ok(g) => g,
-        Err(_) => return Output::default(),
+        Err(_) => return Arc::new(Output::default()),
     };
     let s = sg.get_or_insert_with(Series::default);
 
-    // ── series / fearless tracking
+    // ── series / fearless tracking. board.teams includes the MATCH id, so a
+    // rematch against the same team pair is a NEW series, not a phantom next set.
     if board.teams != s.teams {
         s.teams = board.teams.clone();
         s.game = 1;
@@ -319,10 +335,14 @@ pub fn update(board: &Board, tables: &Tables) -> Output {
         s.enemy.clear();
         s.full_board = None;
         s.first_pick = None;
+        s.fearless_on = false;
+        s.hard = false;
     } else if let Some((pm, pe)) = s.full_board.take() {
         let total_now =
             board.my_pick.len() + board.enemy_pick.len() + board.my_ban.len() + board.enemy_ban.len();
-        if total_now < pm.len() + pe.len() {
+        // require a CLEARLY smaller board: a one-slot transient misread (9 < 10)
+        // must not fire a phantom set transition.
+        if total_now + 3 < pm.len() + pe.len() {
             s.game += 1;
             s.my.extend(pm);
             s.enemy.extend(pe);
@@ -337,11 +357,9 @@ pub fn update(board: &Board, tables: &Tables) -> Output {
     }
     if !board.locked.is_empty() {
         s.fearless_on = true;
-        let enemy_only_locked =
-            s.enemy.iter().filter(|c| !s.my.contains(*c)).any(|c| board.locked.contains(c));
-        if enemy_only_locked {
-            s.hard = true;
-        }
+        // style RECOMPUTED every pass (the old overlay's semantics) — a single
+        // mis-read frame must not latch Hard for the whole series.
+        s.hard = s.enemy.iter().filter(|c| !s.my.contains(*c)).any(|c| board.locked.contains(c));
         if s.my.is_empty() && s.enemy.is_empty() {
             s.my = board.locked.iter().cloned().collect();
             if s.game == 1 {
@@ -355,15 +373,16 @@ pub fn update(board: &Board, tables: &Tables) -> Output {
 
     // ── recompute only when the board or stats changed
     let key = format!(
-        "{}|{}|{}|{}|{}|{}|{:?}|{}",
+        "{}|{}|{}|{}|{}|{}|{:?}|{}|{}",
         board.my_ban.join(","),
         board.enemy_ban.join(","),
         board.my_pick.join(","),
         board.enemy_pick.join(","),
         board.locked.join(","),
-        tables.matches,
+        tables_gen,
         s.first_pick,
         s.game,
+        s.hard,
     );
     if let Ok(g) = OUTPUT.lock() {
         if let Some((k, out)) = g.as_ref() {
@@ -389,15 +408,19 @@ pub fn update(board: &Board, tables: &Tables) -> Output {
 
     // fearless lock filtering happens through the POOL argument (engine design):
     // pick recs drop what I can't pick; ban recs drop what the ENEMY can't pick.
-    let my_locked: HashSet<String> = if s.hard {
-        s.my.union(&s.enemy).cloned().collect()
+    // CRITICAL: gated on fearless_on — series tracking accumulates picks in ANY
+    // multi-set match, but locks only exist under the fearless rule (a non-
+    // fearless Bo3 may re-pick set-1 champs freely).
+    let (my_locked, enemy_locked): (HashSet<String>, HashSet<String>) = if s.fearless_on {
+        let ml: HashSet<String> = if s.hard {
+            s.my.union(&s.enemy).cloned().collect()
+        } else {
+            s.my.clone()
+        };
+        let el = if s.hard { ml.clone() } else { s.enemy.clone() };
+        (ml, el)
     } else {
-        s.my.clone()
-    };
-    let enemy_locked: HashSet<String> = if s.hard {
-        my_locked.clone()
-    } else {
-        s.enemy.clone()
+        (HashSet::new(), HashSet::new())
     };
     let rec_lock = if rec_ban { &enemy_locked } else { &my_locked };
     let base_pool: HashSet<String> = tables.pool.clone();
@@ -487,7 +510,8 @@ pub fn update(board: &Board, tables: &Tables) -> Output {
             }
         }
     } else if let Some(r) = view.rows.first() {
-        let mut t = format!("밴 1순위는 {}", r.ko);
+        // flat-list branch serves BOTH phases (ban, and pick without POS data)
+        let mut t = format!("{} 1순위는 {}", if rec_ban { "밴" } else { "픽" }, r.ko);
         if !r.tier.is_empty() {
             t.push_str(&format!("({}티어)", r.tier));
         }
@@ -502,7 +526,7 @@ pub fn update(board: &Board, tables: &Tables) -> Output {
         parts.push(t);
         if view.rows.len() > 1 {
             parts.push(format!(
-                "차순위 밴 후보: {}.",
+                "차순위 후보: {}.",
                 view.rows
                     .iter()
                     .skip(1)
@@ -515,15 +539,20 @@ pub fn update(board: &Board, tables: &Tables) -> Output {
     }
     if !board.enemy_pick.is_empty() {
         let ids: Vec<&str> = board.enemy_pick.iter().map(|s| s.as_str()).collect();
-        let (tanks, heals) = tables.comp_counts(&ids);
-        let mut t = format!("상대 조합 {}픽 — 탱커 {} · 힐러 {}", ids.len(), tanks, heals);
-        if tanks == 0 {
-            t.push_str(". 앞라인이 없어 돌진·암살 가치가 높습니다");
-        } else if heals >= 1 {
-            t.push_str(". 힐러가 있어 장기전 불리 — 폭딜이나 CC 연계를 고려하세요");
+        // only speak about the enemy comp when we actually HAVE role data —
+        // comp_counts reads "no data" as "no tank", which would invert the advice.
+        let known = ids.iter().filter(|c| tables.role_known(c)).count();
+        if known > 0 {
+            let (tanks, heals) = tables.comp_counts(&ids);
+            let mut t = format!("상대 조합 {}픽 — 탱커 {} · 힐러 {}", ids.len(), tanks, heals);
+            if tanks == 0 && known == ids.len() {
+                t.push_str(". 앞라인이 없어 돌진·암살 가치가 높습니다");
+            } else if heals >= 1 {
+                t.push_str(". 힐러가 있어 장기전 불리 — 폭딜이나 CC 연계를 고려하세요");
+            }
+            t.push('.');
+            parts.push(t);
         }
-        t.push('.');
-        parts.push(t);
     }
     let changed_list: Vec<String> = CHAMPS
         .iter()
@@ -568,7 +597,7 @@ pub fn update(board: &Board, tables: &Tables) -> Output {
         })
         .collect();
 
-    let out = Output { rec_ban, recs, swap, say: parts.join("\n"), tiers };
+    let out = Arc::new(Output { rec_ban, recs, swap, say: parts.join("\n"), tiers });
     if let Ok(mut g) = OUTPUT.lock() {
         *g = Some((key, out.clone()));
     }

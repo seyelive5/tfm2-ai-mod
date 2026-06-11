@@ -1,25 +1,21 @@
-//! tfm2_db_export — PRODUCTION stats exporter for the draft recommender.
+//! tfm2_db_export — the COMPLETE draft recommender as a single mod (v3.0).
 //!
-//! Replaces `tfm2_save_probe.exe` (a standalone save-FILE decoder whose source is
-//! lost and which BROKE when game 0.4.7 changed the save format). Instead of
-//! decoding the save off-line, this mod reads the LIVE `ClientDatabase` from
-//! inside the running game and writes the exact files the launcher +
-//! `draft-weights-gen` already consume. Robust to save-format changes — only needs
-//! a rebuild when the mod API itself changes (rare).
+//! Everything runs in-process; no launcher exe, no injected overlay, no file IPC:
+//!   pre_update : live banpick board read (MatchUIRunner raw-cast, bp_export) →
+//!                recommender::update() → Output; throttled stats export +
+//!                in-memory engine-tables rebuild (recommender::build_tables).
+//!   post_update: stamp_grid() draws onto the game's own banpick UI — per-cell
+//!                tier text, recommendation borders (teal=pick/violet=ban), the
+//!                header rec/swap line, and the cloned "AI 추천기" panel.
 //!
-//! Writes (atomically) into the launcher's probe dir whenever match / patch / pool
-//! counts change (≈ once per new match, patch update, or champion release):
-//!   champion_patch_statistics.tsv → drives C(winrate)/POS(lanes)/B(banrate)  [CRITICAL]
-//!   solo_rank_matches.debug.txt   → gen synergy/counter (+position)          [Rust-Debug]
-//!   match_replays.debug.txt       → gen synergy/counter                       [Rust-Debug]
-//!   pool.txt                      → overlay POOL (db.available_champions)
-//!   _stamp.txt                    → "<solo>,<replay>,<patchTotal>,<pool>" (launcher regen trigger)
-//! ALSO exports the LIVE banpick board (merged from tfm2_bp_reader, 2026-06-11) to
-//! bp_live.txt — the overlay's 자동연동 feed (see bp_export below). NOTE: this makes
-//! the build require the game_view/engine_ui RLIB externs (see build_db_export.ps1);
-//! their hashes change EVERY game patch, so rebuild per patch with the new SDK.
-//! Also one-time auto-launches the overlay injector, so enabling this single mod
-//! makes the whole recommender run. Read-only w.r.t. the game.
+//! File exports remain for the personal report tool + debugging only (nothing in
+//! the pipeline reads them back): champion_patch_statistics.tsv, champ_changes.tsv,
+//! solo/replay debug dumps, pool.txt, _stamp.txt, bp_live.txt.
+//!
+//! BUILD: needs the game_view/engine_ui RLIB externs — use build_db_export.ps1
+//! (their hashes change EVERY game patch → rebuild per patch with the new SDK;
+//! a field-layout change fails the build loudly, and a stale DLL refuses to load).
+//! Read-only w.r.t. the game except the banpick UI stamping.
 
 mod recommender;
 
@@ -33,8 +29,11 @@ use std::sync::Mutex;
 
 /// engine tables built from the live stats (rebuilt whenever the export fires).
 static TABLES: Mutex<Option<recommender::engine::Tables>> = Mutex::new(None);
+/// bumped on every TABLES rebuild — invalidates the recommendation cache even
+/// when the board itself didn't change (mid-banpick pool/stats refresh).
+static TABLES_GEN: AtomicUsize = AtomicUsize::new(0);
 /// this frame's recommendations/commentary/tiers for the in-game display.
-static OUT_NOW: Mutex<Option<Output>> = Mutex::new(None);
+static OUT_NOW: Mutex<Option<std::sync::Arc<Output>>> = Mutex::new(None);
 
 /// Shared dir = %LOCALAPPDATA%/tfm2-overlay (user-agnostic; the launcher + overlay use
 /// the same). Falls back to C:/tmp if the env var is missing.
@@ -368,9 +367,12 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
     }
 
     // ── feed the in-mod recommender directly (no file round-trip): resolve sides,
-    // run the engine when the board changed, stash the Output for stamp_grid.
-    if let Some(my_id) = my_team.parse::<usize>().ok() {
-        if my_id == m.team1 || my_id == m.team2 {
+    // run the engine when the board changed, stash the Output for stamp_grid. A
+    // banpick we can't attribute to the player (spectate / unresolved team id)
+    // CLEARS the display state — never show another draft's recommendations.
+    let resolved = my_team.parse::<usize>().ok().filter(|id| *id == m.team1 || *id == m.team2);
+    match resolved {
+        Some(my_id) => {
             let mine_is_t1 = my_id == m.team1;
             // fearless locks: runtime showed locked cells are NOT `disabled` — the
             // icon marks are the live signal; keep disabled-derivation as a backup.
@@ -389,15 +391,22 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                 my_pick: if mine_is_t1 { m.team1_pick.clone() } else { m.team2_pick.clone() },
                 enemy_pick: if mine_is_t1 { m.team2_pick.clone() } else { m.team1_pick.clone() },
                 ban_count: m.ban_count,
-                teams: format!("{}|{}", m.team1, m.team2),
+                // the MATCH id makes a rematch against the same team pair a NEW
+                // series instead of a phantom "next set" of the old one.
+                teams: format!("{:?}|{}|{}", m.match_info.id, m.team1, m.team2),
                 locked,
             };
             if let Ok(mut tg) = TABLES.lock() {
                 let tables = tg.get_or_insert_with(|| recommender::build_tables("", &[], &ChgInfo::default()));
-                let out = recommender::update(&board, tables);
+                let out = recommender::update(&board, tables, TABLES_GEN.load(Ordering::Relaxed));
                 if let Ok(mut og) = OUT_NOW.lock() {
                     *og = Some(out);
                 }
+            }
+        }
+        None => {
+            if let Ok(mut og) = OUT_NOW.lock() {
+                *og = None;
             }
         }
     }
@@ -782,6 +791,7 @@ impl ModExtension for E {
         };
         if let Ok(mut tg) = TABLES.lock() {
             *tg = Some(recommender::build_tables(&pt, &pool, &chg_info));
+            TABLES_GEN.fetch_add(1, Ordering::Relaxed);
         }
         atomic_write(
             &format!("{}/_stamp.txt", out),
