@@ -512,20 +512,6 @@ const RANK_GLYPH: [&str; 5] = ["①", "②", "③", "④", "⑤"];
 /// diag for the coach-popup injection (written on change → ai_say_diag.txt).
 static SAY_DIAG: Mutex<String> = Mutex::new(String::new());
 
-/// TEMP SCOUT: dump the banpick UI node-id tree PERIODICALLY (~10s) → ui_tree.txt
-/// (hunting the set-history nodes for exact per-team fearless attribution; the
-/// first frame's tree often lacks them, so overwrite). Remove afterwards.
-static TREE_TICK: AtomicU32 = AtomicU32::new(0);
-
-fn dump_ids(n: &Node, depth: usize, out: &mut String) {
-    out.push_str(&format!("{}{} [{}]\n", "  ".repeat(depth), n.id, n.child.len()));
-    if depth >= 5 {
-        return;
-    }
-    for c in n.child.iter() {
-        dump_ids(c, depth + 1, out);
-    }
-}
 
 
 const REC_PICK_COLOR: [f32; 4] = [0.22, 0.84, 0.70, 1.0]; // teal (overlay accent)
@@ -580,13 +566,6 @@ fn stamp_grid(ui: &mut GameUI, assets: &Assets) {
     let tier_orig = tier_orig_guard.get_or_insert_with(HashMap::new);
 
     let Some(root) = ui.query_mut("main") else { return };
-
-    // TEMP SCOUT (see TREE_TICK)
-    if TREE_TICK.fetch_add(1, Ordering::Relaxed) % 600 == 0 {
-        let mut s = String::new();
-        dump_ids(root, 0, &mut s);
-        let _ = std::fs::write(format!("{}/ui_tree.txt", base()), &s);
-    }
 
     // ── AI panel = a CLONE of the 코치진 대화 내역 popup: native draggable window,
     // close button, opacity slider — all inherited. Title → "AI 추천기", messages
