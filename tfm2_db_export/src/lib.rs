@@ -24,7 +24,7 @@ use game_view::{BanpickChampionSlotRunner, MatchUIRunner};
 use mod_api::*;
 use recommender::{Board, ChgInfo, Output};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 /// engine tables built from the live stats (rebuilt whenever the export fires).
@@ -48,12 +48,13 @@ static LAST_SIG: AtomicUsize = AtomicUsize::new(usize::MAX);
 static ACC_MS: AtomicU32 = AtomicU32::new(0);
 const THROTTLE_MS: u32 = 8000;
 
-fn atomic_write(path: &str, body: &str) {
+fn atomic_write(path: &str, body: &str) -> bool {
     let tmp = format!("{}.tmp", path);
-    if std::fs::write(&tmp, body).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
+    if std::fs::write(&tmp, body).is_ok() && std::fs::rename(&tmp, path).is_ok() {
+        true
     } else {
         let _ = std::fs::remove_file(&tmp);
+        false
     }
 }
 
@@ -124,7 +125,9 @@ fn champ_blocks(dump: &str) -> std::collections::HashMap<String, String> {
 }
 
 /// Numeric per-component version key ("2026.10.0" sorts above "2026.2.0").
-fn vkey(v: &str) -> Vec<u32> {
+/// SINGLE definition — the changes anchor (written here) and the recommender's
+/// stale-row cutoff (reads it) must agree on version ordering.
+pub(crate) fn vkey(v: &str) -> Vec<u32> {
     v.split('.').map(|x| x.parse::<u32>().unwrap_or(0)).collect()
 }
 
@@ -288,8 +291,22 @@ fn champ_changes_update(db: &ClientDatabase, out: &str, fp: &str) -> String {
 // implausible value ⇒ publish nothing).
 
 static BP_LAST: Mutex<String> = Mutex::new(String::new());
-/// per-frame early-exit key for bp_export (board fields + tables generation).
+/// per-frame early-exit key for bp_export (board fields + locks + tables generation).
 static BP_PREKEY: Mutex<String> = Mutex::new(String::new());
+/// last GATE-trip reason — written once per distinct reason to gate_trip.txt, so a
+/// persistent trip (e.g. a future patch breaking validation) is debuggable instead
+/// of an indistinguishable-from-"not-on-banpick-screen" silent death.
+static GATE_DIAG: Mutex<String> = Mutex::new(String::new());
+
+fn gate_diag(reason: String) {
+    if let Ok(mut g) = GATE_DIAG.lock() {
+        if *g != reason {
+            let _ = std::fs::create_dir_all(base());
+            let _ = std::fs::write(format!("{}/gate_trip.txt", base()), &reason);
+            *g = reason;
+        }
+    }
+}
 
 fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
     let my_team = match scene {
@@ -312,68 +329,46 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
         }
     };
     if m.ban_count > 20 || m.team1 > 1_000_000 || m.team2 > 1_000_000 || m.team1 == m.team2 {
+        gate_diag(format!(
+            "GATE2-fields: ban_count={} team1={} team2={}",
+            m.ban_count, m.team1, m.team2
+        ));
         clear_out();
         return;
     }
+    // ascii alphanumeric + '_' : vanilla/DLC ids are [a-z_], but ModChampionInfo ids
+    // are arbitrary — a third-party champ like "knight2" must not silently kill the
+    // whole export. Random heap garbage is still essentially never all-alnum.
     let champ_ok = |s: &String| {
-        !s.is_empty() && s.len() <= 30 && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+        !s.is_empty() && s.len() <= 30 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
     };
     let vec_ok = |v: &Vec<String>| v.len() <= 10 && v.iter().all(champ_ok);
     if !(vec_ok(&m.team1_ban) && vec_ok(&m.team2_ban) && vec_ok(&m.team1_pick) && vec_ok(&m.team2_pick)) {
+        gate_diag(format!(
+            "GATE2-champs: b1={:?} b2={:?} p1={:?} p2={:?}",
+            m.team1_ban, m.team2_ban, m.team1_pick, m.team2_pick
+        ));
         clear_out();
         return;
     }
     if m.team1_order.len() > 10 || m.team2_order.len() > 10 {
+        gate_diag(format!(
+            "GATE2-order: o1={} o2={}",
+            m.team1_order.len(),
+            m.team2_order.len()
+        ));
         clear_out();
         return;
     }
 
-    // ── per-frame early exit: everything below (replay walk, grid walk, board
-    // clones, recommender call, file exports) only matters when the BOARD or the
-    // stats generation changed; at 60fps that's almost never.
-    {
-        let prekey = format!(
-            "{:?}|{}|{}|{}|{}|{}|{}|{}|{}",
-            m.match_info.id,
-            m.team1,
-            m.team2,
-            m.ban_count,
-            m.team1_ban.join(","),
-            m.team2_ban.join(","),
-            m.team1_pick.join(","),
-            m.team2_pick.join(","),
-            TABLES_GEN.load(Ordering::Relaxed),
-        );
-        let out_ready = OUT_NOW.lock().map(|o| o.is_some()).unwrap_or(false);
-        if let Ok(mut g) = BP_PREKEY.lock() {
-            if *g == prekey && out_ready {
-                return;
-            }
-            *g = prekey;
-        }
-    }
-
-    // set number + previous sets' picks (the fearless feed): completed sets live in
-    // match_info.replays (ids into db.match_replays, which carries team-attributed
-    // picks). try_borrow: never fight the game over its own RefCell.
-    let set_no = m.match_info.replays.len() + 1;
-    let (mut prev_my, mut prev_enemy) = (Vec::new(), Vec::new());
-    if let (Ok(db), Some(my_id)) = (m.database.try_borrow(), my_team.parse::<usize>().ok().as_ref()) {
-        for rid in &m.match_info.replays {
-            if let Some(rep) = db.match_replays.get(rid) {
-                let (mine, theirs) = if rep.blue_team_id == *my_id {
-                    (&rep.blue_team, &rep.red_team)
-                } else {
-                    (&rep.red_team, &rep.blue_team)
-                };
-                prev_my.extend(mine.iter().map(|a| a.champion.clone()));
-                prev_enemy.extend(theirs.iter().map(|a| a.champion.clone()));
-            }
-        }
-    }
-    // fearless locks exactly as the GAME enforces them: a cell that is DISABLED but
-    // not banned/picked is fearless-locked for me (ground truth, no style guessing).
-    // fearless_icon/fearless_x visibility exported too (icon = "was used" info mark).
+    // fearless lock marks — collected BEFORE the early exit and keyed into it: the
+    // icons can populate a frame or two after the board fields turn valid, and a
+    // lock change with an unchanged board must still reach the recommender
+    // (otherwise set-start recommendations ignore every fearless lock until the
+    // first ban lands). locked_d (disabled-derived) is collected for the debug
+    // export ONLY: runtime showed genuinely locked cells are NOT `disabled`, so
+    // that channel only ever fires on other-reason transient disables — feeding it
+    // to the recommender latched phantom fearless state.
     let taken: Vec<&String> = m
         .team1_ban
         .iter()
@@ -403,6 +398,52 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
         }
     }
 
+    // ── per-frame early exit: everything below (replay walk, board clones,
+    // recommender call, file exports) only matters when the BOARD, the lock marks
+    // or the stats generation changed; at 60fps that's almost never.
+    {
+        let prekey = format!(
+            "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            m.match_info.id,
+            m.team1,
+            m.team2,
+            m.ban_count,
+            m.team1_ban.join(","),
+            m.team2_ban.join(","),
+            m.team1_pick.join(","),
+            m.team2_pick.join(","),
+            locked_x.join(","),
+            locked_i.join(","),
+            TABLES_GEN.load(Ordering::Relaxed),
+        );
+        let out_ready = OUT_NOW.lock().map(|o| o.is_some()).unwrap_or(false);
+        if let Ok(mut g) = BP_PREKEY.lock() {
+            if *g == prekey && out_ready {
+                return;
+            }
+            *g = prekey;
+        }
+    }
+
+    // set number + previous sets' picks (the fearless feed): completed sets live in
+    // match_info.replays (ids into db.match_replays, which carries team-attributed
+    // picks). try_borrow: never fight the game over its own RefCell.
+    let set_no = m.match_info.replays.len() + 1;
+    let (mut prev_my, mut prev_enemy) = (Vec::new(), Vec::new());
+    if let (Ok(db), Some(my_id)) = (m.database.try_borrow(), my_team.parse::<usize>().ok().as_ref()) {
+        for rid in &m.match_info.replays {
+            if let Some(rep) = db.match_replays.get(rid) {
+                let (mine, theirs) = if rep.blue_team_id == *my_id {
+                    (&rep.blue_team, &rep.red_team)
+                } else {
+                    (&rep.red_team, &rep.blue_team)
+                };
+                prev_my.extend(mine.iter().map(|a| a.champion.clone()));
+                prev_enemy.extend(theirs.iter().map(|a| a.champion.clone()));
+            }
+        }
+    }
+
     // ── feed the in-mod recommender directly (no file round-trip): resolve sides,
     // run the engine when the board changed, stash the Output for stamp_grid. A
     // banpick we can't attribute to the player (spectate / unresolved team id)
@@ -411,15 +452,12 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
     match resolved {
         Some(my_id) => {
             let mine_is_t1 = my_id == m.team1;
-            // fearless locks: runtime showed locked cells are NOT `disabled` — the
-            // icon marks are the live signal; keep disabled-derivation as a backup.
-            let mut locked = locked_d.clone();
-            if locked.is_empty() {
-                locked = locked_x.clone();
-                for c in &locked_i {
-                    if !locked.contains(c) {
-                        locked.push(c.clone());
-                    }
+            // fearless locks = icon marks ONLY (locked_d is debug-export-only, see
+            // the collection comment above).
+            let mut locked = locked_x.clone();
+            for c in &locked_i {
+                if !locked.contains(c) {
+                    locked.push(c.clone());
                 }
             }
             let board = Board {
@@ -483,10 +521,8 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let path = format!("{}/bp_live.txt", base());
-    let tmp = format!("{}.tmp", path);
     let _ = std::fs::create_dir_all(base());
-    if std::fs::write(&tmp, format!("ts={}\n{}", ms, key)).is_ok() && std::fs::rename(&tmp, &path).is_ok() {
+    if atomic_write(&format!("{}/bp_live.txt", base()), &format!("ts={}\n{}", ms, key)) {
         *last = key;
     }
 }
@@ -505,7 +541,16 @@ static ORIG_BORDER: Mutex<Option<HashMap<String, (f32, [f32; 4])>>> = Mutex::new
 /// each cell's #tier label text as first seen — restored when we have nothing to say.
 static ORIG_TIER: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 /// the header #desc text the game wrote (saved before we replace it with our recs).
-static HDR_ORIG: Mutex<String> = Mutex::new(String::new());
+/// Option: None = not yet captured, Some("") = captured a genuinely empty label —
+/// a plain String can't tell those apart, which blocked the restore forever.
+static HDR_ORIG: Mutex<Option<String>> = Mutex::new(None);
+/// stamp_grid ran on a banpick frame — on leaving the screen the first-seen
+/// snapshots are dropped (the next match/patch may have different real tiers/
+/// borders; restoring a stale capture would clobber the game's own text).
+static STAMPED: AtomicBool = AtomicBool::new(false);
+/// the AI panel was auto-hidden because the Output went empty (≠ user-closed):
+/// only then may a fresh Output auto-reshow it.
+static AI_AUTO_HIDDEN: AtomicBool = AtomicBool::new(false);
 
 const RANK_GLYPH: [&str; 5] = ["①", "②", "③", "④", "⑤"];
 
@@ -540,8 +585,23 @@ unsafe fn as_label(n: &mut Node) -> &mut LabelRunner {
 fn stamp_grid(ui: &mut GameUI, assets: &Assets) {
     // banpick screen only
     if ui.query("main.timer_area.timer_text").is_none() {
+        // just left the banpick screen: drop the first-seen snapshots (one cheap
+        // atomic per non-banpick frame; the locks below run once per exit).
+        if STAMPED.swap(false, Ordering::Relaxed) {
+            if let Ok(mut g) = ORIG_BORDER.lock() {
+                *g = None;
+            }
+            if let Ok(mut g) = ORIG_TIER.lock() {
+                *g = None;
+            }
+            if let Ok(mut g) = HDR_ORIG.lock() {
+                *g = None;
+            }
+            AI_AUTO_HIDDEN.store(false, Ordering::Relaxed); // panel died with the tree
+        }
         return;
     }
+    STAMPED.store(true, Ordering::Relaxed);
     // everything to display comes from the in-mod recommender (computed in
     // pre_update's bp_export from the live board + live stats — no files). When
     // there is NO valid Output (unresolvable/spectated draft, gate trip), proceed
@@ -621,6 +681,9 @@ fn stamp_grid(ui: &mut GameUI, assets: &Assets) {
             }
         }
         if let Some(panel) = find_mut(root, "ai_panel") {
+            if AI_AUTO_HIDDEN.swap(false, Ordering::Relaxed) {
+                panel.visible = true; // WE hid it (Output went empty) — not the user
+            }
             if let Some(row) = find_mut(panel, "ai_row") {
                 // the cloned coach message's champion chips are stale → hide
                 if let Some(ent) = find_mut(row, "entities") {
@@ -649,6 +712,15 @@ fn stamp_grid(ui: &mut GameUI, assets: &Assets) {
                 *last = diag;
             }
         }
+    } else if let Some(panel) = find_mut(root, "ai_panel") {
+        // Output went empty (gate trip / unresolved draft): borders/header below
+        // un-paint — the panel must not keep presenting the previous board's
+        // commentary as valid. Auto-hide; a user-closed panel (already invisible)
+        // doesn't set the flag, so it stays closed when the Output returns.
+        if panel.visible {
+            panel.visible = false;
+            AI_AUTO_HIDDEN.store(true, Ordering::Relaxed);
+        }
     }
 
     // ── header line: the explicit ranked list, names + scores, in the top banner.
@@ -674,10 +746,14 @@ fn stamp_grid(ui: &mut GameUI, assets: &Assets) {
                 } else {
                     None
                 };
+                // "ours" marker: full pattern of the lines we paint ("추천 픽/밴/배치 ▶ …"),
+                // not just the "추천" prefix — game-authored text like "추천 챔피언을
+                // 선택하세요" must be captured as the original, never mistaken for ours.
+                let ours = |t: &str| t.starts_with("추천 ") && t.contains('▶');
                 match line {
                     Some(line) => {
-                        if !lr.text.starts_with("추천") {
-                            *orig = lr.text.clone(); // the game's own instruction text
+                        if !ours(&lr.text) {
+                            *orig = Some(lr.text.clone()); // the game's own instruction text
                         }
                         if lr.text != line {
                             lr.text = line;
@@ -685,9 +761,13 @@ fn stamp_grid(ui: &mut GameUI, assets: &Assets) {
                         }
                     }
                     None => {
-                        if lr.text.starts_with("추천") && !orig.is_empty() {
-                            lr.text = orig.clone();
-                            desc.runner.set_dirty(true);
+                        // restore even a captured-EMPTY original (Some("")) — only an
+                        // uncaptured None leaves the label alone.
+                        if ours(&lr.text) {
+                            if let Some(o) = orig.as_ref() {
+                                lr.text = o.clone();
+                                desc.runner.set_dirty(true);
+                            }
                         }
                     }
                 }
@@ -763,8 +843,10 @@ impl ModExtension for E {
         };
 
         let db = data.db();
-        // early InGame frames have an empty db (still loading) — wait for it.
-        if db.available_champions.is_empty() && db.athletes.is_empty() {
+        // early InGame frames have a partially-loaded db — wait until BOTH
+        // collections are in (|| not &&: champs-without-athletes or vice versa
+        // would build tables from a half-loaded db and latch the signature).
+        if db.available_champions.is_empty() || db.athletes.is_empty() {
             return;
         }
 

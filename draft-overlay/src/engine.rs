@@ -57,7 +57,12 @@ const W_COMP: f32 = 0.2; // was 0.6 — comp barely predicts wins; keep only as 
 const W_DUP: f32 = 0.4;
 const W_BAN_CNT: f32 = 0.4; // was 1.0 — same noise tables, trimmed
 const W_BAN_SYN: f32 = 0.3; // was 0.8 — "
-const W_BAN_META: f32 = 0.2; // was 0.5 — let champ winrate lead bans, not raw banrate (which is circular)
+// was 0.5 → 0.2 → 0.05: banrate is a RAW 0..1 fraction (top champs hit ~0.64),
+// so at 0.2 the meta term (≈0.13) outweighed the entire base range (max C-delta
+// ≈0.09) — a delta-0 champ banned 60% outranked the best S-tier, i.e. the
+// circular raw-banrate signal still led. 0.05 caps meta at ≈0.032 (< one S-tier
+// base of 0.06): winrate now actually leads, banrate only breaks ties.
+const W_BAN_META: f32 = 0.05;
 const COMP_UNIT: f32 = 0.12;
 // early-pick flexibility bonus, per extra lane a champ can play (capped at +2 lanes).
 // First picks are "blind" → favor flex champs that hide your lane assignment.
@@ -126,8 +131,13 @@ pub struct Tables {
     /// frontline/healer for comp balance, catching champs the static tags miss.
     role: std::collections::HashMap<String, (f32, f32)>,
     /// opponent-aware bans: (team id, champ) -> (games, wins) that team played it.
+    /// Parsed but currently UNREAD: the OppBan view (opp_ban_ranking/has_opp) was
+    /// dead code with no caller in either UI and got removed; the data stays
+    /// parsed so a future opponent-aware ban feature only needs a new consumer.
+    #[allow(dead_code)]
     opp: std::collections::HashMap<(u32, String), (u32, u32)>,
     /// team id -> total games (usage-share denominator), from `OPPN` rows.
+    #[allow(dead_code)]
     opp_team_games: std::collections::HashMap<u32, u32>,
     /// team id -> display name (from `TEAM` rows), sorted by name for the picker.
     pub team_names: Vec<(u32, String)>,
@@ -268,17 +278,6 @@ pub fn parse_tables_from_str(tsv: &str) -> Tables {
     t
 }
 
-/// One opponent-aware ban suggestion (a champ the chosen enemy team relies on).
-pub struct OppBan {
-    pub id: String,
-    pub ko: String,
-    pub score: f32,
-    pub games: u32,
-    pub wins: u32,
-    pub usage_pct: u32, // % of the team's games that featured this champ
-    pub lane: u8,
-    pub tier: &'static str, // meta tier (for row color), from tier_of
-}
 
 impl Tables {
     pub fn len(&self) -> usize { self.champ_delta.len() }
@@ -300,13 +299,17 @@ impl Tables {
     /// any champ changed in the current patch? (drives the UI legend line)
     pub fn any_chg(&self) -> bool { !self.chg.is_empty() }
     /// Lane-specific winrate delta: the (champ, lane) cell if present, else the
-    /// champ-level delta. So recommending a champ for a lane it rarely plays uses
-    /// THAT lane's (shrunk-to-neutral) winrate, not its main-lane strength.
+    /// champ-level delta SHRUNK HARD toward neutral. A POS-playable lane with no
+    /// CP cell means ZERO games there in the current patch window — valuing it at
+    /// the overall delta (inflated by main-lane games) let assign_lanes move a
+    /// champ to a no-data lane over its real main lane, displacing a genuine
+    /// main-laner. ×0.25 keeps a little signal without beating any real CP cell.
     fn delta_for(&self, c: &str, lane: Option<u8>) -> f32 {
         if let Some(l) = lane {
             if let Some((d, _)) = self.champ_pos_delta.get(&(c.into(), l)) {
                 return *d;
             }
+            return 0.25 * self.delta(c);
         }
         self.delta(c)
     }
@@ -618,54 +621,10 @@ impl Tables {
         (total, dominant(&[("강챔", base), ("우리킬", cnt), ("적시너지", syn), ("밴율", meta)]))
     }
 
-    /// Does this team have any opponent-usage data (→ offer opponent-aware bans)?
-    pub fn has_opp(&self, team: u32) -> bool {
-        self.opp_team_games.get(&team).map_or(false, |g| *g > 0)
-    }
-
-    /// Opponent-aware BAN ranking: which champs the chosen ENEMY team relies on most
-    /// (frequent use × win-on-it), restricted to the available pool and excluding
-    /// already-used champs (fearless). Falls back to empty if no data for `team`.
-    pub fn opp_ban_ranking(&self, team: u32, used: &HashSet<String>, top_n: usize) -> Vec<OppBan> {
-        let tg = *self.opp_team_games.get(&team).unwrap_or(&0) as f32;
-        if tg < 1.0 {
-            return Vec::new();
-        }
-        let mut rows: Vec<OppBan> = Vec::new();
-        for ((tm, champ), &(g, w)) in &self.opp {
-            if *tm != team || used.contains(champ) {
-                continue;
-            }
-            if !self.pool.is_empty() && !self.pool.contains(champ) {
-                continue;
-            }
-            let usage = g as f32 / tg; // share of the team's games featuring this champ
-            let wr = (w as f32 + 3.0) / (g as f32 + 6.0); // shrunk winrate (k=6)
-            let excess = (wr - 0.5).max(-0.25); // don't over-punish their loss champs
-            let meta = self.delta(champ) + 0.4 * *self.banrate.get(champ).unwrap_or(&0.0);
-            // threat = how often they bring it, amplified by how much they win on it.
-            let score = usage * (1.0 + 4.0 * excess) + 0.25 * meta;
-            let lane = self
-                .pos_primary
-                .get(champ)
-                .copied()
-                .or_else(|| self.primary(champ))
-                .unwrap_or(0);
-            rows.push(OppBan {
-                id: champ.clone(),
-                ko: ko_name(champ),
-                score,
-                games: g,
-                wins: w,
-                usage_pct: (usage * 100.0).round() as u32,
-                lane,
-                tier: self.tier_of(champ, Some(lane)),
-            });
-        }
-        rows.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        rows.truncate(top_n);
-        rows
-    }
+    // (opp_ban_ranking / has_opp / OppBan removed 2026-06-12: dead code — no
+    // caller in either UI — and its lane resolution inverted primary()'s
+    // best-winrate-lane fix. The O/OPPN data stays parsed above for a future
+    // opponent-aware ban consumer.)
 }
 
 fn dominant(parts: &[(&'static str, f32)]) -> &'static str {

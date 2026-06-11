@@ -38,9 +38,9 @@ fn beta_lcb(w: f64, m: f64, prior_mean: f64, kappa: f64, z: f64) -> f64 {
     (mean - z * sd).clamp(0.0, 1.0)
 }
 
-fn vkey(v: &str) -> Vec<u32> {
-    v.split('.').map(|x| x.parse::<u32>().unwrap_or(0)).collect()
-}
+// version sort key: single definition in lib.rs — the changes ANCHOR (writer)
+// and the stale-row CUTOFF (reader, below) must agree on version ordering.
+use crate::vkey;
 
 fn lane_idx(p: &str) -> Option<u8> {
     match p {
@@ -342,11 +342,13 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         s.hard = false;
         s.unattributed = false;
     } else if let Some((pm, pe)) = s.full_board.take() {
-        let total_now =
-            board.my_pick.len() + board.enemy_pick.len() + board.my_ban.len() + board.enemy_ban.len();
+        // picks-only on BOTH sides: counting bans into the new set's total masks
+        // the shrink (6 bans + 1 pick would read as 7 vs the stored 10 picks and
+        // permanently miss the boundary when the screen is first seen late).
+        let picks_now = board.my_pick.len() + board.enemy_pick.len();
         // require a CLEARLY smaller board: a one-slot transient misread (9 < 10)
         // must not fire a phantom set transition.
-        if total_now + 3 < pm.len() + pe.len() {
+        if picks_now + 3 < pm.len() + pe.len() {
             s.game += 1;
             s.my.extend(pm);
             s.enemy.extend(pe);
@@ -368,10 +370,13 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         // style RECOMPUTED every pass (the old overlay's semantics) — a single
         // mis-read frame must not latch Hard for the whole series.
         s.hard = s.enemy.iter().filter(|c| !s.my.contains(*c)).any(|c| board.locked.contains(c));
-        if s.my.is_empty() && s.enemy.is_empty() {
+        if s.my.is_empty() && s.enemy.is_empty() && board.locked.len() >= 4 {
             // mod started mid-series: adopt the game's lock list wholesale. The
             // my/enemy split is unknowable here (in HARD the union filters
             // correctly anyway) — flag it so the display doesn't fake a split.
+            // ≥4 guard: a real mid-series lock list is a whole set (5+ champs);
+            // anything smaller is a transient misread that must not latch this
+            // branch irreversibly (it can't be undone until the teams change).
             s.my = board.locked.iter().cloned().collect();
             s.unattributed = true;
             if s.game == 1 {
@@ -383,9 +388,12 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         s.hard = false;
     }
 
-    // ── recompute only when the board or stats changed
+    // ── recompute only when the board or stats changed. ban_count and teams
+    // MUST be keyed: rec_ban derives from ban_count, and OUTPUT survives across
+    // matches — two matches' empty-board start frames would otherwise collide
+    // and serve a wrong-phase Output under a different ban rule.
     let key = format!(
-        "{}|{}|{}|{}|{}|{}|{:?}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{:?}|{}|{}|{}|{}",
         board.my_ban.join(","),
         board.enemy_ban.join(","),
         board.my_pick.join(","),
@@ -395,6 +403,8 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         s.first_pick,
         s.game,
         s.hard,
+        board.ban_count,
+        board.teams,
     );
     if let Ok(g) = OUTPUT.lock() {
         if let Some((k, out)) = g.as_ref() {
@@ -534,6 +544,9 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         if !r.chg.is_empty() {
             t.push_str(&format!(" (이번 패치 변경 {})", r.chg));
         }
+        if r.low_conf {
+            t.push_str(". 다만 표본이 적어 확신은 낮습니다");
+        }
         t.push('.');
         parts.push(t);
         if view.rows.len() > 1 {
@@ -598,6 +611,31 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                 s.enemy.len()
             ));
         }
+        // depletion: STRONG (S/A) champs still pickable per lane — don't burn a
+        // thin lane's only strong champ in an early set (ported back from the
+        // retired overlay; the display was lost in the v3.0 port).
+        let taken: HashSet<&str> = board
+            .my_ban
+            .iter()
+            .chain(board.enemy_ban.iter())
+            .chain(board.my_pick.iter())
+            .chain(board.enemy_pick.iter())
+            .map(|s| s.as_str())
+            .collect();
+        let avail: HashSet<String> = CHAMPS
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .filter(|id| {
+                (base_pool.is_empty() || base_pool.contains(id))
+                    && !my_locked.contains(id)
+                    && !taken.contains(id.as_str())
+            })
+            .collect();
+        let d = tables.strong_per_lane(&avail);
+        parts.push(format!(
+            "남은 강챔(S/A) ▶ 탑 {} · 정글 {} · 미드 {} · 바텀 {} · 서폿 {} — 적은 라인은 아껴두세요.",
+            d[0], d[1], d[2], d[3], d[4]
+        ));
     }
     parts.push(format!(
         "데이터: 현재 패치 {}판{}",
