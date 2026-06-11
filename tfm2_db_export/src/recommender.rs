@@ -275,6 +275,10 @@ pub fn build_tables(patch_tsv: &str, pool: &[String], chg: &ChgInfo) -> Tables {
 // ───────────────────── live draft state + recommendations ─────────────────────
 
 /// Board read each frame from MatchUIRunner (already side-resolved: my/enemy).
+/// my_locked/enemy_locked are the GAME's own fearless lock lists
+/// (fearless_team1_locked/fearless_team2_locked, side-resolved): per-team ground
+/// truth, so fearless style and counts are DERIVED per pass — no cross-frame lock
+/// accumulation, no mid-series recovery guessing, no style latching.
 #[derive(Default, Clone, PartialEq)]
 pub struct Board {
     pub my_ban: Vec<String>,
@@ -283,23 +287,23 @@ pub struct Board {
     pub enemy_pick: Vec<String>,
     pub ban_count: usize,
     pub teams: String,
-    pub locked: Vec<String>,
+    pub my_locked: Vec<String>,
+    pub enemy_locked: Vec<String>,
+    /// the lock lists came from RECOGNIZED game tooltips (vs the conservative
+    /// both-sides fallback) — gates the 하드 style claim in the commentary.
+    pub attributed: bool,
 }
 
-/// Cross-frame fearless/series/first-pick tracking (ported from the overlay).
+/// Cross-frame series tracking — ONLY what the game doesn't hand us directly:
+/// the set number (board shrink after a seen-full board) and first-pick side.
 #[derive(Default)]
 struct Series {
     teams: String,
     game: u32,
-    my: HashSet<String>,
-    enemy: HashSet<String>,
-    full_board: Option<(Vec<String>, Vec<String>)>,
+    /// both sides showed 5 picks (set finished drafting) — the next clearly
+    /// smaller board is a new set.
+    saw_full: bool,
     first_pick: Option<bool>,
-    hard: bool,
-    fearless_on: bool,
-    /// false after the lock-recovery branch (mod started mid-series): the
-    /// my/enemy split is then a guess — display totals, not the split.
-    unattributed: bool,
 }
 
 /// Everything the in-game display needs this frame.
@@ -329,80 +333,55 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
     };
     let s = sg.get_or_insert_with(Series::default);
 
-    // ── series / fearless tracking. board.teams includes the MATCH id, so a
-    // rematch against the same team pair is a NEW series, not a phantom next set.
+    // ── series tracking (set number + first pick only — locks come from the
+    // game). board.teams includes the MATCH id, so a rematch against the same
+    // team pair is a NEW series, not a phantom next set.
     if board.teams != s.teams {
         s.teams = board.teams.clone();
         s.game = 1;
-        s.my.clear();
-        s.enemy.clear();
-        s.full_board = None;
+        s.saw_full = false;
         s.first_pick = None;
-        s.fearless_on = false;
-        s.hard = false;
-        s.unattributed = false;
-    } else if let Some((pm, pe)) = s.full_board.take() {
-        // picks-only on BOTH sides: counting bans into the new set's total masks
-        // the shrink (6 bans + 1 pick would read as 7 vs the stored 10 picks and
-        // permanently miss the boundary when the screen is first seen late).
+    } else if s.saw_full {
+        // picks-only: counting bans would mask the shrink (6 bans + 1 pick reads
+        // as 7 vs 10 and the boundary is missed when the screen is seen late).
+        // +3 slack: a one-slot transient misread must not fire a phantom set.
         let picks_now = board.my_pick.len() + board.enemy_pick.len();
-        // require a CLEARLY smaller board: a one-slot transient misread (9 < 10)
-        // must not fire a phantom set transition.
-        if picks_now + 3 < pm.len() + pe.len() {
+        if picks_now + 3 < 10 {
             s.game += 1;
-            s.my.extend(pm);
-            s.enemy.extend(pe);
+            s.saw_full = false;
             s.first_pick = None;
-        } else {
-            // not (yet) a reset — PUT THE BOARD BACK and keep waiting, otherwise a
-            // single non-triggering frame would silently drop the whole set.
-            s.full_board = Some((pm, pe));
         }
     }
     if board.my_pick.len() == 5 && board.enemy_pick.len() == 5 {
-        s.full_board = Some((board.my_pick.clone(), board.enemy_pick.clone()));
+        s.saw_full = true;
     }
     if board.my_pick.len() + board.enemy_pick.len() == 1 && s.first_pick.is_none() {
         s.first_pick = Some(board.my_pick.len() == 1);
     }
-    if !board.locked.is_empty() {
-        s.fearless_on = true;
-        // style RECOMPUTED every pass (the old overlay's semantics) — a single
-        // mis-read frame must not latch Hard for the whole series.
-        s.hard = s.enemy.iter().filter(|c| !s.my.contains(*c)).any(|c| board.locked.contains(c));
-        if s.my.is_empty() && s.enemy.is_empty() && board.locked.len() >= 4 {
-            // mod started mid-series: adopt the game's lock list wholesale. The
-            // my/enemy split is unknowable here (in HARD the union filters
-            // correctly anyway) — flag it so the display doesn't fake a split.
-            // ≥4 guard: a real mid-series lock list is a whole set (5+ champs);
-            // anything smaller is a transient misread that must not latch this
-            // branch irreversibly (it can't be undone until the teams change).
-            s.my = board.locked.iter().cloned().collect();
-            s.unattributed = true;
-            if s.game == 1 {
-                s.game = 2;
-            }
-        }
-    } else if s.game == 1 {
-        s.fearless_on = false;
-        s.hard = false;
-    }
+
+    // ── fearless: DERIVED from the game's lock lists every pass (no latching).
+    // hard = both teams share one identical lock set (the union); in normal each
+    // team is locked out of its OWN used champs, so the lists differ.
+    let my_locked: HashSet<String> = board.my_locked.iter().cloned().collect();
+    let enemy_locked: HashSet<String> = board.enemy_locked.iter().cloned().collect();
+    let fearless_on = !my_locked.is_empty() || !enemy_locked.is_empty();
+    let hard = !my_locked.is_empty() && my_locked == enemy_locked;
 
     // ── recompute only when the board or stats changed. ban_count and teams
     // MUST be keyed: rec_ban derives from ban_count, and OUTPUT survives across
     // matches — two matches' empty-board start frames would otherwise collide
     // and serve a wrong-phase Output under a different ban rule.
     let key = format!(
-        "{}|{}|{}|{}|{}|{}|{:?}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{:?}|{}|{}|{}",
         board.my_ban.join(","),
         board.enemy_ban.join(","),
         board.my_pick.join(","),
         board.enemy_pick.join(","),
-        board.locked.join(","),
+        board.my_locked.join(","),
+        board.enemy_locked.join(","),
         tables_gen,
         s.first_pick,
         s.game,
-        s.hard,
         board.ban_count,
         board.teams,
     );
@@ -430,20 +409,9 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
 
     // fearless lock filtering happens through the POOL argument (engine design):
     // pick recs drop what I can't pick; ban recs drop what the ENEMY can't pick.
-    // CRITICAL: gated on fearless_on — series tracking accumulates picks in ANY
-    // multi-set match, but locks only exist under the fearless rule (a non-
-    // fearless Bo3 may re-pick set-1 champs freely).
-    let (my_locked, enemy_locked): (HashSet<String>, HashSet<String>) = if s.fearless_on {
-        let ml: HashSet<String> = if s.hard {
-            s.my.union(&s.enemy).cloned().collect()
-        } else {
-            s.my.clone()
-        };
-        let el = if s.hard { ml.clone() } else { s.enemy.clone() };
-        (ml, el)
-    } else {
-        (HashSet::new(), HashSet::new())
-    };
+    // The lists come straight from the game, so they're exactly right in both
+    // styles (in hard each list already IS the union) and trivially empty in a
+    // non-fearless multi-set match.
     let rec_lock = if rec_ban { &enemy_locked } else { &my_locked };
     let base_pool: HashSet<String> = tables.pool.clone();
     let effective: HashSet<String> = if base_pool.is_empty() {
@@ -457,7 +425,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
     let lane_view = if rec_ban {
         None
     } else {
-        Some(recommend_lanes(tables, &st, false, pool_opt, s.fearless_on))
+        Some(recommend_lanes(tables, &st, false, pool_opt, fearless_on))
     };
 
     // ── recs (id, ko, score)
@@ -593,22 +561,31 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
             changed_list.join(" ")
         ));
     }
-    if s.fearless_on {
-        if s.unattributed {
-            // mid-series recovery: the split, the set number AND the style are all
-            // guesses here — claim none of them, show only the honest lock total.
-            let total: HashSet<&String> = s.my.iter().chain(s.enemy.iter()).collect();
+    if fearless_on {
+        // locks exist but no earlier set was observed → the mod joined mid-series
+        // and the set counter is unknowable; the lock COUNTS stay exact regardless
+        // (they come from the game's own cell marks).
+        let set_label = if s.game >= 2 {
+            format!("{}세트", s.game)
+        } else {
+            "세트 미상".to_string()
+        };
+        if hard {
+            // identical lock sets: hard fearless when the game's tooltips said so
+            // ("양팀 모두…"), otherwise the conservative both-sides fallback.
             parts.push(format!(
-                "피어리스 — 사용 불가 {}챔 (게임 잠금 기준; 모드가 시리즈 도중 시작되어 세트/팀 구분은 생략).",
-                total.len()
+                "피어리스 {}({}) — 사용 불가{} {}챔.",
+                set_label,
+                if board.attributed { "하드" } else { "스타일 미상" },
+                if board.attributed { "(공통)" } else { "(공통 처리)" },
+                my_locked.len()
             ));
         } else {
             parts.push(format!(
-                "피어리스 {}세트({}) — 사용 불가: 내 {}챔 · 상대 {}챔.",
-                s.game,
-                if s.hard { "하드" } else { "노멀" },
-                s.my.len(),
-                s.enemy.len()
+                "피어리스 {}(노멀) — 사용 불가: 내 {}챔 · 상대 {}챔.",
+                set_label,
+                my_locked.len(),
+                enemy_locked.len()
             ));
         }
         // depletion: STRONG (S/A) champs still pickable per lane — don't burn a

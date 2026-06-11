@@ -298,6 +298,9 @@ static BP_PREKEY: Mutex<String> = Mutex::new(String::new());
 /// of an indistinguishable-from-"not-on-banpick-screen" silent death.
 static GATE_DIAG: Mutex<String> = Mutex::new(String::new());
 
+/// TEMP fearless-semantics scout dedup (fearless_scout.txt).
+static SCOUT_LAST: Mutex<String> = Mutex::new(String::new());
+
 fn gate_diag(reason: String) {
     if let Ok(mut g) = GATE_DIAG.lock() {
         if *g != reason {
@@ -361,14 +364,14 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
         return;
     }
 
-    // fearless lock marks — collected BEFORE the early exit and keyed into it: the
-    // icons can populate a frame or two after the board fields turn valid, and a
-    // lock change with an unchanged board must still reach the recommender
-    // (otherwise set-start recommendations ignore every fearless lock until the
-    // first ban lands). locked_d (disabled-derived) is collected for the debug
-    // export ONLY: runtime showed genuinely locked cells are NOT `disabled`, so
-    // that channel only ever fires on other-reason transient disables — feeding it
-    // to the recommender latched phantom fearless state.
+    // ── fearless locks, read from the grid cells. The game renders three
+    // distinct per-cell states (BanpickChampionSlotRunner::fearless_own_locked /
+    // _enemy_locked / _both_locked — renderer fns taking &mut Node; the
+    // MatchUIRunner.fearless_team1/2_locked lists exist but are PRIVATE). The
+    // observable output per cell: fearless_icon/fearless_x visibility plus the
+    // icon's and the tooltip's text — the TOOLTIP text attributes the lock
+    // (which team used it / both). In NORMAL fearless icons mark champs used by
+    // EITHER team, which the old icon-union read misread as Hard.
     let taken: Vec<&String> = m
         .team1_ban
         .iter()
@@ -376,34 +379,102 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
         .chain(m.team1_pick.iter())
         .chain(m.team2_pick.iter())
         .collect();
+    let (mut fl_my, mut fl_enemy) = (Vec::new(), Vec::new());
+    let mut attributed = false; // any tooltip matched a KNOWN locale pattern
     let (mut locked_d, mut locked_x, mut locked_i) = (Vec::new(), Vec::new(), Vec::new());
+    let mut scout = String::new(); // TEMP: fearless-semantics ground truth dump
     if let Some(root) = ui.query_mut("main") {
         if let Some(ch) = find_mut(root, "champions") {
             if let Some(contents) = find_mut(ch, "contents") {
-                for cell in contents.child.iter() {
+                for cell in contents.child.iter_mut() {
                     if cell.disabled && !taken.iter().any(|t| **t == cell.id) {
                         locked_d.push(cell.id.clone());
                     }
-                    for k in cell.child.iter() {
-                        if k.visible {
-                            if k.id == "fearless_x" {
-                                locked_x.push(cell.id.clone());
-                            } else if k.id == "fearless_icon" {
-                                locked_i.push(cell.id.clone());
+                    let (mut icon_vis, mut x_vis) = (false, false);
+                    let (mut icon_txt, mut tip_txt) = (String::new(), String::new());
+                    for k in cell.child.iter_mut() {
+                        match k.id.as_str() {
+                            "fearless_icon" => {
+                                icon_vis = k.visible;
+                                if let Some(t) = find_mut(k, "text") {
+                                    icon_txt = unsafe { as_label(t) }.text.clone();
+                                }
                             }
+                            "fearless_x" => x_vis = k.visible,
+                            "fearless_tooltip" => {
+                                if let Some(t) = find_mut(k, "text") {
+                                    tip_txt = unsafe { as_label(t) }.text.clone();
+                                }
+                            }
+                            _ => {}
                         }
+                    }
+                    if x_vis {
+                        locked_x.push(cell.id.clone());
+                    }
+                    if icon_vis {
+                        locked_i.push(cell.id.clone());
+                    }
+                    if icon_vis || x_vis {
+                        // tooltip-based attribution — the game's OWN per-cell text
+                        // (bundle localization, all 4 keys verified 2026-06-12):
+                        // fearless_tooltip_own  → OUR side locked,
+                        // fearless_tooltip_both → both sides,
+                        // fearless_tooltip_blue/_red (color phrasing) → used for the
+                        // NON-player side in a player match ("own" exists precisely
+                        // for ours). ko/en/ja/zh markers below; any other locale or
+                        // future wording → conservative: lock BOTH sides (and the
+                        // x-mark belt still protects picks).
+                        const OWN_T: [&str; 5] =
+                            ["우리 팀", "Your team", "自チーム", "你的队伍", "你的隊伍"];
+                        const BOTH_T: [&str; 5] =
+                            ["양팀", "Neither team", "両チーム", "双方", "雙方"];
+                        const COLOR_T: [&str; 10] = [
+                            "블루팀", "레드팀", "Blue team", "Red team", "ブルーチーム",
+                            "レッドチーム", "蓝方", "红方", "藍方", "紅方",
+                        ];
+                        let own_t = OWN_T.iter().any(|p| tip_txt.contains(p));
+                        let color_t = COLOR_T.iter().any(|p| tip_txt.contains(p));
+                        let both_t = BOTH_T.iter().any(|p| tip_txt.contains(p));
+                        if own_t && !both_t {
+                            fl_my.push(cell.id.clone());
+                            attributed = true;
+                        } else if color_t && !both_t {
+                            fl_enemy.push(cell.id.clone());
+                            attributed = true;
+                        } else {
+                            fl_my.push(cell.id.clone());
+                            fl_enemy.push(cell.id.clone());
+                            attributed |= both_t;
+                        }
+                        // belt: an X mark plausibly means "YOU can't pick this" —
+                        // never let a pick recommendation slip past it.
+                        if x_vis && !fl_my.contains(&cell.id) {
+                            fl_my.push(cell.id.clone());
+                        }
+                        scout.push_str(&format!(
+                            "{}\ticon={} x={} itxt={} tip={}\n",
+                            cell.id, icon_vis, x_vis, icon_txt, tip_txt
+                        ));
                     }
                 }
             }
         }
     }
+    if let Ok(mut g) = SCOUT_LAST.lock() {
+        if *g != scout {
+            let _ = std::fs::create_dir_all(base());
+            let _ = std::fs::write(format!("{}/fearless_scout.txt", base()), &scout);
+            *g = scout.clone();
+        }
+    }
 
     // ── per-frame early exit: everything below (replay walk, board clones,
-    // recommender call, file exports) only matters when the BOARD, the lock marks
+    // recommender call, file exports) only matters when the BOARD, the lock lists
     // or the stats generation changed; at 60fps that's almost never.
     {
         let prekey = format!(
-            "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            "{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             m.match_info.id,
             m.team1,
             m.team2,
@@ -412,6 +483,8 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
             m.team2_ban.join(","),
             m.team1_pick.join(","),
             m.team2_pick.join(","),
+            fl_my.join(","),
+            fl_enemy.join(","),
             locked_x.join(","),
             locked_i.join(","),
             TABLES_GEN.load(Ordering::Relaxed),
@@ -452,13 +525,21 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
     match resolved {
         Some(my_id) => {
             let mine_is_t1 = my_id == m.team1;
-            // fearless locks = icon marks ONLY (locked_d is debug-export-only, see
-            // the collection comment above).
-            let mut locked = locked_x.clone();
-            for c in &locked_i {
-                if !locked.contains(c) {
-                    locked.push(c.clone());
+            // the per-cell own/enemy flags are already PLAYER-relative (the slot
+            // runner knows the viewing side) — no team1/team2 resolution needed.
+            // Fallback: if the flag fields read all-false but icon marks exist
+            // (unexpected — e.g. a game version where the fields moved), treat the
+            // icon union as locked for BOTH sides (conservative: old behavior).
+            let (mut fl_my, mut fl_enemy) = (fl_my.clone(), fl_enemy.clone());
+            if fl_my.is_empty() && fl_enemy.is_empty() && !(locked_x.is_empty() && locked_i.is_empty()) {
+                let mut u = locked_x.clone();
+                for c in &locked_i {
+                    if !u.contains(c) {
+                        u.push(c.clone());
+                    }
                 }
+                fl_my = u.clone();
+                fl_enemy = u;
             }
             let board = Board {
                 my_ban: if mine_is_t1 { m.team1_ban.clone() } else { m.team2_ban.clone() },
@@ -475,7 +556,9 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                     m.team1.min(m.team2),
                     m.team1.max(m.team2)
                 ),
-                locked,
+                my_locked: fl_my,
+                enemy_locked: fl_enemy,
+                attributed,
             };
             if let Ok(mut tg) = TABLES.lock() {
                 let tables = tg.get_or_insert_with(|| recommender::build_tables("", &[], &ChgInfo::default()));
@@ -493,7 +576,7 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
     }
 
     let key = format!(
-        "my_team={}\nteam1={}\nteam2={}\nban_count={}\nteam1_ban={}\nteam2_ban={}\nteam1_pick={}\nteam2_pick={}\nteam1_order={}\nteam2_order={}\nset={}\nprev_my={}\nprev_enemy={}\nlocked_x={}\nlocked_i={}\n",
+        "my_team={}\nteam1={}\nteam2={}\nban_count={}\nteam1_ban={}\nteam2_ban={}\nteam1_pick={}\nteam2_pick={}\nteam1_order={}\nteam2_order={}\nset={}\nprev_my={}\nprev_enemy={}\nfearless_my={}\nfearless_enemy={}\nlocked_x={}\nlocked_i={}\n",
         my_team,
         m.team1,
         m.team2,
@@ -507,6 +590,8 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
         set_no,
         prev_my.join(","),
         prev_enemy.join(","),
+        fl_my.join(","),
+        fl_enemy.join(","),
         locked_x.join(","),
         locked_i.join(","),
     ) + &format!("locked_d={}\n", locked_d.join(","));
