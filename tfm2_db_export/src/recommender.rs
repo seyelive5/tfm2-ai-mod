@@ -297,6 +297,9 @@ struct Series {
     first_pick: Option<bool>,
     hard: bool,
     fearless_on: bool,
+    /// false after the lock-recovery branch (mod started mid-series): the
+    /// my/enemy split is then a guess — display totals, not the split.
+    unattributed: bool,
 }
 
 /// Everything the in-game display needs this frame.
@@ -337,6 +340,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         s.first_pick = None;
         s.fearless_on = false;
         s.hard = false;
+        s.unattributed = false;
     } else if let Some((pm, pe)) = s.full_board.take() {
         let total_now =
             board.my_pick.len() + board.enemy_pick.len() + board.my_ban.len() + board.enemy_ban.len();
@@ -347,6 +351,10 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
             s.my.extend(pm);
             s.enemy.extend(pe);
             s.first_pick = None;
+        } else {
+            // not (yet) a reset — PUT THE BOARD BACK and keep waiting, otherwise a
+            // single non-triggering frame would silently drop the whole set.
+            s.full_board = Some((pm, pe));
         }
     }
     if board.my_pick.len() == 5 && board.enemy_pick.len() == 5 {
@@ -361,7 +369,11 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         // mis-read frame must not latch Hard for the whole series.
         s.hard = s.enemy.iter().filter(|c| !s.my.contains(*c)).any(|c| board.locked.contains(c));
         if s.my.is_empty() && s.enemy.is_empty() {
+            // mod started mid-series: adopt the game's lock list wholesale. The
+            // my/enemy split is unknowable here (in HARD the union filters
+            // correctly anyway) — flag it so the display doesn't fake a split.
             s.my = board.locked.iter().cloned().collect();
+            s.unattributed = true;
             if s.game == 1 {
                 s.game = 2;
             }
@@ -569,13 +581,23 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         ));
     }
     if s.fearless_on {
-        parts.push(format!(
-            "피어리스 {}세트({}) — 사용 불가: 내 {}챔 · 상대 {}챔.",
-            s.game,
-            if s.hard { "하드" } else { "노멀" },
-            s.my.len(),
-            s.enemy.len()
-        ));
+        if s.unattributed {
+            // mid-series recovery: the split, the set number AND the style are all
+            // guesses here — claim none of them, show only the honest lock total.
+            let total: HashSet<&String> = s.my.iter().chain(s.enemy.iter()).collect();
+            parts.push(format!(
+                "피어리스 — 사용 불가 {}챔 (게임 잠금 기준; 모드가 시리즈 도중 시작되어 세트/팀 구분은 생략).",
+                total.len()
+            ));
+        } else {
+            parts.push(format!(
+                "피어리스 {}세트({}) — 사용 불가: 내 {}챔 · 상대 {}챔.",
+                s.game,
+                if s.hard { "하드" } else { "노멀" },
+                s.my.len(),
+                s.enemy.len()
+            ));
+        }
     }
     parts.push(format!(
         "데이터: 현재 패치 {}판{}",

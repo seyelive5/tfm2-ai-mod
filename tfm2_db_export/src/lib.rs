@@ -288,6 +288,8 @@ fn champ_changes_update(db: &ClientDatabase, out: &str, fp: &str) -> String {
 // implausible value ⇒ publish nothing).
 
 static BP_LAST: Mutex<String> = Mutex::new(String::new());
+/// per-frame early-exit key for bp_export (board fields + tables generation).
+static BP_PREKEY: Mutex<String> = Mutex::new(String::new());
 
 fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
     let my_team = match scene {
@@ -302,7 +304,15 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
     let any: &dyn std::any::Any = node.runner.as_any();
     let m: &MatchUIRunner = unsafe { &*(any as *const dyn std::any::Any as *const MatchUIRunner) };
     // GATE 2: plain fields first (cheap tripwire before any pointer deref)…
+    // Trips also CLEAR the display state — a zero-initialized first frame of a new
+    // draft must not leave the PREVIOUS draft's recommendations painted as valid.
+    let clear_out = || {
+        if let Ok(mut g) = OUT_NOW.lock() {
+            *g = None;
+        }
+    };
     if m.ban_count > 20 || m.team1 > 1_000_000 || m.team2 > 1_000_000 || m.team1 == m.team2 {
+        clear_out();
         return;
     }
     let champ_ok = |s: &String| {
@@ -310,10 +320,37 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
     };
     let vec_ok = |v: &Vec<String>| v.len() <= 10 && v.iter().all(champ_ok);
     if !(vec_ok(&m.team1_ban) && vec_ok(&m.team2_ban) && vec_ok(&m.team1_pick) && vec_ok(&m.team2_pick)) {
+        clear_out();
         return;
     }
     if m.team1_order.len() > 10 || m.team2_order.len() > 10 {
+        clear_out();
         return;
+    }
+
+    // ── per-frame early exit: everything below (replay walk, grid walk, board
+    // clones, recommender call, file exports) only matters when the BOARD or the
+    // stats generation changed; at 60fps that's almost never.
+    {
+        let prekey = format!(
+            "{:?}|{}|{}|{}|{}|{}|{}|{}|{}",
+            m.match_info.id,
+            m.team1,
+            m.team2,
+            m.ban_count,
+            m.team1_ban.join(","),
+            m.team2_ban.join(","),
+            m.team1_pick.join(","),
+            m.team2_pick.join(","),
+            TABLES_GEN.load(Ordering::Relaxed),
+        );
+        let out_ready = OUT_NOW.lock().map(|o| o.is_some()).unwrap_or(false);
+        if let Ok(mut g) = BP_PREKEY.lock() {
+            if *g == prekey && out_ready {
+                return;
+            }
+            *g = prekey;
+        }
     }
 
     // set number + previous sets' picks (the fearless feed): completed sets live in
@@ -392,8 +429,14 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                 enemy_pick: if mine_is_t1 { m.team2_pick.clone() } else { m.team1_pick.clone() },
                 ban_count: m.ban_count,
                 // the MATCH id makes a rematch against the same team pair a NEW
-                // series instead of a phantom "next set" of the old one.
-                teams: format!("{:?}|{}|{}", m.match_info.id, m.team1, m.team2),
+                // series instead of a phantom "next set"; team ids are ORDER-
+                // NORMALIZED in case the game swaps blue/red sides between sets.
+                teams: format!(
+                    "{:?}|{}|{}",
+                    m.match_info.id,
+                    m.team1.min(m.team2),
+                    m.team1.max(m.team2)
+                ),
                 locked,
             };
             if let Ok(mut tg) = TABLES.lock() {
@@ -469,6 +512,21 @@ const RANK_GLYPH: [&str; 5] = ["①", "②", "③", "④", "⑤"];
 /// diag for the coach-popup injection (written on change → ai_say_diag.txt).
 static SAY_DIAG: Mutex<String> = Mutex::new(String::new());
 
+/// TEMP SCOUT: dump the banpick UI node-id tree PERIODICALLY (~10s) → ui_tree.txt
+/// (hunting the set-history nodes for exact per-team fearless attribution; the
+/// first frame's tree often lacks them, so overwrite). Remove afterwards.
+static TREE_TICK: AtomicU32 = AtomicU32::new(0);
+
+fn dump_ids(n: &Node, depth: usize, out: &mut String) {
+    out.push_str(&format!("{}{} [{}]\n", "  ".repeat(depth), n.id, n.child.len()));
+    if depth >= 5 {
+        return;
+    }
+    for c in n.child.iter() {
+        dump_ids(c, depth + 1, out);
+    }
+}
+
 
 const REC_PICK_COLOR: [f32; 4] = [0.22, 0.84, 0.70, 1.0]; // teal (overlay accent)
 const REC_BAN_COLOR: [f32; 4] = [0.78, 0.40, 0.95, 1.0]; // violet (≠ coach red/blue)
@@ -499,14 +557,15 @@ fn stamp_grid(ui: &mut GameUI, assets: &Assets) {
         return;
     }
     // everything to display comes from the in-mod recommender (computed in
-    // pre_update's bp_export from the live board + live stats — no files).
-    let out_guard = match OUT_NOW.lock() {
-        Ok(g) => g,
-        Err(_) => return,
-    };
-    let Some(o) = out_guard.as_ref() else { return };
-    let o = o.clone();
-    drop(out_guard);
+    // pre_update's bp_export from the live board + live stats — no files). When
+    // there is NO valid Output (unresolvable/spectated draft, gate trip), proceed
+    // with an EMPTY one: the stamping logic below then RESTORES the game's own
+    // borders/labels instead of leaving the previous draft's marks painted.
+    let o: std::sync::Arc<Output> = OUT_NOW
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().cloned())
+        .unwrap_or_default();
     let (rec_ban, recs, swap, say, tiers) = (o.rec_ban, &o.recs, &o.swap, o.say.as_str(), &o.tiers);
 
     let mut orig_guard = match ORIG_BORDER.lock() {
@@ -521,6 +580,13 @@ fn stamp_grid(ui: &mut GameUI, assets: &Assets) {
     let tier_orig = tier_orig_guard.get_or_insert_with(HashMap::new);
 
     let Some(root) = ui.query_mut("main") else { return };
+
+    // TEMP SCOUT (see TREE_TICK)
+    if TREE_TICK.fetch_add(1, Ordering::Relaxed) % 600 == 0 {
+        let mut s = String::new();
+        dump_ids(root, 0, &mut s);
+        let _ = std::fs::write(format!("{}/ui_tree.txt", base()), &s);
+    }
 
     // ── AI panel = a CLONE of the 코치진 대화 내역 popup: native draggable window,
     // close button, opacity slider — all inherited. Title → "AI 추천기", messages
