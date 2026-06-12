@@ -96,12 +96,22 @@ fn patch_tsv(db: &ClientDatabase) -> String {
 }
 
 /// Phase 2 — athlete familiarity for THIS match's starting lineups (the
-/// strongest validated signal: games-on-champ 66.0% standalone, best combo
-/// 67.4% — validate-terms v2, 2837 matches, 5-fold CV).
-///   af((champ,lane))  = 0.08·ln(1+min(g,20)) + 0.25·centered-champ-winrate
-///                       for MY athlete assumed at that lane
+/// strongest validated PREDICTION signal: games-on-champ 66.0% standalone —
+/// validate-terms v2, 2837 matches, 5-fold CV).
+///
+/// ‼️ DECISION weights ≠ the backtest's prediction weights (0.08/0.25).
+/// Games-on-champ is ENDOGENOUS — athletes accumulate games on champs that fit
+/// them and the meta — so the predictive coefficient wildly overstates the
+/// causal cost of picking an unfamiliar-but-stronger champ. At 0.08·log the
+/// comfort term peaked at +0.26 (6+ tier steps): heavily NERFED comfort picks
+/// still topped every ranking (user-reported defect 2026-06-13). Anchor to the
+/// game's actual mechanic instead — the most-champion stat bonus
+/// (most_champion_bonus_tooltip: "+{Value}% 선수 능력치") is worth a few %p
+/// winrate — and CAP the whole term at one tier step:
+///   af((champ,lane))  = min(0.05, 0.020·ln(1+min(g,20)) + 0.15·centered-wr)
 ///   pocket(champ)     = 0.015·ln(1+min(g,20)), max over ENEMY starters
-///                       (their comfort = our ban target)
+/// (The small scales keep most of the validated signal: the sweep showed
+/// +2.5%p at s=0.02 and +4.2%p at s=0.04 vs +7.9%p at 0.16.)
 /// ASSUMPTION (runtime-verified via the starting_my line in bp_live.txt):
 /// team*_starting = athlete ids in lane order (top..support).
 fn athlete_tables(
@@ -131,9 +141,9 @@ fn athlete_tables(
         let (tg, tw) = hist.values().fold((0.0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1));
         let wr_a = (tw + 4.0) / (tg + 8.0); // athlete overall winrate, shrunk
         for (c, (g, w)) in &hist {
-            let famg = 0.08 * (1.0 + g.min(20.0)).ln();
-            let famc = 0.25 * ((w + 4.0 * wr_a) / (g + 4.0) - wr_a);
-            af.insert((c.clone(), lane as u8), (famg + famc) as f32);
+            let famg = 0.020 * (1.0 + g.min(20.0)).ln();
+            let famc = 0.15 * ((w + 4.0 * wr_a) / (g + 4.0) - wr_a);
+            af.insert((c.clone(), lane as u8), (famg + famc).min(0.05) as f32);
         }
         dbg.push_str(&format!(
             "{}:{}:{} ",

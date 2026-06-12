@@ -627,6 +627,9 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                 if !c.chg.is_empty() {
                     t.push_str(&format!(" (이번 패치 변경 {})", c.chg));
                 }
+                if c.chg == "▼" && c.label == "숙련" {
+                    t.push_str(" — 너프됐지만 선수 숙련 보정으로 상위입니다. 대체 픽도 검토하세요");
+                }
                 if c.low_conf {
                     t.push_str(". 다만 표본이 적어 확신은 낮습니다");
                 }
