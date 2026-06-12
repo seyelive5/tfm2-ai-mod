@@ -1092,17 +1092,22 @@ fn observe_score(phase: &str, ctx: &DraftScoreContext, cand: usize, score: f32) 
         if b.len() > 2 * 1024 * 1024 {
             return; // runaway cap until next flush
         }
-        // everything is a champion INDEX (game-internal); the index→id mapping is
-        // recovered offline by correlating ally_pick indices with the known board.
+        // `candidate` IS the global champion index (runtime-verified: values run
+        // 0..59 with unavailable indices skipped; available_champions is the list
+        // of available GLOBAL ids, not an index space). Timestamp (seconds) lets
+        // offline analysis align entries with the player's banpick window.
         let nums = |v: &[usize]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",");
-        let cand_global = ctx.available_champions.get(cand).copied().unwrap_or(usize::MAX);
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         b.push_str(&format!(
-            "{}\t{}\t{}\t{:.4}\t{}\tap={} ep={} ab={} eb={} avail_n={}\n",
+            "{}\t{}\t{:.4}\t{}\t{}\tap={} ep={} ab={} eb={} avail_n={}\n",
             phase,
             cand,
-            cand_global,
             score,
             ctx.is_explore as u8,
+            ts,
             nums(&ctx.ally_pick),
             nums(&ctx.enemy_pick),
             nums(&ctx.ally_ban),
