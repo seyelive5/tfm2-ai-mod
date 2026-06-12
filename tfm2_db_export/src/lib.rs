@@ -784,8 +784,10 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
             // game-AI intrinsic priors (empty-board scan averages) → champ ids.
             let mut prior: HashMap<String, f32> = HashMap::new();
             if let (Ok(p), Ok(order)) = (AI_PRIOR.lock(), CHAMP_ORDER.lock()) {
+                // n>=1 suffices: rescans of the same board return identical
+                // scores (deterministic model output), so one scan is exact.
                 for (cand, (sum, n)) in p.as_ref().map(|m| m.iter()).into_iter().flatten() {
-                    if *n >= 2 {
+                    if *n >= 1 {
                         if let Some(id) = order.get(*cand) {
                             prior.insert(id.clone(), (*sum / *n as f64) as f32);
                         }

@@ -359,10 +359,22 @@ pub fn build_tables(patch_tsv: &str, pool: &[String], chg: &ChgInfo, replay_rows
     out.extend(cp_rows);
     // POS: live data, falling back to the BAKED rows when stats are empty (fresh
     // career) — without POS the lane board/swap assignment dies in cold start.
+    // PER-CHAMP fallback too: a released-but-never-played champ (zero stat rows,
+    // e.g. whip_master on release day) has no live POS row and would otherwise
+    // be invisible to the entire lane board.
     let pos_rows = compute_pos(patch_tsv, &reworked, anchor);
     if pos_rows.is_empty() {
         out.extend(engine::WEIGHTS_TSV.lines().filter(|l| l.starts_with("POS\t")).map(|s| s.to_string()));
     } else {
+        let covered: HashSet<&str> =
+            pos_rows.iter().filter_map(|r| r.split('\t').nth(1)).collect();
+        out.extend(
+            engine::WEIGHTS_TSV
+                .lines()
+                .filter(|l| l.starts_with("POS\t"))
+                .filter(|l| l.split('\t').nth(1).map(|c| !covered.contains(c)).unwrap_or(false))
+                .map(|s| s.to_string()),
+        );
         out.extend(pos_rows);
     }
     out.extend(compute_roles(patch_tsv, &reworked, anchor));

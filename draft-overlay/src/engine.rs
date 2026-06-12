@@ -1228,7 +1228,11 @@ pub fn recommend_lanes(
                     continue;
                 }
             }
-            if !tables.plays(id, lane) {
+            // skip only when we HAVE position data excluding this lane; a champ
+            // with NO position data at all (just released, zero games anywhere,
+            // no baked row) stays a candidate in EVERY lane — its rank then
+            // comes from the AI prior / theory terms instead of vanishing.
+            if tables.pos_play.contains_key(*id) && !tables.plays(id, lane) {
                 continue;
             }
             let (mut score, label) = tables.score_pick_in(id, &allies, &enemies, Some(lane), s.pick_order);
