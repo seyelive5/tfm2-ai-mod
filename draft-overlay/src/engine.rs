@@ -160,6 +160,10 @@ pub struct Tables {
     /// the GAME draft-AI's intrinsic champ valuation (empty-board scan average,
     /// observed via ModDraftScoreHook) — cold-start prior for thin-stats champs.
     ai_prior: std::collections::HashMap<String, f32>,
+    /// the enemy AI's MAX in-context pick valuation per champ in the CURRENT
+    /// match (set by the mod) — its contextual model is accurate where the
+    /// intrinsic one isn't; denying what it values is worth points.
+    enemy_valued: std::collections::HashMap<String, f32>,
     /// (a, b) -> (a_wins, games): same-lane head-to-head from match replays
     /// (`MU` rows; both directions emitted by the producer).
     matchup_pair: std::collections::HashMap<(String, String), (u32, u32)>,
@@ -202,6 +206,7 @@ pub fn parse_tables_from_str(tsv: &str) -> Tables {
         athlete_bonus: HashMap::new(),
         enemy_pocket: HashMap::new(),
         ai_prior: HashMap::new(),
+        enemy_valued: HashMap::new(),
         matchup_pair: HashMap::new(),
         lane_dom: HashMap::new(),
         team_names: Vec::new(),
@@ -410,17 +415,29 @@ impl Tables {
     pub fn set_ai_prior(&mut self, p: std::collections::HashMap<String, f32>) {
         self.ai_prior = p;
     }
+    pub fn set_enemy_valued(&mut self, v: std::collections::HashMap<String, f32>) {
+        self.enemy_valued = v;
+    }
+    /// deny/steal value: how much the enemy AI wants this champ IN CONTEXT
+    /// (observed pick scores ranged ~0.6..1.05; >0.8 = it covets it). Small,
+    /// unvalidated-by-backtest (contextual scores have no history) — logged for
+    /// prospective validation.
+    fn deny_value(&self, c: &str) -> f32 {
+        self.enemy_valued.get(c).map(|v| (v - 0.8).clamp(0.0, 0.3)).unwrap_or(0.0)
+    }
     /// cold-start prior from the game AI's own valuation: only while OUR stats
     /// are thin (<15 games), fading out as real evidence arrives. The AI network
     /// ships seeded priors for just-released champs the stats can't rate yet.
     /// (Once real games exist — e.g. white_mage at 127g/50.4% — evidence wins.)
+    /// Bayesian blend (K=10 pseudo-games) instead of a hard 15-game cliff:
+    /// g=0 → full prior, g=10 → half, g=30 → quarter.
     fn ai_prior_term(&self, c: &str) -> f32 {
         let p = match self.ai_prior.get(c) {
             Some(v) => *v,
             None => return 0.0,
         };
         let g = self.games(c);
-        let fresh = if g == u32::MAX { 1.0 } else { (1.0 - g as f32 / 15.0).max(0.0) };
+        let fresh = if g == u32::MAX { 1.0 } else { 10.0 / (g as f32 + 10.0) };
         (0.4 * p * fresh).clamp(-0.05, 0.05)
     }
 
@@ -756,8 +773,11 @@ impl Tables {
         // ── athlete familiarity (validated strongest signal; weights baked by
         // the producer): my athlete at this lane is BETTER on champs they know.
         let fam = self.af(cand, lane);
-        let total = base + syn + cnt + comp + fam - dup;
-        (total, dominant(&[("강챔", base), ("시너지", syn), ("카운터", cnt), ("조합", comp), ("숙련", fam)]))
+        // ── deny/steal: the enemy AI covets this champ in ITS context — taking
+        // it both serves us (its contextual model is decent) and denies them.
+        let deny = 0.3 * self.deny_value(cand);
+        let total = base + syn + cnt + comp + fam + deny - dup;
+        (total, dominant(&[("강챔", base), ("시너지", syn), ("카운터", cnt), ("조합", comp), ("숙련", fam), ("디나이", deny)]))
     }
 
     /// BAN desirability. DATA terms mirror tfm2_draft_ai::score_ban; at cold-start
@@ -813,6 +833,10 @@ impl Tables {
         // ── enemy pocket pick (athlete-level comfort, max over their starters):
         // denying a champ their player is deep on outvalues a generic strong ban.
         opp += self.enemy_pocket.get(cand).copied().unwrap_or(0.0);
+        // ── what the enemy AI VALUED in this match's earlier sets (observed
+        // contextual pick scores): the set-1 archer at 1.01 that went 8/1 is
+        // exactly the next-set ban this term exists for.
+        opp += 0.4 * self.deny_value(cand);
         // ── fearless thin-lane snipe: an S/A champ in a lane where the enemy has
         // ≤2 strong options left — banning it cripples that lane for the series.
         if let Some(sl) = enemy_strong_left {

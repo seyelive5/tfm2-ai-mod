@@ -746,6 +746,38 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                     }
                 }
             }
+            // enemy contextual valuations (this match only; reset on match change)
+            // → deny/steal term on our picks + next-set ban targeting.
+            let teams_key = format!(
+                "{:?}|{}|{}",
+                m.match_info.id,
+                m.team1.min(m.team2),
+                m.team1.max(m.team2)
+            );
+            if let Ok(mut tk) = ENEMY_VAL_MATCH.lock() {
+                if *tk != teams_key {
+                    *tk = teams_key.clone();
+                    if let Ok(mut ev) = ENEMY_VAL.lock() {
+                        *ev = None;
+                    }
+                }
+            }
+            let mut enemy_val: HashMap<String, f32> = HashMap::new();
+            if let (Ok(ev), Ok(order)) = (ENEMY_VAL.lock(), CHAMP_ORDER.lock()) {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                if let Some(map) = ev.as_ref() {
+                    for (cand, (score, ts)) in map {
+                        if now.saturating_sub(*ts) <= 1800 {
+                            if let Some(id) = order.get(*cand) {
+                                enemy_val.insert(id.clone(), *score);
+                            }
+                        }
+                    }
+                }
+            }
             let board = Board {
                 my_ban: if mine_is_t1 { m.team1_ban.clone() } else { m.team2_ban.clone() },
                 enemy_ban: if mine_is_t1 { m.team2_ban.clone() } else { m.team1_ban.clone() },
@@ -755,12 +787,7 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                 // the MATCH id makes a rematch against the same team pair a NEW
                 // series instead of a phantom "next set"; team ids are ORDER-
                 // NORMALIZED in case the game swaps blue/red sides between sets.
-                teams: format!(
-                    "{:?}|{}|{}",
-                    m.match_info.id,
-                    m.team1.min(m.team2),
-                    m.team1.max(m.team2)
-                ),
+                teams: teams_key,
                 my_locked: fl_my,
                 enemy_locked: fl_enemy,
                 attributed,
@@ -799,6 +826,7 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                     tg.get_or_insert_with(|| recommender::build_tables("", &[], &ChgInfo::default(), ""));
                 tables.set_athlete(af, pocket);
                 tables.set_ai_prior(prior);
+                tables.set_enemy_valued(enemy_val);
                 let out = recommender::update(&board, tables, TABLES_GEN.load(Ordering::Relaxed));
                 if let Ok(mut og) = OUT_NOW.lock() {
                     *og = Some(out);
@@ -1174,6 +1202,14 @@ static AI_EVAL: Mutex<(String, u64, Vec<(usize, f32, char)>)> =
 /// stats can't rate yet (e.g. chef: 1 game): the AI's network ships with
 /// informative priors for unreleased champs — borrow them until ~15 real games.
 static AI_PRIOR: Mutex<Option<HashMap<usize, (f64, u32)>>> = Mutex::new(None);
+/// per-champ MAX contextual PICK valuation by the enemy AI in the CURRENT match
+/// (cand → (max score, unix secs)). The 2026-06-13 loss analysis: the enemy's
+/// in-context pick scores (archer 1.01 → 8/1) were accurate where its
+/// context-free intrinsic scores validate poorly — remember what it valued and
+/// (a) deny-steal it on our picks, (b) ban it NEXT SET. Reset on match change.
+static ENEMY_VAL: Mutex<Option<HashMap<usize, (f32, u64)>>> = Mutex::new(None);
+/// teams key of the match ENEMY_VAL belongs to (reset detector).
+static ENEMY_VAL_MATCH: Mutex<String> = Mutex::new(String::new());
 
 fn observe_score(phase: &str, ctx: &DraftScoreContext, cand: usize, score: f32) {
     if let Ok(mut b) = AI_SCORE_BUF.lock() {
@@ -1213,6 +1249,16 @@ fn observe_score(phase: &str, ctx: &DraftScoreContext, cand: usize, score: f32) 
             }
             ev.1 = ts;
             ev.2.push((cand, score, if phase == "B" { 'B' } else { 'P' }));
+        }
+        // contextual-valuation feed: the enemy AI's PICK deliberations (any board).
+        if phase == "P" {
+            if let Ok(mut ev) = ENEMY_VAL.lock() {
+                let e = ev.get_or_insert_with(HashMap::new).entry(cand).or_insert((f32::MIN, 0));
+                if score > e.0 {
+                    e.0 = score;
+                }
+                e.1 = ts;
+            }
         }
         // intrinsic-prior feed: empty-board ban scans only (context-free).
         if phase == "B"
