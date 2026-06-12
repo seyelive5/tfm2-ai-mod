@@ -24,7 +24,9 @@ const PREV_PATCH_WEIGHT: f64 = 0.35;
 const CONF_FULL: f64 = 200.0;
 const KAPPA_CHAMP: f64 = 40.0;
 const KAPPA_LANE: f64 = 20.0;
-const LCB_Z: f64 = 1.0;
+/// per-CHAMP current-patch matches at which its previous-patch blend fades out
+/// (the old GLOBAL total/200 gate starved low-pickrate champs of their history).
+const CONF_CHAMP: f64 = 40.0;
 
 fn beta_post(w: f64, m: f64, prior_mean: f64, kappa: f64) -> (f64, f64) {
     let pm = prior_mean.clamp(0.001, 0.999);
@@ -33,10 +35,12 @@ fn beta_post(w: f64, m: f64, prior_mean: f64, kappa: f64) -> (f64, f64) {
     let t = a + b;
     (a / t, (a * b / (t * t * (t + 1.0))).sqrt())
 }
-fn beta_lcb(w: f64, m: f64, prior_mean: f64, kappa: f64, z: f64) -> f64 {
-    let (mean, sd) = beta_post(w, m, prior_mean, kappa);
-    (mean - z * sd).clamp(0.0, 1.0)
-}
+// NOTE 2026-06-12: ranking switched from the LOWER CONFIDENCE BOUND to the
+// posterior MEAN. Ranking by LCB (mean − 1·sd) double-penalized small samples
+// (κ-shrink already handles them): on real data a 72%-winrate champ at 18 games
+// scored delta 0.00 while a 65% champ at 77 games scored +0.05 — the "강챔"
+// ranking was largely a popularity ranking, and S tier (+6%p) was unreachable.
+// The sd now feeds only the low-confidence flag (games-based, engine-side).
 
 // version sort key: single definition in lib.rs — the changes ANCHOR (writer)
 // and the stale-row CUTOFF (reader, below) must agree on version ordering.
@@ -72,8 +76,14 @@ fn patch_current(patch: &str, changed: &HashSet<String>, chg_prev: Option<&str>)
     let latest = *vers.last().unwrap();
     let prev = if vers.len() >= 2 { Some(vers[vers.len() - 2]) } else { None };
     let total: u32 = rows.iter().find(|f| f[0] == latest).and_then(|f| f[1].parse().ok()).unwrap_or(0);
-    let conf = (total as f64 / CONF_FULL).min(1.0);
-    let prev_w = PREV_PATCH_WEIGHT * (1.0 - conf);
+    // per-CHAMP current-patch matches: the prev-patch blend fades per champ (a
+    // low-pickrate champ keeps its history even when the league total is high).
+    let mut cur_m: BTreeMap<&str, f64> = BTreeMap::new();
+    for f in &rows {
+        if f[0] == latest {
+            *cur_m.entry(f[2]).or_insert(0.0) += f[6].parse().unwrap_or(0.0);
+        }
+    }
     let mut by: BTreeMap<String, (f64, f64)> = BTreeMap::new();
     let mut byp: BTreeMap<(String, u8), (f64, f64)> = BTreeMap::new();
     for f in &rows {
@@ -89,10 +99,14 @@ fn patch_current(patch: &str, changed: &HashSet<String>, chg_prev: Option<&str>)
         let wgt = if f[0] == latest {
             1.0
         } else if Some(f[0]) == prev {
-            prev_w
+            let cm = cur_m.get(f[2]).copied().unwrap_or(0.0);
+            PREV_PATCH_WEIGHT * (1.0 - (cm / CONF_CHAMP).min(1.0))
         } else {
             continue;
         };
+        if wgt <= 0.0 {
+            continue;
+        }
         let w: f64 = f[5].parse().unwrap_or(0.0);
         let m: f64 = f[6].parse().unwrap_or(0.0);
         let e = by.entry(f[2].to_string()).or_insert((0.0, 0.0));
@@ -104,25 +118,35 @@ fn patch_current(patch: &str, changed: &HashSet<String>, chg_prev: Option<&str>)
             pe.1 += wgt * m;
         }
     }
+    // C rows: posterior MEAN − 0.5 (κ-shrunk). See the note above beta_post.
     let c_rows = by
         .iter()
         .map(|(c, (w, m))| {
-            let lcb = beta_lcb(*w, *m, 0.5, KAPPA_CHAMP, LCB_Z);
-            format!("C\t{}\t{:.3}\t{}", c, lcb - 0.5, m.round() as u32)
+            let mean = beta_post(*w, *m, 0.5, KAPPA_CHAMP).0;
+            format!("C\t{}\t{:.3}\t{}", c, mean - 0.5, m.round() as u32)
         })
         .collect();
     let champ_mean: BTreeMap<String, f64> =
         by.iter().map(|(c, (w, m))| (c.clone(), beta_post(*w, *m, 0.5, KAPPA_CHAMP).0)).collect();
+    // CP rows: posterior MEAN − 0.5 with the champ's own mean as the prior — a
+    // thin lane cell now reads ≈ the champ's strength instead of champ−1sd (the
+    // old z·sd artifact made a 1-game lane score BELOW a 0-game lane).
     let cp_rows = byp
         .iter()
         .filter(|(_, (_, m))| *m > 0.0)
         .map(|((c, li), (w, m))| {
             let prior = champ_mean.get(c).copied().unwrap_or(0.5);
-            let lcb = beta_lcb(*w, *m, prior, KAPPA_LANE, LCB_Z);
-            format!("CP\t{}\t{}\t{:.3}\t{}", c, li, lcb - 0.5, m.round() as u32)
+            let mean = beta_post(*w, *m, prior, KAPPA_LANE).0;
+            format!("CP\t{}\t{}\t{:.3}\t{}", c, li, mean - 0.5, m.round() as u32)
         })
         .collect();
-    (c_rows, cp_rows, total)
+    // effective evidence: the tables blend ~prev_w×prev matches too — report that,
+    // so the engine's theory fade matches the data actually loaded.
+    let prev_total: u32 =
+        prev.and_then(|pv| rows.iter().find(|f| f[0] == pv)).and_then(|f| f[1].parse().ok()).unwrap_or(0);
+    let prev_w_global = PREV_PATCH_WEIGHT * (1.0 - (total as f64 / CONF_FULL).min(1.0));
+    let eff = total + (prev_w_global * prev_total as f64).round() as u32;
+    (c_rows, cp_rows, eff)
 }
 
 /// POS rows (primary + playable lanes). REWORKED champs ('R') use only rows
@@ -202,16 +226,32 @@ fn compute_roles(patch: &str, reworked: &HashSet<String>, anchor: Option<&str>) 
         .collect()
 }
 
-/// B rows: SEASON banrate per champ (bans summed over all patch versions ÷ the
-/// season's total matches) — a single fresh patch's handful of games must not
-/// swing the W_BAN_META term.
-fn compute_banrate(patch: &str) -> Vec<String> {
+/// B rows: RECENCY-WEIGHTED banrate per champ (latest patch ×1, previous ×0.5,
+/// older ×0.25) — season-wide enough that a fresh patch's handful of games can't
+/// swing W_BAN_META, but a champ nerfed into the ground no longer keeps its
+/// season-high banrate all year. Changed champs additionally drop rows at/below
+/// the diff anchor (same reset as the C rows).
+fn compute_banrate(patch: &str, changed: &HashSet<String>, chg_prev: Option<&str>) -> Vec<String> {
     let rows: Vec<Vec<&str>> = patch
         .lines()
         .skip(1)
         .map(|l| l.split('\t').collect::<Vec<&str>>())
         .filter(|f| f.len() >= 7)
         .collect();
+    let mut vers: Vec<&str> = rows.iter().map(|f| f[0]).collect();
+    vers.sort_by(|a, b| vkey(a).cmp(&vkey(b)));
+    vers.dedup();
+    let latest = vers.last().copied();
+    let prev = if vers.len() >= 2 { Some(vers[vers.len() - 2]) } else { None };
+    let vw = |v: &str| {
+        if Some(v) == latest {
+            1.0
+        } else if Some(v) == prev {
+            0.5
+        } else {
+            0.25
+        }
+    };
     // per-version total (first row of that version) + per-(version,champ) bans
     let mut ver_total: BTreeMap<&str, f64> = BTreeMap::new();
     let mut bans: BTreeMap<(&str, &str), f64> = BTreeMap::new();
@@ -219,15 +259,77 @@ fn compute_banrate(patch: &str) -> Vec<String> {
         ver_total.entry(f[0]).or_insert_with(|| f[1].parse().unwrap_or(0.0));
         bans.entry((f[0], f[2])).or_insert_with(|| f[4].parse().unwrap_or(0.0));
     }
-    let season_total: f64 = ver_total.values().sum();
-    if season_total <= 0.0 {
-        return vec![];
+    let mut num: BTreeMap<&str, f64> = BTreeMap::new();
+    let mut den: BTreeMap<&str, f64> = BTreeMap::new();
+    for ((v, c), b) in &bans {
+        if changed.contains(*c) {
+            if let Some(pv) = chg_prev {
+                if vkey(v) <= vkey(pv) {
+                    continue;
+                }
+            }
+        }
+        let w = vw(v);
+        *num.entry(c).or_insert(0.0) += w * b;
+        *den.entry(c).or_insert(0.0) += w * ver_total.get(v).copied().unwrap_or(0.0);
     }
-    let mut per_champ: BTreeMap<&str, f64> = BTreeMap::new();
-    for ((_, c), b) in &bans {
-        *per_champ.entry(c).or_insert(0.0) += b;
+    num.iter()
+        .filter_map(|(c, b)| {
+            let d = den.get(c).copied().unwrap_or(0.0);
+            if d > 0.0 { Some(format!("B\t{}\t{:.3}", c, b / d)) } else { None }
+        })
+        .collect()
+}
+
+/// LP rows: per-(champ,lane) LANING-PHASE dominance — gold_line_phase per game,
+/// z-scored WITHIN the lane (≥5 games). The dense half of the matchup axis: who
+/// wins the lane phase predicts champ-vs-champ lane outcomes that direct
+/// head-to-head records (≈2 games/pair) are far too sparse to estimate alone.
+/// Changed champs drop rows at/below the anchor (their laning changed too).
+fn compute_lane_dom(patch: &str, changed: &HashSet<String>, chg_prev: Option<&str>) -> Vec<String> {
+    let mut agg: BTreeMap<(String, u8), (f64, f64)> = BTreeMap::new(); // (gold, matches)
+    for line in patch.lines().skip(1) {
+        let f: Vec<&str> = line.split('\t').collect();
+        if f.len() < 19 {
+            continue;
+        }
+        if changed.contains(f[2]) {
+            if let Some(pv) = chg_prev {
+                if vkey(f[0]) <= vkey(pv) {
+                    continue;
+                }
+            }
+        }
+        if let Some(li) = lane_idx(f[3]) {
+            let gold: f64 = f[17].parse().unwrap_or(0.0);
+            let m: f64 = f[6].parse().unwrap_or(0.0);
+            let e = agg.entry((f[2].to_string(), li)).or_insert((0.0, 0.0));
+            e.0 += gold;
+            e.1 += m;
+        }
     }
-    per_champ.iter().map(|(c, b)| format!("B\t{}\t{:.3}", c, b / season_total)).collect()
+    let mut out = Vec::new();
+    for lane in 0u8..5 {
+        let cells: Vec<(&String, f64)> = agg
+            .iter()
+            .filter(|((_, l), (_, m))| *l == lane && *m >= 5.0)
+            .map(|((c, _), (g, m))| (c, g / m))
+            .collect();
+        if cells.len() < 3 {
+            continue;
+        }
+        let n = cells.len() as f64;
+        let mean = cells.iter().map(|(_, v)| v).sum::<f64>() / n;
+        let sd = (cells.iter().map(|(_, v)| (v - mean) * (v - mean)).sum::<f64>() / n).sqrt();
+        if sd < 1e-6 {
+            continue;
+        }
+        for (c, v) in cells {
+            let z = ((v - mean) / sd).clamp(-2.5, 2.5);
+            out.push(format!("LP\t{}\t{}\t{:.2}", c, lane, z));
+        }
+    }
+    out
 }
 
 /// Patch-change info handed over by champ_changes_update (lib.rs).
@@ -239,8 +341,10 @@ pub struct ChgInfo {
 }
 
 /// Build the engine Tables from the in-memory stats TSV + live pool + patch
-/// changes. Baked T (taxonomy) rows come from the shared engine's WEIGHTS_TSV.
-pub fn build_tables(patch_tsv: &str, pool: &[String], chg: &ChgInfo) -> Tables {
+/// changes + replay-derived rows (MU/OPP/OPPN from lib.rs::replay_rows — the
+/// matchup axis and the opponent-aware ban model). Baked T (taxonomy) rows come
+/// from the shared engine's WEIGHTS_TSV.
+pub fn build_tables(patch_tsv: &str, pool: &[String], chg: &ChgInfo, replay_rows: &str) -> Tables {
     let changed: HashSet<String> = chg.dirs.iter().map(|(c, _)| c.clone()).collect();
     let reworked: HashSet<String> =
         chg.dirs.iter().filter(|(_, d)| *d == 'R').map(|(c, _)| c.clone()).collect();
@@ -262,8 +366,12 @@ pub fn build_tables(patch_tsv: &str, pool: &[String], chg: &ChgInfo) -> Tables {
         out.extend(pos_rows);
     }
     out.extend(compute_roles(patch_tsv, &reworked, anchor));
-    out.extend(compute_banrate(patch_tsv));
+    out.extend(compute_banrate(patch_tsv, &changed, anchor));
+    out.extend(compute_lane_dom(patch_tsv, &changed, anchor));
     out.extend(chg.dirs.iter().map(|(c, d)| format!("CHG\t{}\t{}", c, d)));
+    if !replay_rows.is_empty() {
+        out.push(replay_rows.trim_end().to_string());
+    }
     if !pool.is_empty() {
         out.push(format!("POOL\t{}", pool.join(",")));
     }
@@ -292,6 +400,8 @@ pub struct Board {
     /// the lock lists came from RECOGNIZED game tooltips (vs the conservative
     /// both-sides fallback) — gates the 하드 style claim in the commentary.
     pub attributed: bool,
+    /// enemy team id — keys the opponent-aware ban model (OPP rows).
+    pub enemy_team: u32,
 }
 
 /// Cross-frame series tracking — ONLY what the game doesn't hand us directly:
@@ -390,7 +500,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
     // matches — two matches' empty-board start frames would otherwise collide
     // and serve a wrong-phase Output under a different ban rule.
     let key = format!(
-        "{}|{}|{}|{}|{}|{}|{}|{:?}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{:?}|{}|{}|{}|{}",
         board.my_ban.join(","),
         board.enemy_ban.join(","),
         board.my_pick.join(","),
@@ -402,6 +512,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         s.game,
         board.ban_count,
         board.teams,
+        board.attributed, // commentary's style claim depends on it
     );
     if let Ok(g) = OUTPUT.lock() {
         if let Some((k, out)) = g.as_ref() {
@@ -424,6 +535,8 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
     st.enemy_ban = board.enemy_ban.clone();
     st.ally_pick = board.my_pick.clone();
     st.enemy_pick = board.enemy_pick.clone();
+    st.enemy_team = board.enemy_team;
+    st.enemy_locked = board.enemy_locked.clone();
 
     // fearless lock filtering happens through the POOL argument (engine design):
     // pick recs drop what I can't pick; ban recs drop what the ENEMY can't pick.
@@ -510,7 +623,12 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                     ));
                 }
                 if let Some(cof) = &star.counter_of {
-                    parts.push(format!("1순위 픽은 상대 {} 상대로 실측 카운터 우위가 있습니다.", cof));
+                    // counters() now runs on real matchup data (laning dominance +
+                    // head-to-head) — phrase the provenance honestly either way.
+                    parts.push(format!(
+                        "1순위 픽은 상대 {}에게 라인전 지표·상대 전적상 우위가 있습니다.",
+                        cof
+                    ));
                 }
                 if !lv.tip.is_empty() {
                     parts.push(format!("전략 메모: {}.", lv.tip));
@@ -564,6 +682,22 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
             t.push('.');
             parts.push(t);
         }
+    }
+    // own-comp guardrail warning (symmetric to the enemy-comp line): 3+ of MY
+    // picks with no frontline is the comp the autobattle punishes hardest.
+    if board.my_pick.len() >= 3 && swap.is_empty() {
+        let ids: Vec<&str> = board.my_pick.iter().map(|s| s.as_str()).collect();
+        let known = ids.iter().filter(|c| tables.role_known(c)).count();
+        if known == ids.len() {
+            let (tanks, _) = tables.comp_counts(&ids);
+            if tanks == 0 {
+                parts.push("아군 조합에 앞라인이 없습니다 — 남은 픽에서 탱커/브루저를 고려하세요.".to_string());
+            }
+        }
+    }
+    // honesty line: without matchup data the ranking cannot react to enemy picks.
+    if !tables.has_matchup() && !board.enemy_pick.is_empty() {
+        parts.push("상대 픽 대응(매치업) 데이터가 아직 없습니다 — 이 순위는 상대 픽을 반영하지 못합니다.".to_string());
     }
     let changed_list: Vec<String> = CHAMPS
         .iter()
@@ -633,7 +767,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         ));
     }
     parts.push(format!(
-        "데이터: 현재 패치 {}판{}",
+        "데이터: 유효 표본 {}판(직전 패치 블렌드 포함){}",
         tables.matches,
         if tables.matches < 50 { " — 콜드스타트 구간, 이론 비중이 큽니다." } else { "." }
     ));

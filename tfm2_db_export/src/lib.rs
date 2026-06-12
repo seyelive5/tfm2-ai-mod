@@ -95,6 +95,81 @@ fn patch_tsv(db: &ClientDatabase) -> String {
     s
 }
 
+/// MU/OPP/OPPN rows from match replays — the matchup axis + opponent ban model:
+///   MU  <a> <b> <a_wins> <games> — same-lane head-to-head (both directions).
+///   OPP <team> <champ> <games> <wins> — what each team actually plays.
+///   OPPN <team> <games> — usage-share denominator.
+/// O(replays×10); runs only inside the throttled stats rebuild.
+fn replay_rows(db: &ClientDatabase) -> String {
+    use std::collections::BTreeMap;
+    let lane_of = |p: String| match p.as_str() {
+        "Top" => 0usize,
+        "Jungle" => 1,
+        "Mid" => 2,
+        "Bottom" => 3,
+        "Support" => 4,
+        _ => 9,
+    };
+    let mut mu: BTreeMap<(String, String), (u32, u32)> = BTreeMap::new();
+    let mut opp: BTreeMap<(u64, String), (u32, u32)> = BTreeMap::new();
+    let mut teamn: BTreeMap<u64, u32> = BTreeMap::new();
+    for rep in db.match_replays.values() {
+        let mut blue: [Option<&String>; 5] = [None; 5];
+        let mut red: [Option<&String>; 5] = [None; 5];
+        for a in &rep.blue_team {
+            let l = lane_of(format!("{:?}", a.position));
+            if l < 5 {
+                blue[l] = Some(&a.champion);
+            }
+        }
+        for a in &rep.red_team {
+            let l = lane_of(format!("{:?}", a.position));
+            if l < 5 {
+                red[l] = Some(&a.champion);
+            }
+        }
+        let bw = rep.blue_team_win;
+        for l in 0..5 {
+            if let (Some(b), Some(r)) = (blue[l], red[l]) {
+                let e = mu.entry((b.clone(), r.clone())).or_insert((0, 0));
+                e.1 += 1;
+                if bw {
+                    e.0 += 1;
+                }
+                let e2 = mu.entry((r.clone(), b.clone())).or_insert((0, 0));
+                e2.1 += 1;
+                if !bw {
+                    e2.0 += 1;
+                }
+            }
+        }
+        for (team, side, won) in [
+            (rep.blue_team_id as u64, &rep.blue_team, bw),
+            (rep.red_team_id as u64, &rep.red_team, !bw),
+        ] {
+            *teamn.entry(team).or_insert(0) += 1;
+            for a in side {
+                let e = opp.entry((team, a.champion.clone())).or_insert((0, 0));
+                e.0 += 1;
+                if won {
+                    e.1 += 1;
+                }
+            }
+        }
+    }
+    let mut s = String::with_capacity(128 * 1024);
+    for ((a, b), (w, g)) in &mu {
+        s.push_str(&format!("MU\t{}\t{}\t{}\t{}\n", a, b, w, g));
+    }
+    for ((t, c), (g, w)) in &opp {
+        s.push_str(&format!("OPP\t{}\t{}\t{}\t{}\n", t, c, g, w));
+    }
+    for (t, g) in &teamn {
+        s.push_str(&format!("OPPN\t{}\t{}\n", t, g));
+    }
+    s
+}
+
 /// Split a `{:#?}` ChampionInfoSheet dump into per-champ blocks keyed by champ id
 /// (the top-level field name, e.g. `fighter`). Top-level fields sit at EXACTLY a
 /// 4-space indent; every line until the next such field belongs to that champ.
@@ -567,9 +642,11 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                 my_locked: fl_my,
                 enemy_locked: fl_enemy,
                 attributed,
+                enemy_team: (if mine_is_t1 { m.team2 } else { m.team1 }) as u32,
             };
             if let Ok(mut tg) = TABLES.lock() {
-                let tables = tg.get_or_insert_with(|| recommender::build_tables("", &[], &ChgInfo::default()));
+                let tables =
+                    tg.get_or_insert_with(|| recommender::build_tables("", &[], &ChgInfo::default(), ""));
                 let out = recommender::update(&board, tables, TABLES_GEN.load(Ordering::Relaxed));
                 if let Ok(mut og) = OUT_NOW.lock() {
                     *og = Some(out);
@@ -1010,7 +1087,7 @@ impl ModExtension for E {
             info
         };
         if let Ok(mut tg) = TABLES.lock() {
-            *tg = Some(recommender::build_tables(&pt, &pool, &chg_info));
+            *tg = Some(recommender::build_tables(&pt, &pool, &chg_info, &replay_rows(&db)));
             TABLES_GEN.fetch_add(1, Ordering::Relaxed);
         }
         atomic_write(

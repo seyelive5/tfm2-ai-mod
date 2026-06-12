@@ -67,14 +67,25 @@ const COMP_UNIT: f32 = 0.12;
 // early-pick flexibility bonus, per extra lane a champ can play (capped at +2 lanes).
 // First picks are "blind" → favor flex champs that hide your lane assignment.
 const W_FLEX: f32 = 0.01;
-// FEARLESS flex bonus: a 2-lane champ fills whichever lane dries up across sets, so flex
-// is worth far more — and it applies to EVERY pick, not just early. DATA-ANCHORED (2026-06-06):
-// our tier step ≈ 4%p (S+6/A+2/B-2/C-6), so 0.030/lane × max 2 lanes = +0.06 ≈ 1.5 tiers —
-// the research's "+1~2 tiers", leaning aggressive because the live pool is genuinely shallow
-// (jungle only 2 S/A, support 3) and a 60-champ pool depletes far faster than LoL. Tune by feel.
-const W_FLEX_FEARLESS: f32 = 0.030;
+// FEARLESS flex bonus: a 2-lane champ fills whichever lane dries up across sets.
+// RE-CAPPED 2026-06-12 (0.030 → 0.015): at 0.030 the max bonus (+0.06, 1.5 tiers)
+// exceeded the best champ's ENTIRE real winrate delta — flex, not winrate, was
+// deciding fearless picks. 0.015 × max 2 lanes = +0.03 (~0.75 tier) keeps it a
+// strong tiebreaker that can no longer beat a genuine tier gap. Also no longer
+// paid on the last pick (no remaining option value).
+const W_FLEX_FEARLESS: f32 = 0.015;
 // confidence: full trust in DATA terms at this many matches (theory fully faded).
 const FULL_CONF_MATCHES: f32 = 200.0;
+// ---- lane-matchup axis (2026-06-12; the "respond to enemy picks" rebuild) ----
+// laning-dominance differential: LP rows carry a per-(champ,lane) z-score of
+// gold_line_phase/game within the lane; 0.008/z ⇒ a full z-spread (±2.5 vs ∓2.5)
+// = ±0.04 ≈ one tier step. Dense (every champ-lane with ≥5 games has one).
+const W_MU_LP: f32 = 0.008;
+// direct head-to-head record (MU rows, ~2 games/pair typical): beta-shrunk hard.
+const MU_KAPPA: f32 = 12.0;
+const W_MU_DIRECT: f32 = 0.5; // 3-0 record → +0.05; 2-1 → +0.017
+// opponent-aware ban: usage-share × winrate-excess of the SPECIFIC enemy team.
+const W_BAN_OPP: f32 = 0.08; // 60%-usage comfort champ ≈ +0.05 ≈ one tier step
 // a champ with fewer games than this behind its winrate is flagged low-confidence
 // in the UI (its `C` is too thin to trust). Unknown game count = not flagged.
 const LOW_CONF_GAMES: u32 = 15;
@@ -130,15 +141,17 @@ pub struct Tables {
     /// game (from `RP` rows). DATA-driven role signal: thresholded to detect
     /// frontline/healer for comp balance, catching champs the static tags miss.
     role: std::collections::HashMap<String, (f32, f32)>,
-    /// opponent-aware bans: (team id, champ) -> (games, wins) that team played it.
-    /// Parsed but currently UNREAD: the OppBan view (opp_ban_ranking/has_opp) was
-    /// dead code with no caller in either UI and got removed; the data stays
-    /// parsed so a future opponent-aware ban feature only needs a new consumer.
-    #[allow(dead_code)]
+    /// opponent-aware bans: (team id, champ) -> (games, wins) that team played it
+    /// (`OPP` rows, built from match replays). Consumed by score_ban's opp term.
     opp: std::collections::HashMap<(u32, String), (u32, u32)>,
     /// team id -> total games (usage-share denominator), from `OPPN` rows.
-    #[allow(dead_code)]
     opp_team_games: std::collections::HashMap<u32, u32>,
+    /// (a, b) -> (a_wins, games): same-lane head-to-head from match replays
+    /// (`MU` rows; both directions emitted by the producer).
+    matchup_pair: std::collections::HashMap<(String, String), (u32, u32)>,
+    /// (champ, lane) -> laning-phase dominance z-score (`LP` rows; gold_line_phase
+    /// per game, standardized within the lane).
+    lane_dom: std::collections::HashMap<(String, u8), f32>,
     /// team id -> display name (from `TEAM` rows), sorted by name for the picker.
     pub team_names: Vec<(u32, String)>,
     /// champs buffed/nerfed in the CURRENT patch (from `CHG` rows): champ ->
@@ -172,6 +185,8 @@ pub fn parse_tables_from_str(tsv: &str) -> Tables {
         role: HashMap::new(),
         opp: HashMap::new(),
         opp_team_games: HashMap::new(),
+        matchup_pair: HashMap::new(),
+        lane_dom: HashMap::new(),
         team_names: Vec::new(),
         chg: HashMap::new(),
     };
@@ -265,6 +280,22 @@ pub fn parse_tables_from_str(tsv: &str) -> Tables {
                     t.opp_team_games.insert(tm, f[2].parse().unwrap_or(0));
                 }
             }
+            // MU<TAB><a><TAB><b><TAB><a_wins><TAB><games> — same-lane head-to-head.
+            "MU" if f.len() >= 5 => {
+                let w = f[3].parse().unwrap_or(0);
+                let g = f[4].parse().unwrap_or(0);
+                if g > 0 {
+                    t.matchup_pair.insert((f[1].into(), f[2].into()), (w, g));
+                }
+            }
+            // LP<TAB><champ><TAB><laneIdx><TAB><z> — laning-dominance z-score.
+            "LP" if f.len() >= 4 => {
+                if let Ok(li) = f[2].parse::<u8>() {
+                    if li < 5 {
+                        t.lane_dom.insert((f[1].into(), li), f[3].parse().unwrap_or(0.0));
+                    }
+                }
+            }
             // TEAM<TAB><id><TAB><name> — opponent picker labels.
             "TEAM" if f.len() >= 3 => {
                 if let Ok(id) = f[1].parse::<u32>() {
@@ -327,6 +358,36 @@ impl Tables {
     }
     fn syn(&self, a: &str, b: &str) -> f32 { *self.synergy.get(&(a.into(), b.into())).unwrap_or(&0.0) }
     fn cnt(&self, a: &str, b: &str) -> f32 { *self.counter.get(&(a.into(), b.into())).unwrap_or(&0.0) }
+
+    // ---- lane-matchup axis (MU + LP rows) ----
+    /// any matchup data loaded? (gates the counter-aware behaviors + UI honesty line)
+    pub fn has_matchup(&self) -> bool {
+        !self.lane_dom.is_empty() || !self.matchup_pair.is_empty()
+    }
+    fn lane_dom_z(&self, c: &str, l: u8) -> f32 {
+        *self.lane_dom.get(&(c.into(), l)).unwrap_or(&0.0)
+    }
+    /// direct head-to-head games behind matchup(a,b) (for "실측" wording gates).
+    pub fn matchup_games(&self, a: &str, b: &str) -> u32 {
+        self.matchup_pair.get(&(a.into(), b.into())).map(|&(_, g)| g).unwrap_or(0)
+    }
+    /// Expected lane-matchup advantage of `a` over `b`, in winrate points (±0.05
+    /// cap ≈ one tier step): dense laning-dominance differential + sparse direct
+    /// head-to-head record (beta-shrunk hard — ~2 games/pair is typical).
+    pub fn matchup(&self, a: &str, b: &str, lane: Option<u8>) -> f32 {
+        let lp = match lane {
+            Some(l) => W_MU_LP * (self.lane_dom_z(a, l) - self.lane_dom_z(b, l)),
+            None => 0.0,
+        };
+        let dir = self
+            .matchup_pair
+            .get(&(a.into(), b.into()))
+            .map(|&(w, g)| {
+                W_MU_DIRECT * ((w as f32 + MU_KAPPA * 0.5) / (g as f32 + MU_KAPPA) - 0.5)
+            })
+            .unwrap_or(0.0);
+        (lp + dir).clamp(-0.05, 0.05)
+    }
     fn ban(&self, c: &str) -> f32 { *self.banrate.get(c).unwrap_or(&0.0) }
     fn has_tag(&self, c: &str, tag: &str) -> bool {
         self.taxon.get(c).map(|t| t.tags.iter().any(|x| x == tag)).unwrap_or(false)
@@ -444,11 +505,14 @@ impl Tables {
     }
     /// number of lanes this champ plays (1 if unknown → no flex bonus).
     fn flex(&self, c: &str) -> u8 { self.pos_play.get(c).map(|v| v.len() as u8).unwrap_or(1) }
-    /// counter advantage of `cand` over `enemy`: data counter diff + a faded
-    /// tag-based term (so the lane counter-flag still fires at cold-start).
+    /// counter advantage of `cand` over `enemy`: real lane-matchup data (laning
+    /// dominance + head-to-head) at the enemy's expected lane, plus a faded,
+    /// halved tag term (cold-start only).
     fn counters(&self, cand: &str, enemy: &str) -> f32 {
-        let data = self.cnt(cand, enemy) - self.cnt(enemy, cand);
-        let theory = (1.0 - self.confidence()) * self.tag_counter(cand, &[enemy]);
+        let data = self.matchup(cand, enemy, self.primary(enemy))
+            + self.cnt(cand, enemy)
+            - self.cnt(enemy, cand);
+        let theory = 0.5 * (1.0 - self.confidence()) * self.tag_counter(cand, &[enemy]);
         data + theory
     }
 
@@ -574,7 +638,10 @@ impl Tables {
             _ => (picks_made / 4.0).min(1.0),
         };
         let cnt_ramp = 0.5 + 0.5 * late;
-        let power_ramp = 1.0 - 0.4 * late;
+        // power de-emphasis on late picks is only justified when a real counter
+        // term exists to replace it — and even then mildly (0.4 was shrinking the
+        // proven signal by 40% while the counter tables sat empty).
+        let power_ramp = if self.has_matchup() { 1.0 - 0.15 * late } else { 1.0 };
         let data = self.confidence(); // trust pairwise DATA proportional to match volume
         let theory = 1.0 - data;
 
@@ -583,14 +650,43 @@ impl Tables {
         for a in allies {
             syn += data * W_SYN * self.syn(cand, a);
         }
-        syn += theory * self.tag_synergy(cand, allies);
+        // theory tag terms HALVED: unvalidated tag rules must not outrank the
+        // measured winrate signal mid-career (raw they reach 0.18 ≈ 3 tier steps).
+        syn += 0.5 * theory * self.tag_synergy(cand, allies);
         let mut cnt = 0.0;
         for e in enemies {
             cnt += data * W_CNT * cnt_ramp * self.cnt(cand, e);
             cnt -= data * W_WEAK * cnt_ramp * self.cnt(e, cand);
         }
-        cnt += theory * self.tag_counter(cand, enemies);
-        let comp = W_COMP * self.comp_need(cand, allies);
+        cnt += 0.5 * theory * self.tag_counter(cand, enemies);
+        // ── lane-matchup term (the real counter-pick axis): how does this champ
+        // do INTO the enemy expected in this lane? Reveal-scaled per PICK: the
+        // more enemy picks are on the board, the harder we counter-weight.
+        let mu_ramp = match order {
+            1 => 0.7,
+            2 => 1.0,
+            _ => (0.7 + 0.1 * enemies.len() as f32).min(1.0),
+        };
+        if let Some(l) = lane {
+            let opps: Vec<&str> = enemies
+                .iter()
+                .copied()
+                .filter(|e| self.primary(e) == Some(l))
+                .collect();
+            if !opps.is_empty() {
+                let sum: f32 = opps.iter().map(|e| self.matchup(cand, e, Some(l))).sum();
+                cnt += mu_ramp * (sum / opps.len() as f32);
+            }
+        }
+        let mut comp = W_COMP * self.comp_need(cand, allies);
+        // BOUNDARY guardrail (beyond the small linear comp term): 3+ picks with
+        // no frontline is the degenerate comp the autobattle punishes hardest —
+        // close the gap with a full-tier boost on frontline candidates only.
+        let is_front =
+            |c: &str| self.has_tag(c, "Tank") || self.has_tag(c, "Frontline") || self.is_frontline_data(c);
+        if allies.len() >= 3 && !allies.iter().any(|a| is_front(a)) && is_front(cand) {
+            comp += 0.05;
+        }
         let dup = W_DUP * self.overlap(cand, allies);
         let total = base + syn + cnt + comp - dup;
         (total, dominant(&[("강챔", base), ("시너지", syn), ("카운터", cnt), ("조합", comp)]))
@@ -598,7 +694,19 @@ impl Tables {
 
     /// BAN desirability. DATA terms mirror tfm2_draft_ai::score_ban; at cold-start
     /// add a faded tag term for champs that counter our picks / fit the meta.
-    pub fn score_ban(&self, cand: &str, allies: &[&str], enemies: &[&str], order: i8) -> (f32, &'static str) {
+    /// `enemy_team` (0 = unknown) keys the opponent model (OPP rows): champs THIS
+    /// enemy actually relies on outrank generically-strong champs. In fearless,
+    /// `enemy_strong_left` (the ENEMY's remaining S/A depth per lane) marks champs
+    /// worth sniping out of the opponent's thin lanes.
+    pub fn score_ban(
+        &self,
+        cand: &str,
+        allies: &[&str],
+        enemies: &[&str],
+        order: i8,
+        enemy_team: u32,
+        enemy_strong_left: Option<&[u32; 5]>,
+    ) -> (f32, &'static str) {
         let data = self.confidence();
         let theory = 1.0 - data;
         // 선픽(first): you can pick a strong champ yourself, so lean bans toward THREATS
@@ -609,16 +717,44 @@ impl Tables {
         let mut cnt = 0.0;
         for a in allies {
             cnt += data * W_BAN_CNT * self.cnt(cand, a);
+            // real matchup threat vs my picks: this champ would lane INTO one of mine.
+            if let Some(l) = self.primary(a) {
+                cnt += 0.5 * self.matchup(cand, a, Some(l)).max(0.0);
+            }
         }
         // cold-start: ban champs whose tags counter OUR picks (allies)
-        cnt += theory * self.tag_counter(cand, allies);
+        cnt += 0.5 * theory * self.tag_counter(cand, allies);
         let mut syn = 0.0;
         for e in enemies {
             syn += data * W_BAN_SYN * self.syn(cand, e);
         }
         let meta = W_BAN_META * self.ban(cand);
-        let total = base + cnt + syn + meta;
-        (total, dominant(&[("강챔", base), ("우리킬", cnt), ("적시너지", syn), ("밴율", meta)]))
+        // ── opponent model: usage share × winrate-excess of the SPECIFIC enemy.
+        let mut opp = 0.0;
+        if enemy_team != 0 {
+            if let (Some(&(g, w)), Some(&tg)) =
+                (self.opp.get(&(enemy_team, cand.into())), self.opp_team_games.get(&enemy_team))
+            {
+                if tg > 0 {
+                    let usage = g as f32 / tg as f32;
+                    let wr = (w as f32 + 3.0) / (g as f32 + 6.0); // shrunk (k=6)
+                    opp = W_BAN_OPP * usage * (1.0 + 2.0 * (wr - 0.5));
+                }
+            }
+        }
+        // ── fearless thin-lane snipe: an S/A champ in a lane where the enemy has
+        // ≤2 strong options left — banning it cripples that lane for the series.
+        if let Some(sl) = enemy_strong_left {
+            if let Some(l) = self.primary(cand) {
+                let t = self.tier_of(cand, Some(l));
+                let left = sl[l as usize];
+                if (t == "S" || t == "A") && left > 0 && left <= 2 {
+                    opp += 0.04 / left as f32; // 1 left → +0.04, 2 left → +0.02
+                }
+            }
+        }
+        let total = base + cnt + syn + meta + opp;
+        (total, dominant(&[("강챔", base), ("우리킬", cnt), ("적시너지", syn), ("밴율", meta), ("저격", opp)]))
     }
 
     // (opp_ban_ranking / has_opp / OppBan removed 2026-06-12: dead code — no
@@ -649,6 +785,10 @@ pub struct DraftState {
     pub avail: usize,
     /// manual pick-order hint: 0 = auto (infer from board), 1 = 선픽(first), 2 = 후픽(later).
     pub pick_order: i8,
+    /// enemy team id for the opponent-aware ban model (0 = unknown).
+    pub enemy_team: u32,
+    /// champs the ENEMY cannot pick (fearless) — drives the thin-lane ban snipe.
+    pub enemy_locked: Vec<String>,
 }
 
 fn split_csv(v: &str) -> Vec<String> {
@@ -743,6 +883,25 @@ pub fn recommend(
     let allies: Vec<&str> = my_pick.iter().map(|x| x.as_str()).collect();
     let enemies: Vec<&str> = opp_pick.iter().map(|x| x.as_str()).collect();
 
+    // fearless ban targeting: the ENEMY's remaining strong depth per lane (their
+    // pool = available minus their locks minus the board) — a thin lane's last
+    // strong champ is a high-value snipe.
+    let enemy_strong: Option<[u32; 5]> = if phase_ban && !s.enemy_locked.is_empty() {
+        let avail: HashSet<String> = CHAMPS
+            .iter()
+            .map(|(id, _)| *id)
+            .filter(|id| {
+                !taken.contains(id)
+                    && !s.enemy_locked.iter().any(|x| x == id)
+                    && pool.map(|p| p.contains(*id)).unwrap_or(true)
+            })
+            .map(|id| id.to_string())
+            .collect();
+        Some(tables.strong_per_lane(&avail))
+    } else {
+        None
+    };
+
     let mut rows: Vec<Row> = Vec::new();
     for (id, _ko) in CHAMPS {
         if taken.contains(id) {
@@ -754,7 +913,7 @@ pub fn recommend(
             }
         }
         let (score, label) = if phase_ban {
-            tables.score_ban(id, &allies, &enemies, s.pick_order)
+            tables.score_ban(id, &allies, &enemies, s.pick_order, s.enemy_team, enemy_strong.as_ref())
         } else {
             tables.score_pick_in(id, &allies, &enemies, None, s.pick_order)
         };
@@ -841,25 +1000,34 @@ pub struct LaneView {
 // fully-playable assignment is preferred; off-lane only when picks outnumber a shared lane).
 const OFF_LANE_PENALTY: f32 = -1.0;
 
-/// Assign my picks to DISTINCT lanes OPTIMALLY — not greedy-by-pick-order. Each pick goes to a
-/// lane it can play, maximizing the team's total per-lane winrate; off-lane only as a last
-/// resort. Brute-forces all assignments (≤5 picks → ≤120 leaves). Fixes greedy's two failures:
-/// (a) a flex pick stealing a single-lane pick's only lane, and (b) a champ dumped into a lane
-/// it cannot play once its lanes are taken.
-fn assign_lanes<'a>(tables: &Tables, allies: &[&'a str]) -> [Option<&'a str>; 5] {
-    let n = allies.len().min(5);
+/// Assign picks to DISTINCT lanes OPTIMALLY — not greedy-by-pick-order. Each pick goes to a
+/// lane it can play, maximizing total per-lane value; off-lane only as a last resort.
+/// Brute-forces all assignments (≤5 picks → ≤120 leaves). `enemy_at` (when known) adds the
+/// lane-MATCHUP term: the swap phase is lane-vs-lane, so a placement that walks into a losing
+/// matchup must score worse than a slightly-lower-delta lane that wins its matchup.
+fn assign_core<'a>(
+    tables: &Tables,
+    picks: &[&'a str],
+    enemy_at: &[Option<&str>; 5],
+) -> [Option<&'a str>; 5] {
+    let n = picks.len().min(5);
     let mut filled: [Option<&str>; 5] = [None; 5];
     if n == 0 {
         return filled;
     }
-    // value[pick][lane] = per-lane winrate if playable, else OFF_LANE_PENALTY. No POS data for a
-    // champ → treat every lane as playable at its overall winrate (it fills whatever's left).
+    // value[pick][lane] = per-lane winrate (+ matchup vs the enemy expected there) if playable,
+    // else OFF_LANE_PENALTY. No POS data → every lane playable at its overall winrate.
     let mut val = [[0f32; 5]; 5];
-    for (i, p) in allies.iter().take(5).enumerate() {
+    for (i, p) in picks.iter().take(5).enumerate() {
         let pl = tables.pos_play.get(*p);
         for l in 0u8..5 {
             let playable = pl.map(|v| v.contains(&l)).unwrap_or(true);
-            val[i][l as usize] = if playable { tables.delta_for(p, Some(l)) } else { OFF_LANE_PENALTY };
+            val[i][l as usize] = if playable {
+                let mu = enemy_at[l as usize].map(|e| tables.matchup(p, e, Some(l))).unwrap_or(0.0);
+                tables.delta_for(p, Some(l)) + mu
+            } else {
+                OFF_LANE_PENALTY
+            };
         }
     }
     let mut best_score = f32::NEG_INFINITY;
@@ -868,10 +1036,19 @@ fn assign_lanes<'a>(tables: &Tables, allies: &[&'a str]) -> [Option<&'a str>; 5]
     assign_rec(&val, n, 0, 0.0, &mut cur, &mut best_score, &mut best);
     for (l, &pi) in best.iter().enumerate() {
         if pi != usize::MAX {
-            filled[l] = Some(allies[pi]);
+            filled[l] = Some(picks[pi]);
         }
     }
     filled
+}
+
+/// My optimal lane assignment, matchup-aware: first estimate the ENEMY's own
+/// best assignment (their lanes, no matchup nesting), then place my picks to
+/// maximize delta + matchup-vs-the-enemy-in-that-lane.
+fn assign_lanes<'a>(tables: &Tables, allies: &[&'a str], enemies: &[&str]) -> [Option<&'a str>; 5] {
+    let none: [Option<&str>; 5] = [None; 5];
+    let enemy_at = if enemies.is_empty() { none } else { assign_core(tables, enemies, &none) };
+    assign_core(tables, allies, &enemy_at)
 }
 
 fn assign_rec(
@@ -921,9 +1098,9 @@ pub fn recommend_lanes(
     let allies: Vec<&str> = my_pick.iter().map(|x| x.as_str()).collect();
     let enemies: Vec<&str> = opp_pick.iter().map(|x| x.as_str()).collect();
 
-    // assign my picks to lanes OPTIMALLY (global max-winrate, playable-respecting) — not the old
-    // greedy pick-order pass that could dump a champ into an unplayable lane (see assign_lanes).
-    let filled: [Option<&str>; 5] = assign_lanes(tables, &allies);
+    // assign my picks to lanes OPTIMALLY (global max-winrate, playable-respecting,
+    // MATCHUP-AWARE vs the enemy's estimated assignment) — see assign_lanes.
+    let filled: [Option<&str>; 5] = assign_lanes(tables, &allies, &enemies);
 
     let picks_made = allies.len();
     // manual pick-order override (s.pick_order): 1=선픽 forces early, 2=후픽 forces late.
@@ -942,17 +1119,17 @@ pub fn recommend_lanes(
     // fearless: depletion management dominates → explain why ★ moves to the thin lane.
     let tip = if fearless { "피어리스: 얕은 라인 먼저 확보 · 플렉스 우선" } else { tip };
 
-    // fearless: remaining S/A-tier depth per lane → drives "secure the shallowest lane first".
-    let strong_left: Option<[u32; 5]> = if fearless {
+    // remaining S/A-tier depth per lane. Fearless: drives "secure the shallowest
+    // lane first". Classic: a scarcity TIE-BREAKER on the ★ — the deepest lane is
+    // exactly the one safe to defer, so the ★ should not just chase the top score.
+    let strong_left: [u32; 5] = {
         let avail: HashSet<String> = CHAMPS
             .iter()
             .map(|(id, _)| *id)
             .filter(|id| !taken.contains(id) && pool.map(|p| p.contains(*id)).unwrap_or(true))
             .map(|id| id.to_string())
             .collect();
-        Some(tables.strong_per_lane(&avail))
-    } else {
-        None
+        tables.strong_per_lane(&avail)
     };
     let mut lanes: Vec<Lane> = Vec::with_capacity(5);
     let mut open: Vec<(usize, f32)> = Vec::new(); // (lane index, top-candidate score) for open lanes
@@ -985,8 +1162,10 @@ pub fn recommend_lanes(
             if early {
                 score += W_FLEX * (tables.flex(id).saturating_sub(1).min(2) as f32);
             }
-            // fearless: flex pays off on EVERY pick (it can fill whichever lane runs dry).
-            if fearless {
+            // fearless: flex pays off on (almost) every pick — it can fill whichever
+            // lane runs dry. NOT on the last pick (no remaining option value), and
+            // capped below one tier step so it can't beat a real winrate edge.
+            if fearless && allies.len() < 4 {
                 score += W_FLEX_FEARLESS * (tables.flex(id).saturating_sub(1).min(2) as f32);
             }
             cands.push(LaneCand {
@@ -1025,22 +1204,26 @@ pub fn recommend_lanes(
         }
         lanes.push(Lane { name: LANES[lane as usize], filled: None, cands, counter_of, star: false });
     }
-    // ★ = the lane to secure THIS turn. Classic: the highest-scoring pick. Fearless: the
-    // SHALLOWEST open lane (fewest S/A champs left) — grab it before it dries up — with pick
-    // quality as the tie-breaker. This is the depletion fix (verified pro principle).
-    let star = if let Some(sl) = strong_left {
+    // ★ = the lane to secure THIS turn. Fearless: the SHALLOWEST open lane (fewest S/A champs
+    // left) — grab it before it dries up — with pick quality as the tie-breaker (the depletion
+    // fix, verified pro principle). Classic: top score PLUS a scarcity bonus, so the ★ stops
+    // pointing at the deepest pool (the lane safest to defer) when a thin lane is drying up.
+    let star = if fearless {
         // Urgency: a lane with FEW-BUT-NONZERO strong champs is about to dry up → secure it now.
         // A lane ALREADY at 0 strong has nothing strong left to lose, so it is NOT urgent — rank
         // it last. Otherwise the ★ races to an already-dead lane (e.g. all lanes 0 strong except
         // support=2) instead of grabbing the last scarce strong champs while they exist.
-        let urgency = |l: usize| -> u32 { if sl[l] == 0 { u32::MAX } else { sl[l] } };
+        let urgency = |l: usize| -> u32 { if strong_left[l] == 0 { u32::MAX } else { strong_left[l] } };
         open.iter().copied().min_by(|a, b| {
             urgency(a.0)
                 .cmp(&urgency(b.0))
                 .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
         })
     } else {
-        open.iter().copied().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+        let starv = |&(l, sc): &(usize, f32)| sc + 0.012 * (3.0 - (strong_left[l].min(3)) as f32);
+        open.iter()
+            .copied()
+            .max_by(|a, b| starv(a).partial_cmp(&starv(b)).unwrap_or(std::cmp::Ordering::Equal))
     };
     if let Some((vi, _)) = star {
         lanes[vi].star = true;
