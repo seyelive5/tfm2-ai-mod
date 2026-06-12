@@ -6,12 +6,17 @@
 //! is validated BEFORE it is built. The replay dump stores each athlete's stat
 //! snapshot AT MATCH TIME → no leakage for fit; familiarity is train-fold-built.
 //!
-//! Usage: validate-terms <match_replays.debug.txt> [draft_weights.tsv] [champion_patch_statistics.tsv]
+//! Usage: validate-terms <match_replays.debug.txt> [draft_weights.tsv] [champion_patch_statistics.tsv] [ai_intrinsic.tsv]
 //!   draft_weights.tsv               → T rows (taxonomy) for the comp term
 //!   champion_patch_statistics.tsv   → LP (gold_line_phase z) — CAVEAT: career-
 //!                                     cumulative (includes test matches); champ
 //!                                     laning style is near-stationary, treat the
 //!                                     LP number as an upper bound.
+//!   ai_intrinsic.tsv                → champ<TAB>score: the GAME draft-AI's
+//!                                     empty-board valuations (observed via the
+//!                                     score hook). CAVEAT: the model state has
+//!                                     learned from these same matches → treat as
+//!                                     an upper bound like LP.
 
 use std::collections::HashMap;
 
@@ -253,6 +258,7 @@ struct Terms {
     /// strips career length (veteran-heavy teams) from the comfort signal.
     fam_gc: f64,
     fit: f64,       // athlete lane proficiency diff (as-of-match stat, /100)
+    aip: f64,       // game-AI intrinsic valuation diff (empty-board scan scores)
     win: bool,
 }
 
@@ -270,6 +276,18 @@ fn main() {
     };
     let lane_dom = if args.len() >= 4 {
         parse_lane_dom(&std::fs::read_to_string(&args[3]).unwrap_or_default())
+    } else {
+        HashMap::new()
+    };
+    let ai_intr: HashMap<String, f64> = if args.len() >= 5 {
+        std::fs::read_to_string(&args[4])
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| {
+                let (c, v) = l.split_once('\t')?;
+                Some((c.to_string(), v.trim().parse().ok()?))
+            })
+            .collect()
     } else {
         HashMap::new()
     };
@@ -419,6 +437,10 @@ fn main() {
             }
             t.comp = comp_score(&m.blue) - comp_score(&m.red);
             t.fit = (m.blue.iter().map(|a| a.fit).sum::<f64>() - m.red.iter().map(|a| a.fit).sum::<f64>()) / 100.0;
+            let aips = |team: &[Ath]| -> f64 {
+                team.iter().map(|a| ai_intr.get(&a.champ).copied().unwrap_or(0.0)).sum()
+            };
+            t.aip = aips(&m.blue) - aips(&m.red);
             recs.push(t);
         }
     }
@@ -456,6 +478,7 @@ fn main() {
         ("fam_g     (games-only familiarity)", &|t: &Terms| t.fam_g),
         ("fam_gc    (career-centered comfort)", &|t: &Terms| t.fam_gc),
         ("fit       (athlete lane stat) ★ph2", &|t: &Terms| t.fit),
+        ("aip       (game-AI intrinsic) ★caveat", &|t: &Terms| t.aip),
     ] {
         println!("  {:<38}: {:.1}%", name, acc(f));
     }
@@ -474,6 +497,7 @@ fn main() {
         ("famg", &|t: &Terms| t.fam_g, [0.02, 0.04, 0.08, 0.16]),
         ("famgc", &|t: &Terms| t.fam_gc, [0.02, 0.04, 0.08, 0.16]),
         ("fit", &|t: &Terms| t.fit, [0.02, 0.05, 0.1, 0.2]),
+        ("aip", &|t: &Terms| t.aip, [0.25, 0.5, 1.0, 2.0]),
     ] {
         let mut line = format!("  base_lane + s*{:<4}", name);
         for s in scales {
@@ -504,6 +528,11 @@ fn main() {
         ("base_lane + 0.08*famg + 0.25*famc + 0.05*fit", &|t: &Terms| {
             t.base_lane + 0.08 * t.fam_g + 0.25 * t.fam_c + 0.05 * t.fit
         }),
+        ("base_lane + 0.5*aip", &|t: &Terms| t.base_lane + 0.5 * t.aip),
+        ("base_lane + 0.08*famg + 0.5*aip", &|t: &Terms| {
+            t.base_lane + 0.08 * t.fam_g + 0.5 * t.aip
+        }),
+        ("aip + 0.08*famg (AI + athlete only)", &|t: &Terms| t.aip + 0.08 * t.fam_g),
         ("kitchen sink (yesterday's engine shape)", &|t: &Terms| {
             t.base_lane + 0.5 * t.mu + 0.008 * t.lp + 0.15 * t.syn + 0.15 * t.cnt + 0.02 * t.comp + 0.5 * t.fam + 0.05 * t.fit
         }),
