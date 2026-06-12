@@ -151,6 +151,12 @@ pub struct Tables {
     opp: std::collections::HashMap<(u32, String), (u32, u32)>,
     /// team id -> total games (usage-share denominator), from `OPPN` rows.
     opp_team_games: std::collections::HashMap<u32, u32>,
+    /// Phase 2 (set at runtime per match, not from TSV rows): MY starting
+    /// athletes' familiarity bonus per (champ, lane) — the strongest validated
+    /// signal (validate-terms v2: comfort 66.0% standalone vs winrate 60.9%).
+    athlete_bonus: std::collections::HashMap<(String, u8), f32>,
+    /// ENEMY starters' comfort per champ (max over their five) — ban targeting.
+    enemy_pocket: std::collections::HashMap<String, f32>,
     /// (a, b) -> (a_wins, games): same-lane head-to-head from match replays
     /// (`MU` rows; both directions emitted by the producer).
     matchup_pair: std::collections::HashMap<(String, String), (u32, u32)>,
@@ -190,6 +196,8 @@ pub fn parse_tables_from_str(tsv: &str) -> Tables {
         role: HashMap::new(),
         opp: HashMap::new(),
         opp_team_games: HashMap::new(),
+        athlete_bonus: HashMap::new(),
+        enemy_pocket: HashMap::new(),
         matchup_pair: HashMap::new(),
         lane_dom: HashMap::new(),
         team_names: Vec::new(),
@@ -363,6 +371,21 @@ impl Tables {
     }
     fn syn(&self, a: &str, b: &str) -> f32 { *self.synergy.get(&(a.into(), b.into())).unwrap_or(&0.0) }
     fn cnt(&self, a: &str, b: &str) -> f32 { *self.counter.get(&(a.into(), b.into())).unwrap_or(&0.0) }
+
+    // ---- Phase 2: athlete familiarity (set per match by the mod, not TSV) ----
+    pub fn set_athlete(
+        &mut self,
+        af: std::collections::HashMap<(String, u8), f32>,
+        pocket: std::collections::HashMap<String, f32>,
+    ) {
+        self.athlete_bonus = af;
+        self.enemy_pocket = pocket;
+    }
+    /// MY athlete-at-this-lane's familiarity bonus for the champ (0 = no history
+    /// or lane unknown). Already weight-scaled by the producer (0.08·famg+0.25·famc).
+    fn af(&self, c: &str, lane: Option<u8>) -> f32 {
+        lane.and_then(|l| self.athlete_bonus.get(&(c.into(), l))).copied().unwrap_or(0.0)
+    }
 
     // ---- lane-matchup axis (MU + LP rows) ----
     /// any matchup data loaded? (gates the counter-aware behaviors + UI honesty line)
@@ -693,8 +716,11 @@ impl Tables {
             comp += 0.05;
         }
         let dup = W_DUP * self.overlap(cand, allies);
-        let total = base + syn + cnt + comp - dup;
-        (total, dominant(&[("강챔", base), ("시너지", syn), ("카운터", cnt), ("조합", comp)]))
+        // ── athlete familiarity (validated strongest signal; weights baked by
+        // the producer): my athlete at this lane is BETTER on champs they know.
+        let fam = self.af(cand, lane);
+        let total = base + syn + cnt + comp + fam - dup;
+        (total, dominant(&[("강챔", base), ("시너지", syn), ("카운터", cnt), ("조합", comp), ("숙련", fam)]))
     }
 
     /// BAN desirability. DATA terms mirror tfm2_draft_ai::score_ban; at cold-start
@@ -747,6 +773,9 @@ impl Tables {
                 }
             }
         }
+        // ── enemy pocket pick (athlete-level comfort, max over their starters):
+        // denying a champ their player is deep on outvalues a generic strong ban.
+        opp += self.enemy_pocket.get(cand).copied().unwrap_or(0.0);
         // ── fearless thin-lane snipe: an S/A champ in a lane where the enemy has
         // ≤2 strong options left — banning it cripples that lane for the series.
         if let Some(sl) = enemy_strong_left {
@@ -1014,6 +1043,7 @@ fn assign_core<'a>(
     tables: &Tables,
     picks: &[&'a str],
     enemy_at: &[Option<&str>; 5],
+    use_af: bool, // my assignment: athlete familiarity counts; enemy estimate: not my athletes
 ) -> [Option<&'a str>; 5] {
     let n = picks.len().min(5);
     let mut filled: [Option<&str>; 5] = [None; 5];
@@ -1029,7 +1059,8 @@ fn assign_core<'a>(
             let playable = pl.map(|v| v.contains(&l)).unwrap_or(true);
             val[i][l as usize] = if playable {
                 let mu = enemy_at[l as usize].map(|e| tables.matchup(p, e, Some(l))).unwrap_or(0.0);
-                tables.delta_for(p, Some(l)) + mu
+                let fam = if use_af { tables.af(p, Some(l)) } else { 0.0 };
+                tables.delta_for(p, Some(l)) + mu + fam
             } else {
                 OFF_LANE_PENALTY
             };
@@ -1052,8 +1083,8 @@ fn assign_core<'a>(
 /// maximize delta + matchup-vs-the-enemy-in-that-lane.
 fn assign_lanes<'a>(tables: &Tables, allies: &[&'a str], enemies: &[&str]) -> [Option<&'a str>; 5] {
     let none: [Option<&str>; 5] = [None; 5];
-    let enemy_at = if enemies.is_empty() { none } else { assign_core(tables, enemies, &none) };
-    assign_core(tables, allies, &enemy_at)
+    let enemy_at = if enemies.is_empty() { none } else { assign_core(tables, enemies, &none, false) };
+    assign_core(tables, allies, &enemy_at, true)
 }
 
 fn assign_rec(

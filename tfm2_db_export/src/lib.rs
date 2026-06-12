@@ -95,6 +95,66 @@ fn patch_tsv(db: &ClientDatabase) -> String {
     s
 }
 
+/// Phase 2 — athlete familiarity for THIS match's starting lineups (the
+/// strongest validated signal: games-on-champ 66.0% standalone, best combo
+/// 67.4% — validate-terms v2, 2837 matches, 5-fold CV).
+///   af((champ,lane))  = 0.08·ln(1+min(g,20)) + 0.25·centered-champ-winrate
+///                       for MY athlete assumed at that lane
+///   pocket(champ)     = 0.015·ln(1+min(g,20)), max over ENEMY starters
+///                       (their comfort = our ban target)
+/// ASSUMPTION (runtime-verified via the starting_my line in bp_live.txt):
+/// team*_starting = athlete ids in lane order (top..support).
+fn athlete_tables(
+    db: &ClientDatabase,
+    my: &[usize],
+    enemy: &[usize],
+) -> (HashMap<(String, u8), f32>, HashMap<String, f32>, String) {
+    let champ_hist = |aid: usize| -> HashMap<String, (f64, f64)> {
+        let mut m: HashMap<String, (f64, f64)> = HashMap::new();
+        if let Some(a) = db.athletes.get(&aid) {
+            for ss in &a.season_statistics {
+                for st in ss.by_position.values() {
+                    for (c, d) in &st.champion_detail {
+                        let e = m.entry(c.clone()).or_insert((0.0, 0.0));
+                        e.0 += d.matches as f64;
+                        e.1 += d.wins as f64;
+                    }
+                }
+            }
+        }
+        m
+    };
+    let mut af: HashMap<(String, u8), f32> = HashMap::new();
+    let mut dbg = String::new();
+    for (lane, aid) in my.iter().take(5).enumerate() {
+        let hist = champ_hist(*aid);
+        let (tg, tw) = hist.values().fold((0.0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1));
+        let wr_a = (tw + 4.0) / (tg + 8.0); // athlete overall winrate, shrunk
+        for (c, (g, w)) in &hist {
+            let famg = 0.08 * (1.0 + g.min(20.0)).ln();
+            let famc = 0.25 * ((w + 4.0 * wr_a) / (g + 4.0) - wr_a);
+            af.insert((c.clone(), lane as u8), (famg + famc) as f32);
+        }
+        dbg.push_str(&format!(
+            "{}:{}:{} ",
+            lane,
+            aid,
+            db.athletes.get(aid).map(|a| a.name.as_str()).unwrap_or("?")
+        ));
+    }
+    let mut pocket: HashMap<String, f32> = HashMap::new();
+    for aid in enemy.iter().take(5) {
+        for (c, (g, _)) in champ_hist(*aid) {
+            let v = (0.015 * (1.0 + g.min(20.0)).ln()) as f32;
+            let e = pocket.entry(c).or_insert(0.0);
+            if v > *e {
+                *e = v;
+            }
+        }
+    }
+    (af, pocket, dbg)
+}
+
 /// MU/OPP/OPPN rows from match replays — the matchup axis + opponent ban model:
 ///   MU  <a> <b> <a_wins> <games> — same-lane head-to-head (both directions).
 ///   OPP <team> <champ> <games> <wins> — what each team actually plays.
@@ -375,6 +435,9 @@ static GATE_DIAG: Mutex<String> = Mutex::new(String::new());
 
 /// TEMP fearless-semantics scout dedup (fearless_scout.txt).
 static SCOUT_LAST: Mutex<String> = Mutex::new(String::new());
+/// my starting lineup interpretation "lane:athleteId:name …" (bp_live debug —
+/// runtime verification of the team*_starting = lane-ordered-ids assumption).
+static LINEUP_DBG: Mutex<String> = Mutex::new(String::new());
 
 fn gate_diag(reason: String) {
     if let Ok(mut g) = GATE_DIAG.lock() {
@@ -644,9 +707,24 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                 attributed,
                 enemy_team: (if mine_is_t1 { m.team2 } else { m.team1 }) as u32,
             };
+            // Phase 2: athlete familiarity for this match's starting lineups —
+            // recomputed only on prekey-miss frames; set on the tables before
+            // scoring (match id in the cache key keeps it consistent).
+            let (mine_start, enemy_start) =
+                if mine_is_t1 { (&m.team1_starting, &m.team2_starting) } else { (&m.team2_starting, &m.team1_starting) };
+            let (af, pocket, lineup_dbg) = m
+                .database
+                .try_borrow()
+                .ok()
+                .map(|db| athlete_tables(&db, mine_start, enemy_start))
+                .unwrap_or_default();
+            if let Ok(mut lg) = LINEUP_DBG.lock() {
+                *lg = lineup_dbg;
+            }
             if let Ok(mut tg) = TABLES.lock() {
                 let tables =
                     tg.get_or_insert_with(|| recommender::build_tables("", &[], &ChgInfo::default(), ""));
+                tables.set_athlete(af, pocket);
                 let out = recommender::update(&board, tables, TABLES_GEN.load(Ordering::Relaxed));
                 if let Ok(mut og) = OUT_NOW.lock() {
                     *og = Some(out);
@@ -679,7 +757,11 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
         fl_enemy.join(","),
         locked_x.join(","),
         locked_i.join(","),
-    ) + &format!("locked_d={}\n", locked_d.join(","));
+    ) + &format!(
+        "locked_d={}\nstarting_my={}\n",
+        locked_d.join(","),
+        LINEUP_DBG.lock().map(|g| g.clone()).unwrap_or_default()
+    );
     let mut last = match BP_LAST.lock() {
         Ok(g) => g,
         Err(_) => return,
@@ -996,6 +1078,77 @@ fn stamp_grid(ui: &mut GameUI, assets: &Assets) {
     }
 }
 
+// ───────────────── Phase 1: game draft-AI score OBSERVATION ─────────────────
+// ModDraftScoreHook receives the game's OWN computed score for every ban/pick
+// candidate (docs/native-ai-hooks.md). This hook changes NOTHING (always Pass);
+// it logs (phase, candidate, score, explore, board) so we can (a) see whether
+// it fires for the player draft or only AI teams, (b) predict the enemy AI's
+// next action, (c) benchmark our recommender against the game's evaluation.
+static AI_SCORE_BUF: Mutex<String> = Mutex::new(String::new());
+static AI_SCORE_TICK: AtomicU32 = AtomicU32::new(0);
+
+fn observe_score(phase: &str, ctx: &DraftScoreContext, cand: usize, score: f32) {
+    if let Ok(mut b) = AI_SCORE_BUF.lock() {
+        if b.len() > 2 * 1024 * 1024 {
+            return; // runaway cap until next flush
+        }
+        // everything is a champion INDEX (game-internal); the index→id mapping is
+        // recovered offline by correlating ally_pick indices with the known board.
+        let nums = |v: &[usize]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",");
+        let cand_global = ctx.available_champions.get(cand).copied().unwrap_or(usize::MAX);
+        b.push_str(&format!(
+            "{}\t{}\t{}\t{:.4}\t{}\tap={} ep={} ab={} eb={} avail_n={}\n",
+            phase,
+            cand,
+            cand_global,
+            score,
+            ctx.is_explore as u8,
+            nums(&ctx.ally_pick),
+            nums(&ctx.enemy_pick),
+            nums(&ctx.ally_ban),
+            nums(&ctx.enemy_ban),
+            ctx.available_champions.len(),
+        ));
+    }
+}
+
+#[derive(Debug)]
+struct ObserveDraftScores;
+impl ModDraftScoreHook for ObserveDraftScores {
+    fn id(&self) -> &str {
+        "tfm2_db_export:observe_scores"
+    }
+    fn score_ban(&self, ctx: &DraftScoreContext, candidate: usize, current_score: f32) -> DraftScoreDecision {
+        observe_score("B", ctx, candidate, current_score);
+        DraftScoreDecision::Pass
+    }
+    fn score_pick(&self, ctx: &DraftScoreContext, candidate: usize, current_score: f32) -> DraftScoreDecision {
+        observe_score("P", ctx, candidate, current_score);
+        DraftScoreDecision::Pass
+    }
+}
+
+/// every ~600 frames: append the observation buffer to ai_scores.log (rotate at 8MB).
+fn flush_ai_scores() {
+    let t = AI_SCORE_TICK.fetch_add(1, Ordering::Relaxed);
+    if t % 600 != 0 {
+        return;
+    }
+    let body = match AI_SCORE_BUF.lock() {
+        Ok(mut b) if !b.is_empty() => std::mem::take(&mut *b),
+        _ => return,
+    };
+    let path = format!("{}/ai_scores.log", base());
+    let _ = std::fs::create_dir_all(base());
+    if std::fs::metadata(&path).map(|m| m.len() > 8 * 1024 * 1024).unwrap_or(false) {
+        let _ = std::fs::rename(&path, format!("{}/ai_scores.old.log", base()));
+    }
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = f.write_all(body.as_bytes());
+    }
+}
+
 struct E;
 impl ModExtension for E {
     fn post_update(&self, _scene: &mut Scene, ui: &mut GameUI, a: &mut Assets, _dt: f32) {
@@ -1005,6 +1158,7 @@ impl ModExtension for E {
     }
 
     fn pre_update(&self, scene: &mut Scene, ui: &mut GameUI, _a: &mut Assets, dt: f32) {
+        flush_ai_scores();
         // live banpick board first — every frame, deduped, banpick-gated (cheap).
         bp_export(scene, ui);
 
@@ -1127,6 +1281,7 @@ impl ModExtension for E {
 fn init(_c: &GameCtx) -> ModRegistration {
     let mut r = ModRegistration::new("tfm2_db_export");
     r.set_extension(E);
+    r.add_draft_score_hook(ObserveDraftScores);
     r
 }
 
