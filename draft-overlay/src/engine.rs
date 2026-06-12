@@ -81,9 +81,14 @@ const FULL_CONF_MATCHES: f32 = 200.0;
 // gold_line_phase/game within the lane; 0.008/z ⇒ a full z-spread (±2.5 vs ∓2.5)
 // = ±0.04 ≈ one tier step. Dense (every champ-lane with ≥5 games has one).
 const W_MU_LP: f32 = 0.008;
-// direct head-to-head record (MU rows, ~2 games/pair typical): beta-shrunk hard.
+// direct head-to-head record (MU rows). VALIDATED 2026-06-13 (validate-terms v2,
+// 5-fold CV on 2837 matches): NO incremental value over per-lane winrate
+// (base_lane 59.4% → +0.25×mu 59.6%, within ±0.9%p noise; standalone 58.1% is
+// just champ strength re-expressed). Weight ZEROED — rows stay parsed for
+// display/diagnostics. LP kept at the sweep optimum (59.9% at 0.008; marginal,
+// cumulative-source caveat).
 const MU_KAPPA: f32 = 12.0;
-const W_MU_DIRECT: f32 = 0.5; // 3-0 record → +0.05; 2-1 → +0.017
+const W_MU_DIRECT: f32 = 0.0;
 // opponent-aware ban: usage-share × winrate-excess of the SPECIFIC enemy team.
 const W_BAN_OPP: f32 = 0.08; // 60%-usage comfort champ ≈ +0.05 ≈ one tier step
 // a champ with fewer games than this behind its winrate is flagged low-confidence
