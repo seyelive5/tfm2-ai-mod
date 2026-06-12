@@ -626,49 +626,70 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
     if !swap.is_empty() {
         parts.push("픽이 끝났습니다. 전체 승률이 가장 높아지는 배치는 위 추천 배치입니다.".to_string());
     } else if let Some(lv) = lane_view.as_ref().filter(|lv| lv.has_pos) {
-        if let Some(star) = lv.lanes.iter().find(|l| l.star) {
-            if let Some(c) = star.cands.first() {
-                let mut t = format!("{} 라인을 먼저 확보하는 편이 좋아 보입니다. 1순위는 {}", star.name, c.ko);
-                if !c.tier.is_empty() {
-                    t.push_str(&format!("({}티어)", c.tier));
+        // the headline must describe the SAME ① the header/glyphs show (the
+        // GLOBAL score-sorted top) — it diverged from the ★ lane's local top
+        // once the glyphs went score-true (user-reported mismatch 2026-06-13).
+        let top = recs.first().and_then(|(id, _, _)| {
+            lv.lanes
+                .iter()
+                .find_map(|l| l.cands.iter().find(|c| c.id == *id).map(|c| (l, c)))
+        });
+        if let Some((lane, c)) = top {
+            let mut t = format!("1순위는 {} {}", lane.name, c.ko);
+            if !c.tier.is_empty() {
+                t.push_str(&format!("({}티어)", c.tier));
+            }
+            t.push_str(&format!(", 평점 {:+.0}", c.score * 100.0));
+            if !c.label.is_empty() {
+                t.push_str(&format!(" — 근거: {}", c.label));
+            }
+            if !c.chg.is_empty() {
+                t.push_str(&format!(" (이번 패치 변경 {})", c.chg));
+            }
+            if c.chg == "▼" && c.label == "숙련" {
+                t.push_str(" — 너프됐지만 선수 숙련 보정으로 상위입니다. 대체 픽도 검토하세요");
+            }
+            if c.low_conf {
+                t.push_str(". 다만 표본이 적어 확신은 낮습니다");
+            }
+            t.push('.');
+            parts.push(t);
+            if lane.cands.len() > 1 {
+                parts.push(format!(
+                    "같은 라인 대안: {}.",
+                    lane.cands
+                        .iter()
+                        .filter(|x| x.id != c.id)
+                        .take(2)
+                        .map(|c| format!("{} {:+.0}", c.ko, c.score * 100.0))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            if let Some(cof) = &lane.counter_of {
+                // counters() runs on real matchup data (laning dominance +
+                // head-to-head) — phrase the provenance honestly either way.
+                parts.push(format!(
+                    "1순위 픽은 상대 {}에게 라인전 지표·상대 전적상 우위가 있습니다.",
+                    cof
+                ));
+            }
+            // ★ lane-order guidance, as a SEPARATE suggestion when it differs
+            // from the #1's lane (e.g. fearless depletion urges a thin lane).
+            if let Some(star) = lv.lanes.iter().find(|l| l.star && l.filled.is_none()) {
+                if star.name != lane.name {
+                    if let Some(sc) = star.cands.first() {
+                        parts.push(format!(
+                            "라인 순서 제안: {} 라인을 먼저 확보하는 것도 좋습니다 — 해당 라인 1순위 {} {:+.0}.",
+                            star.name,
+                            sc.ko,
+                            sc.score * 100.0
+                        ));
+                    }
                 }
-                t.push_str(&format!(", 평점 {:+.0}", c.score * 100.0));
-                if !c.label.is_empty() {
-                    t.push_str(&format!(" — 근거: {}", c.label));
-                }
-                if !c.chg.is_empty() {
-                    t.push_str(&format!(" (이번 패치 변경 {})", c.chg));
-                }
-                if c.chg == "▼" && c.label == "숙련" {
-                    t.push_str(" — 너프됐지만 선수 숙련 보정으로 상위입니다. 대체 픽도 검토하세요");
-                }
-                if c.low_conf {
-                    t.push_str(". 다만 표본이 적어 확신은 낮습니다");
-                }
-                t.push('.');
-                parts.push(t);
-                if star.cands.len() > 1 {
-                    parts.push(format!(
-                        "같은 라인 대안: {}.",
-                        star.cands
-                            .iter()
-                            .skip(1)
-                            .map(|c| format!("{} {:+.0}", c.ko, c.score * 100.0))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
-                }
-                if let Some(cof) = &star.counter_of {
-                    // counters() now runs on real matchup data (laning dominance +
-                    // head-to-head) — phrase the provenance honestly either way.
-                    parts.push(format!(
-                        "1순위 픽은 상대 {}에게 라인전 지표·상대 전적상 우위가 있습니다.",
-                        cof
-                    ));
-                }
-                if !lv.tip.is_empty() {
-                    parts.push(format!("전략 메모: {}.", lv.tip));
-                }
+            }
+            if !lv.tip.is_empty() {
+                parts.push(format!("전략 메모: {}.", lv.tip));
             }
         }
     } else if let Some(r) = view.rows.first() {
