@@ -346,7 +346,10 @@ fn champ_changes_update(db: &ClientDatabase, out: &str, fp: &str) -> String {
             let b = line.as_bytes();
             if b.len() > 4 && &b[..4] == b"    " && (b[4].is_ascii_lowercase() || b[4] == b'_') {
                 let name = line[4..].split(':').next().unwrap_or("").trim();
-                if recommender::engine::CHAMPS.iter().any(|(id, _)| *id == name) {
+                // every sheet champ EXCEPT the mod_champions container — newly added
+                // official champs must stay in the index space (a ∈CHAMPS filter
+                // would silently shift every index after the insertion point).
+                if name != "mod_champions" {
                     order.push(name.to_string());
                 }
             }
@@ -778,10 +781,22 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
             if let Ok(mut lg) = LINEUP_DBG.lock() {
                 *lg = lineup_dbg;
             }
+            // game-AI intrinsic priors (empty-board scan averages) → champ ids.
+            let mut prior: HashMap<String, f32> = HashMap::new();
+            if let (Ok(p), Ok(order)) = (AI_PRIOR.lock(), CHAMP_ORDER.lock()) {
+                for (cand, (sum, n)) in p.as_ref().map(|m| m.iter()).into_iter().flatten() {
+                    if *n >= 2 {
+                        if let Some(id) = order.get(*cand) {
+                            prior.insert(id.clone(), (*sum / *n as f64) as f32);
+                        }
+                    }
+                }
+            }
             if let Ok(mut tg) = TABLES.lock() {
                 let tables =
                     tg.get_or_insert_with(|| recommender::build_tables("", &[], &ChgInfo::default(), ""));
                 tables.set_athlete(af, pocket);
+                tables.set_ai_prior(prior);
                 let out = recommender::update(&board, tables, TABLES_GEN.load(Ordering::Relaxed));
                 if let Ok(mut og) = OUT_NOW.lock() {
                     *og = Some(out);
@@ -1151,6 +1166,12 @@ static CHAMP_ORDER: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// remaining candidates are its likely next actions.
 static AI_EVAL: Mutex<(String, u64, Vec<(usize, f32, char)>)> =
     Mutex::new((String::new(), 0, Vec::new()));
+/// per-champ intrinsic valuation by the GAME's draft AI: average of its
+/// EMPTY-BOARD ban-scan scores (no context → pure champ strength as the seeded
+/// learned model sees it). The cold-start prior for just-released champs the
+/// stats can't rate yet (e.g. chef: 1 game): the AI's network ships with
+/// informative priors for unreleased champs — borrow them until ~15 real games.
+static AI_PRIOR: Mutex<Option<HashMap<usize, (f64, u32)>>> = Mutex::new(None);
 
 fn observe_score(phase: &str, ctx: &DraftScoreContext, cand: usize, score: f32) {
     if let Ok(mut b) = AI_SCORE_BUF.lock() {
@@ -1190,6 +1211,19 @@ fn observe_score(phase: &str, ctx: &DraftScoreContext, cand: usize, score: f32) 
             }
             ev.1 = ts;
             ev.2.push((cand, score, if phase == "B" { 'B' } else { 'P' }));
+        }
+        // intrinsic-prior feed: empty-board ban scans only (context-free).
+        if phase == "B"
+            && ctx.ally_pick.is_empty()
+            && ctx.enemy_pick.is_empty()
+            && ctx.ally_ban.is_empty()
+            && ctx.enemy_ban.is_empty()
+        {
+            if let Ok(mut p) = AI_PRIOR.lock() {
+                let e = p.get_or_insert_with(HashMap::new).entry(cand).or_insert((0.0, 0));
+                e.0 += score as f64;
+                e.1 += 1;
+            }
         }
     }
 }

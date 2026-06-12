@@ -157,6 +157,9 @@ pub struct Tables {
     athlete_bonus: std::collections::HashMap<(String, u8), f32>,
     /// ENEMY starters' comfort per champ (max over their five) — ban targeting.
     enemy_pocket: std::collections::HashMap<String, f32>,
+    /// the GAME draft-AI's intrinsic champ valuation (empty-board scan average,
+    /// observed via ModDraftScoreHook) — cold-start prior for thin-stats champs.
+    ai_prior: std::collections::HashMap<String, f32>,
     /// (a, b) -> (a_wins, games): same-lane head-to-head from match replays
     /// (`MU` rows; both directions emitted by the producer).
     matchup_pair: std::collections::HashMap<(String, String), (u32, u32)>,
@@ -198,6 +201,7 @@ pub fn parse_tables_from_str(tsv: &str) -> Tables {
         opp_team_games: HashMap::new(),
         athlete_bonus: HashMap::new(),
         enemy_pocket: HashMap::new(),
+        ai_prior: HashMap::new(),
         matchup_pair: HashMap::new(),
         lane_dom: HashMap::new(),
         team_names: Vec::new(),
@@ -402,6 +406,22 @@ impl Tables {
     /// or lane unknown). Already weight-scaled by the producer (0.08·famg+0.25·famc).
     fn af(&self, c: &str, lane: Option<u8>) -> f32 {
         lane.and_then(|l| self.athlete_bonus.get(&(c.into(), l))).copied().unwrap_or(0.0)
+    }
+    pub fn set_ai_prior(&mut self, p: std::collections::HashMap<String, f32>) {
+        self.ai_prior = p;
+    }
+    /// cold-start prior from the game AI's own valuation: only while OUR stats
+    /// are thin (<15 games), fading out as real evidence arrives. The AI network
+    /// ships seeded priors for just-released champs the stats can't rate yet.
+    /// (Once real games exist — e.g. white_mage at 127g/50.4% — evidence wins.)
+    fn ai_prior_term(&self, c: &str) -> f32 {
+        let p = match self.ai_prior.get(c) {
+            Some(v) => *v,
+            None => return 0.0,
+        };
+        let g = self.games(c);
+        let fresh = if g == u32::MAX { 1.0 } else { (1.0 - g as f32 / 15.0).max(0.0) };
+        (0.4 * p * fresh).clamp(-0.05, 0.05)
     }
 
     // ---- lane-matchup axis (MU + LP rows) ----
@@ -690,7 +710,7 @@ impl Tables {
         let data = self.confidence(); // trust pairwise DATA proportional to match volume
         let theory = 1.0 - data;
 
-        let base = power_ramp * self.delta_for(cand, lane) + self.chg_nudge(cand);
+        let base = power_ramp * self.delta_for(cand, lane) + self.chg_nudge(cand) + self.ai_prior_term(cand);
         let mut syn = 0.0;
         for a in allies {
             syn += data * W_SYN * self.syn(cand, a);
@@ -761,7 +781,7 @@ impl Tables {
         // rather than generically-strong champs — but only MILDLY, so blind early bans
         // (no enemy picks yet) still rank by strength.
         let base_mult = if order == 1 { 0.8 } else { 1.0 };
-        let base = base_mult * self.delta(cand) + self.chg_nudge(cand);
+        let base = base_mult * self.delta(cand) + self.chg_nudge(cand) + self.ai_prior_term(cand);
         let mut cnt = 0.0;
         for a in allies {
             cnt += data * W_BAN_CNT * self.cnt(cand, a);
