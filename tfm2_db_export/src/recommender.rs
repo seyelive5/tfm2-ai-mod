@@ -562,24 +562,36 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         Some(recommend_lanes(tables, &st, false, pool_opt, fearless_on))
     };
 
-    // ── recs (id, ko, score)
-    let entry = |id: &str, ko: &str, score: f32| (id.to_string(), ko.to_string(), format!("{:+.0}", score * 100.0));
-    let mut recs: Vec<(String, String, String)> = Vec::new();
+    // ── recs (id, ko, score) — collected from the lane board (★ lane top3 +
+    // other open lanes' top1) but RANKED BY RAW SCORE: the ①~⑤ glyphs must mean
+    // "best first", not assembly order (the old order put the ★ lane's 2nd/3rd
+    // ahead of another lane's outright OP — the "어중간한 첫픽 추천" defect).
+    let mut raw: Vec<(String, String, f32)> = Vec::new();
     if let Some(lv) = lane_view.as_ref().filter(|lv| lv.has_pos) {
         if let Some(star) = lv.lanes.iter().find(|l| l.star) {
-            recs.extend(star.cands.iter().take(3).map(|c| entry(&c.id, &c.ko, c.score)));
+            raw.extend(star.cands.iter().take(3).map(|c| (c.id.clone(), c.ko.clone(), c.score)));
         }
         for l in lv.lanes.iter().filter(|l| !l.star && l.filled.is_none()) {
             if let Some(c) = l.cands.first() {
-                if !recs.iter().any(|(id, _, _)| *id == c.id) {
-                    recs.push(entry(&c.id, &c.ko, c.score));
+                if !raw.iter().any(|(id, _, _)| *id == c.id) {
+                    raw.push((c.id.clone(), c.ko.clone(), c.score));
                 }
             }
         }
-        recs.truncate(5);
     } else {
-        recs.extend(view.rows.iter().take(5).map(|r| entry(&r.id, &r.ko, r.score)));
+        raw.extend(view.rows.iter().take(5).map(|r| (r.id.clone(), r.ko.clone(), r.score)));
     }
+    raw.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+    raw.truncate(5);
+    // OP callout: on the first 1-2 picks, a clear score gap (≥ one tier step)
+    // between #1 and #2 means "secure the OP now" beats any positional finesse.
+    let op_gap = (!rec_ban
+        && board.my_pick.len() + board.enemy_pick.len() <= 2
+        && raw.len() >= 2
+        && raw[0].2 - raw[1].2 >= 0.04)
+        .then(|| raw[0].1.clone());
+    let recs: Vec<(String, String, String)> =
+        raw.into_iter().map(|(id, ko, sc)| (id, ko, format!("{:+.0}", sc * 100.0))).collect();
 
     // ── swap lane assignment (my 5 picks in)
     let swap: Vec<String> = match lane_view.as_ref().filter(|lv| lv.has_pos && board.my_pick.len() >= 5) {
@@ -593,6 +605,12 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
 
     // ── commentary
     let mut parts: Vec<String> = Vec::new();
+    if let Some(op) = &op_gap {
+        parts.push(format!(
+            "점수 격차가 큽니다 — 지금은 {} 확보가 우선입니다(라인 조합은 다음 픽에서).",
+            op
+        ));
+    }
     if !swap.is_empty() {
         parts.push("픽이 끝났습니다. 전체 승률이 가장 높아지는 배치는 위 추천 배치입니다.".to_string());
     } else if let Some(lv) = lane_view.as_ref().filter(|lv| lv.has_pos) {

@@ -342,6 +342,23 @@ impl Tables {
     }
     /// any champ changed in the current patch? (drives the UI legend line)
     pub fn any_chg(&self) -> bool { !self.chg.is_empty() }
+    /// patch-direction nudge: a just-changed champ has its stats RESET, so its
+    /// delta reads ~0 and its tier is blank — until ~30 fresh games the diff
+    /// DIRECTION (▲ buff / ▼ nerf) is the best available estimate. Small (±half
+    /// a tier), fading with fresh sample size. NOT outcome-backtestable (chg is
+    /// a current-patch-only property) — domain-principled.
+    fn chg_nudge(&self, c: &str) -> f32 {
+        let d = match self.chg.get(c) {
+            Some('+') => 0.02,
+            Some('-') => -0.02,
+            _ => return 0.0,
+        };
+        let g = self.games(c);
+        if g == u32::MAX {
+            return d; // changed champ with no fresh games yet → full nudge
+        }
+        d * (1.0 - (g as f32 / 30.0).min(1.0)).max(0.0)
+    }
     /// Lane-specific winrate delta: the (champ, lane) cell if present, else the
     /// champ-level delta SHRUNK HARD toward neutral. A POS-playable lane with no
     /// CP cell means ZERO games there in the current patch window — valuing it at
@@ -673,7 +690,7 @@ impl Tables {
         let data = self.confidence(); // trust pairwise DATA proportional to match volume
         let theory = 1.0 - data;
 
-        let base = power_ramp * self.delta_for(cand, lane);
+        let base = power_ramp * self.delta_for(cand, lane) + self.chg_nudge(cand);
         let mut syn = 0.0;
         for a in allies {
             syn += data * W_SYN * self.syn(cand, a);
@@ -744,7 +761,7 @@ impl Tables {
         // rather than generically-strong champs — but only MILDLY, so blind early bans
         // (no enemy picks yet) still rank by strength.
         let base_mult = if order == 1 { 0.8 } else { 1.0 };
-        let base = base_mult * self.delta(cand);
+        let base = base_mult * self.delta(cand) + self.chg_nudge(cand);
         let mut cnt = 0.0;
         for a in allies {
             cnt += data * W_BAN_CNT * self.cnt(cand, a);
@@ -1256,7 +1273,11 @@ pub fn recommend_lanes(
                 .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
         })
     } else {
-        let starv = |&(l, sc): &(usize, f32)| sc + 0.012 * (3.0 - (strong_left[l].min(3)) as f32);
+        // scarcity tiebreak ONLY from the 3rd pick on: the first 1-2 picks should
+        // chase raw strength (grab the OP), not pre-optimize lane depth — the
+        // early-scarcity version steered the ★ to thin lanes' mediocre tops.
+        let sc_w = if picks_made >= 2 { 0.012 } else { 0.0 };
+        let starv = |&(l, sc): &(usize, f32)| sc + sc_w * (3.0 - (strong_left[l].min(3)) as f32);
         open.iter()
             .copied()
             .max_by(|a, b| starv(a).partial_cmp(&starv(b)).unwrap_or(std::cmp::Ordering::Equal))
