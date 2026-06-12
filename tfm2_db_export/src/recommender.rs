@@ -402,6 +402,9 @@ pub struct Board {
     pub attributed: bool,
     /// enemy team id — keys the opponent-aware ban model (OPP rows).
     pub enemy_team: u32,
+    /// the enemy AI's top remaining candidates from its latest deliberation
+    /// (observed via ModDraftScoreHook) — its likely next picks/bans.
+    pub enemy_intent: Vec<String>,
 }
 
 /// Cross-frame series tracking — ONLY what the game doesn't hand us directly:
@@ -513,7 +516,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         board.ban_count,
         board.teams,
         board.attributed, // commentary's style claim depends on it
-    );
+    ) + &board.enemy_intent.join(","); // AI-intent line changes the commentary
     if let Ok(g) = OUTPUT.lock() {
         if let Some((k, out)) = g.as_ref() {
             if *k == key {
@@ -694,6 +697,14 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                 parts.push("아군 조합에 앞라인이 없습니다 — 남은 픽에서 탱커/브루저를 고려하세요.".to_string());
             }
         }
+    }
+    // enemy AI intent (observed via the draft-score hook): the AI executes its
+    // argmax, so its remaining top candidates are its likely next actions —
+    // steal or pre-counter them.
+    if !board.enemy_intent.is_empty() {
+        let kos: Vec<String> =
+            board.enemy_intent.iter().map(|id| engine::ko_name(id)).collect();
+        parts.push(format!("상대 AI 평가 상위(다음 픽/밴 유력): {}.", kos.join(" · ")));
     }
     // honesty line: without matchup data the ranking cannot react to enemy picks.
     if !tables.has_matchup() && !board.enemy_pick.is_empty() {

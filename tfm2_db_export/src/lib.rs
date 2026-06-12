@@ -328,6 +328,25 @@ fn change_dir(old: &str, new: &str) -> char {
 /// is excluded (modded champs live in one Vec field — their changes are NOT detected).
 fn champ_changes_update(db: &ClientDatabase, out: &str, fp: &str) -> String {
     let cur_dump = format!("{:#?}", db.champion_info_sheet);
+    // global champion index map = sheet field order ∩ base champs (the AI-score
+    // hook's candidate index space; 15/15 anchors runtime-verified 2026-06-13).
+    {
+        let mut order: Vec<String> = Vec::with_capacity(60);
+        for line in cur_dump.lines() {
+            let b = line.as_bytes();
+            if b.len() > 4 && &b[..4] == b"    " && (b[4].is_ascii_lowercase() || b[4] == b'_') {
+                let name = line[4..].split(':').next().unwrap_or("").trim();
+                if recommender::engine::CHAMPS.iter().any(|(id, _)| *id == name) {
+                    order.push(name.to_string());
+                }
+            }
+        }
+        if order.len() >= 50 {
+            if let Ok(mut g) = CHAMP_ORDER.lock() {
+                *g = order;
+            }
+        }
+    }
     let cur_ver = db
         .champion_patch_statistics
         .keys()
@@ -687,6 +706,33 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                 fl_my = u.clone();
                 fl_enemy = u;
             }
+            // enemy AI intent: its latest deliberation block (fresh ≤120s), top
+            // remaining candidates → ids, minus taken/enemy-locked. The AI picks
+            // its argmax, so the runners-up are its likely NEXT actions.
+            let mut enemy_intent: Vec<String> = Vec::new();
+            if let (Ok(ev), Ok(order)) = (AI_EVAL.lock(), CHAMP_ORDER.lock()) {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                if now.saturating_sub(ev.1) <= 120 && !order.is_empty() {
+                    let mut sorted = ev.2.clone();
+                    sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                    for (cand, _, _) in sorted {
+                        if let Some(id) = order.get(cand) {
+                            if !taken.iter().any(|t| *t == id)
+                                && !fl_enemy.contains(id)
+                                && !enemy_intent.contains(id)
+                            {
+                                enemy_intent.push(id.clone());
+                                if enemy_intent.len() == 3 {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             let board = Board {
                 my_ban: if mine_is_t1 { m.team1_ban.clone() } else { m.team2_ban.clone() },
                 enemy_ban: if mine_is_t1 { m.team2_ban.clone() } else { m.team1_ban.clone() },
@@ -706,6 +752,7 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                 enemy_locked: fl_enemy,
                 attributed,
                 enemy_team: (if mine_is_t1 { m.team2 } else { m.team1 }) as u32,
+                enemy_intent,
             };
             // Phase 2: athlete familiarity for this match's starting lineups —
             // recomputed only on prekey-miss frames; set on the tables before
@@ -1086,6 +1133,14 @@ fn stamp_grid(ui: &mut GameUI, assets: &Assets) {
 // next action, (c) benchmark our recommender against the game's evaluation.
 static AI_SCORE_BUF: Mutex<String> = Mutex::new(String::new());
 static AI_SCORE_TICK: AtomicU32 = AtomicU32::new(0);
+/// global champion index → base champ id (champion_info_sheet field order
+/// filtered to the 60 base champs; runtime-verified 15/15 anchors 2026-06-13).
+static CHAMP_ORDER: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// latest AI evaluation block: (board signature, unix secs, [(cand, score, phase)]).
+/// During the player's banpick this is the ENEMY AI's deliberation — its top
+/// remaining candidates are its likely next actions.
+static AI_EVAL: Mutex<(String, u64, Vec<(usize, f32, char)>)> =
+    Mutex::new((String::new(), 0, Vec::new()));
 
 fn observe_score(phase: &str, ctx: &DraftScoreContext, cand: usize, score: f32) {
     if let Ok(mut b) = AI_SCORE_BUF.lock() {
@@ -1101,19 +1156,31 @@ fn observe_score(phase: &str, ctx: &DraftScoreContext, cand: usize, score: f32) 
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
+        let board_sig = format!(
+            "ap={} ep={} ab={} eb={}",
+            nums(&ctx.ally_pick),
+            nums(&ctx.enemy_pick),
+            nums(&ctx.ally_ban),
+            nums(&ctx.enemy_ban),
+        );
         b.push_str(&format!(
-            "{}\t{}\t{:.4}\t{}\t{}\tap={} ep={} ab={} eb={} avail_n={}\n",
+            "{}\t{}\t{:.4}\t{}\t{}\t{} avail_n={}\n",
             phase,
             cand,
             score,
             ctx.is_explore as u8,
             ts,
-            nums(&ctx.ally_pick),
-            nums(&ctx.enemy_pick),
-            nums(&ctx.ally_ban),
-            nums(&ctx.enemy_ban),
+            board_sig,
             ctx.available_champions.len(),
         ));
+        // live "enemy intent" feed: keep the latest evaluation block intact.
+        if let Ok(mut ev) = AI_EVAL.lock() {
+            if ev.0 != board_sig {
+                *ev = (board_sig, ts, Vec::new());
+            }
+            ev.1 = ts;
+            ev.2.push((cand, score, if phase == "B" { 'B' } else { 'P' }));
+        }
     }
 }
 
