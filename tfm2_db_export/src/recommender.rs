@@ -295,7 +295,9 @@ pub struct Board {
 }
 
 /// Cross-frame series tracking — ONLY what the game doesn't hand us directly:
-/// the set number (board shrink after a seen-full board) and first-pick side.
+/// the set number (board shrink after a seen-full board), first-pick side, and
+/// MY completed-set picks (a champ used by BOTH teams renders as the COLOR
+/// tooltip only — runtime-verified — so my own usage must come from tracking).
 #[derive(Default)]
 struct Series {
     teams: String,
@@ -303,6 +305,11 @@ struct Series {
     /// both sides showed 5 picks (set finished drafting) — the next clearly
     /// smaller board is a new set.
     saw_full: bool,
+    /// my picks of the possibly-finished set (promoted into my_used on the
+    /// next set transition).
+    pending_my: Vec<String>,
+    /// my picks of COMPLETED sets — unioned into my_locked under fearless.
+    my_used: HashSet<String>,
     first_pick: Option<bool>,
 }
 
@@ -340,6 +347,8 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         s.teams = board.teams.clone();
         s.game = 1;
         s.saw_full = false;
+        s.pending_my.clear();
+        s.my_used.clear();
         s.first_pick = None;
     } else if s.saw_full {
         // picks-only: counting bans would mask the shrink (6 bans + 1 pick reads
@@ -349,11 +358,13 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         if picks_now + 3 < 10 {
             s.game += 1;
             s.saw_full = false;
+            s.my_used.extend(s.pending_my.drain(..));
             s.first_pick = None;
         }
     }
     if board.my_pick.len() == 5 && board.enemy_pick.len() == 5 {
         s.saw_full = true;
+        s.pending_my = board.my_pick.clone();
     }
     if board.my_pick.len() + board.enemy_pick.len() == 1 && s.first_pick.is_none() {
         s.first_pick = Some(board.my_pick.len() == 1);
@@ -362,10 +373,17 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
     // ── fearless: DERIVED from the game's lock lists every pass (no latching).
     // hard = both teams share one identical lock set (the union); in normal each
     // team is locked out of its OWN used champs, so the lists differ.
-    let my_locked: HashSet<String> = board.my_locked.iter().cloned().collect();
+    let mut my_locked: HashSet<String> = board.my_locked.iter().cloned().collect();
     let enemy_locked: HashSet<String> = board.enemy_locked.iter().cloned().collect();
     let fearless_on = !my_locked.is_empty() || !enemy_locked.is_empty();
     let hard = !my_locked.is_empty() && my_locked == enemy_locked;
+    if fearless_on {
+        // dupe hole: a champ used by BOTH teams shows only the COLOR tooltip
+        // (lands in enemy_locked) — my own used champs from tracking close it.
+        // Gated on fearless_on: in a non-fearless multi-set match re-picks are
+        // legal and my_used must NOT filter anything.
+        my_locked.extend(s.my_used.iter().cloned());
+    }
 
     // ── recompute only when the board or stats changed. ban_count and teams
     // MUST be keyed: rec_ban derives from ban_count, and OUTPUT survives across

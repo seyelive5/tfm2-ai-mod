@@ -416,21 +416,29 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                         locked_i.push(cell.id.clone());
                     }
                     if icon_vis || x_vis {
-                        // tooltip-based attribution — the game's OWN per-cell text
-                        // (bundle localization, all 4 keys verified 2026-06-12):
-                        // fearless_tooltip_own  → OUR side locked,
-                        // fearless_tooltip_both → both sides,
-                        // fearless_tooltip_blue/_red (color phrasing) → used for the
-                        // NON-player side in a player match ("own" exists precisely
-                        // for ours). ko/en/ja/zh markers below; any other locale or
-                        // future wording → conservative: lock BOTH sides (and the
-                        // x-mark belt still protects picks).
-                        const OWN_T: [&str; 5] =
-                            ["우리 팀", "Your team", "自チーム", "你的队伍", "你的隊伍"];
-                        const BOTH_T: [&str; 5] =
-                            ["양팀", "Neither team", "両チーム", "双方", "雙方"];
-                        const COLOR_T: [&str; 10] = [
-                            "블루팀", "레드팀", "Blue team", "Red team", "ブルーチーム",
+                        // tooltip-based attribution. Runtime-verified 2026-06-12:
+                        // the label stores the LOCALIZATION KEY VERBATIM, e.g.
+                        // "#asset/base/text/ui?banpick.fearless_tooltip_red" — match
+                        // the key suffix (locale-independent, exact). Localized-text
+                        // fallbacks kept in case a future version resolves the text
+                        // into the label. _own → OUR side locked; _blue/_red (color
+                        // phrasing) → the NON-player side ("own" exists precisely
+                        // for ours; runtime: enemy champs showed _red); _both → both.
+                        // ‼️ A champ used by BOTH teams in NORMAL renders as the
+                        // color key only (runtime: own 8 + red 10 at set 3 = 2 dupes
+                        // folded into _red) — the recommender re-adds my own used
+                        // champs from its pick tracking to cover that hole.
+                        const OWN_T: [&str; 6] = [
+                            "fearless_tooltip_own", "우리 팀", "Your team", "自チーム",
+                            "你的队伍", "你的隊伍",
+                        ];
+                        const BOTH_T: [&str; 6] = [
+                            "fearless_tooltip_both", "양팀", "Neither team", "両チーム",
+                            "双方", "雙方",
+                        ];
+                        const COLOR_T: [&str; 12] = [
+                            "fearless_tooltip_blue", "fearless_tooltip_red", "블루팀",
+                            "레드팀", "Blue team", "Red team", "ブルーチーム",
                             "レッドチーム", "蓝方", "红方", "藍方", "紅方",
                         ];
                         let own_t = OWN_T.iter().any(|p| tip_txt.contains(p));
