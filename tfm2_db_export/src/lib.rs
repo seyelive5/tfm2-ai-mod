@@ -444,6 +444,59 @@ fn champ_changes_update(db: &ClientDatabase, out: &str, fp: &str) -> String {
     render(s_ver, &cs)
 }
 
+/// Patch-change info from the game's OWN authored patch notes (the latest PatchNote
+/// in any team's news inbox) — RUNTIME-VERIFIED reachable client-side via db.teams
+/// (2026-06-20). The game ships `is_buff` per change → AUTHORITATIVE direction (no
+/// field_sign heuristic) and it's per-patch. Returns None if no PatchNote is found,
+/// so the caller falls back to the defs-snapshot diff (champ_changes_update).
+///   db.teams: HashMap<usize, Team> → Team.news: Vec<News> → News.ty: NewsType
+///     → PatchNote { version, champion_patch_data: Vec<(champ, Vec<ChampionPatchData
+///         { key, target_action, pre_value, after_value, is_buff }>)>, .. }
+fn authored_chg(db: &ClientDatabase) -> Option<ChgInfo> {
+    use std::collections::{BTreeMap, HashMap};
+    // version-key -> (version-string, champ -> (buffs, nerfs)); deduped across the
+    // ~120 teams that each receive the same global patch note.
+    let mut by_ver: BTreeMap<Vec<u32>, (String, HashMap<String, (u32, u32)>)> = BTreeMap::new();
+    for (_id, team) in db.teams.iter() {
+        for news in &team.news {
+            if let game_core::NewsType::PatchNote { version, champion_patch_data, .. } = &news.ty {
+                let entry = by_ver
+                    .entry(vkey(version))
+                    .or_insert_with(|| (version.clone(), HashMap::new()));
+                if entry.1.is_empty() {
+                    for (champ, changes) in champion_patch_data {
+                        let mut bn = (0u32, 0u32);
+                        for cpd in changes {
+                            if cpd.is_buff { bn.0 += 1 } else { bn.1 += 1 }
+                        }
+                        let e = entry.1.entry(champ.clone()).or_insert((0, 0));
+                        e.0 += bn.0;
+                        e.1 += bn.1;
+                    }
+                }
+            }
+        }
+    }
+    if by_ver.is_empty() {
+        return None;
+    }
+    // latest version = the current patch; the one before it = the stale-row anchor.
+    let mut iter = by_ver.iter().rev();
+    let (_lk, (_lver, latest)) = iter.next()?;
+    let anchor = iter.next().map(|(_, (v, _))| v.clone());
+    let dirs: Vec<(String, char)> = latest
+        .iter()
+        .map(|(champ, (b, n))| {
+            let dir = if *b > 0 && *n == 0 { '+' } else if *n > 0 && *b == 0 { '-' } else { '~' };
+            (champ.clone(), dir)
+        })
+        .collect();
+    if dirs.is_empty() {
+        return None;
+    }
+    Some(ChgInfo { anchor, dirs })
+}
+
 // ───────────────────── live banpick reader (merged from tfm2_bp_reader) ─────────────────────
 // Reads the LIVE banpick board from the banpick screen's `MatchUIRunner` and writes
 // %LOCALAPPDATA%/tfm2-overlay/bp_live.txt (deduped, atomic) — the overlay's 자동연동 feed.
@@ -746,14 +799,20 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                     }
                 }
             }
-            // enemy contextual valuations (this match only; reset on match change)
-            // → deny/steal term on our picks + next-set ban targeting.
+            // match identity key for the board (rematch vs the same team pair =
+            // a NEW series, not a phantom "next set"; team ids order-normalized in
+            // case the game swaps blue/red sides between sets).
             let teams_key = format!(
                 "{:?}|{}|{}",
                 m.match_info.id,
                 m.team1.min(m.team2),
                 m.team1.max(m.team2)
             );
+            // deny/steal valuations DISABLED (code review 2026-06-20): ENEMY_VAL
+            // was fed by background league sims, not the current-match enemy, so
+            // the reset+read below produced league-wide noise. Kept commented for
+            // revival if a real per-match enemy signal lands.
+            /*
             if let Ok(mut tk) = ENEMY_VAL_MATCH.lock() {
                 if *tk != teams_key {
                     *tk = teams_key.clone();
@@ -778,6 +837,7 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                     }
                 }
             }
+            */
             let board = Board {
                 my_ban: if mine_is_t1 { m.team1_ban.clone() } else { m.team2_ban.clone() },
                 enemy_ban: if mine_is_t1 { m.team2_ban.clone() } else { m.team1_ban.clone() },
@@ -826,7 +886,7 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                     tg.get_or_insert_with(|| recommender::build_tables("", &[], &ChgInfo::default(), ""));
                 tables.set_athlete(af, pocket);
                 tables.set_ai_prior(prior);
-                tables.set_enemy_valued(enemy_val);
+                // tables.set_enemy_valued(enemy_val); // deny/steal DISABLED (see review)
                 let out = recommender::update(&board, tables, TABLES_GEN.load(Ordering::Relaxed));
                 if let Ok(mut og) = OUT_NOW.lock() {
                     *og = Some(out);
@@ -1202,14 +1262,13 @@ static AI_EVAL: Mutex<(String, u64, Vec<(usize, f32, char)>)> =
 /// stats can't rate yet (e.g. chef: 1 game): the AI's network ships with
 /// informative priors for unreleased champs — borrow them until ~15 real games.
 static AI_PRIOR: Mutex<Option<HashMap<usize, (f64, u32)>>> = Mutex::new(None);
-/// per-champ MAX contextual PICK valuation by the enemy AI in the CURRENT match
-/// (cand → (max score, unix secs)). The 2026-06-13 loss analysis: the enemy's
-/// in-context pick scores (archer 1.01 → 8/1) were accurate where its
-/// context-free intrinsic scores validate poorly — remember what it valued and
-/// (a) deny-steal it on our picks, (b) ban it NEXT SET. Reset on match change.
-static ENEMY_VAL: Mutex<Option<HashMap<usize, (f32, u64)>>> = Mutex::new(None);
-/// teams key of the match ENEMY_VAL belongs to (reset detector).
-static ENEMY_VAL_MATCH: Mutex<String> = Mutex::new(String::new());
+// deny/steal feature DISABLED (code review 2026-06-20): the contextual-valuation
+// feed below fires for ALL draft-score-hook calls, which per this project's own
+// finding (CLAUDE.md §2c/§4) are background league sims — the player's actual
+// opponent never invokes the hook. So ENEMY_VAL reflected league-wide noise, not
+// the current enemy. Commented out (not deleted) for revival.
+// static ENEMY_VAL: Mutex<Option<HashMap<usize, (f32, u64)>>> = Mutex::new(None);
+// static ENEMY_VAL_MATCH: Mutex<String> = Mutex::new(String::new());
 
 fn observe_score(phase: &str, ctx: &DraftScoreContext, cand: usize, score: f32) {
     if let Ok(mut b) = AI_SCORE_BUF.lock() {
@@ -1250,7 +1309,10 @@ fn observe_score(phase: &str, ctx: &DraftScoreContext, cand: usize, score: f32) 
             ev.1 = ts;
             ev.2.push((cand, score, if phase == "B" { 'B' } else { 'P' }));
         }
-        // contextual-valuation feed: the enemy AI's PICK deliberations (any board).
+        // contextual-valuation feed DISABLED (code review 2026-06-20): fired for
+        // ALL pick deliberations incl. background league sims, not the player's
+        // enemy — see the ENEMY_VAL note. Kept commented for revival.
+        /*
         if phase == "P" {
             if let Ok(mut ev) = ENEMY_VAL.lock() {
                 let e = ev.get_or_insert_with(HashMap::new).entry(cand).or_insert((f32::MIN, 0));
@@ -1260,6 +1322,7 @@ fn observe_score(phase: &str, ctx: &DraftScoreContext, cand: usize, score: f32) 
                 e.1 = ts;
             }
         }
+        */
         // intrinsic-prior feed: empty-board ban scans only (context-free).
         if phase == "B"
             && ctx.ally_pick.is_empty()
@@ -1387,22 +1450,39 @@ impl ModExtension for E {
         pool.sort_unstable();
         atomic_write(&format!("{}/pool.txt", b), &pool.join(","));
 
-        // ── rebuild the in-mod recommender tables from the fresh stats. The chg
-        // anchor/dirs are parsed back from the TSV we just rendered (single source).
-        let chg_info = {
-            let mut info = ChgInfo::default();
-            for l in chg_tsv.lines() {
-                if let Some(v) = l.strip_prefix("#prev_version\t") {
-                    info.anchor = Some(v.trim().to_string());
-                } else if !l.starts_with('#') && !l.starts_with("champion\t") {
-                    let mut f = l.split('\t');
-                    if let Some(c) = f.next().filter(|c| !c.is_empty()) {
-                        let dir = f.nth(1).and_then(|x| x.chars().next()).unwrap_or('~');
-                        info.dirs.push((c.to_string(), dir));
+        // ── rebuild the in-mod recommender tables from the fresh stats. chg PREFERS
+        // the game's OWN authored patch notes (authoritative is_buff, per-patch); only
+        // if no PatchNote is present do we fall back to the defs-snapshot diff (the
+        // chg_tsv we just rendered). Single anchor/dir contract either way.
+        let chg_info = match authored_chg(&db) {
+            Some(ci) => {
+                let dbg = ci
+                    .dirs
+                    .iter()
+                    .map(|(c, d)| format!("{}\t{}", c, d))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                atomic_write(
+                    &format!("{}/chg_authored.txt", out),
+                    &format!("source=authored anchor={:?}\n{}", ci.anchor, dbg),
+                );
+                ci
+            }
+            None => {
+                let mut info = ChgInfo::default();
+                for l in chg_tsv.lines() {
+                    if let Some(v) = l.strip_prefix("#prev_version\t") {
+                        info.anchor = Some(v.trim().to_string());
+                    } else if !l.starts_with('#') && !l.starts_with("champion\t") {
+                        let mut f = l.split('\t');
+                        if let Some(c) = f.next().filter(|c| !c.is_empty()) {
+                            let dir = f.nth(1).and_then(|x| x.chars().next()).unwrap_or('~');
+                            info.dirs.push((c.to_string(), dir));
+                        }
                     }
                 }
+                info
             }
-            info
         };
         if let Ok(mut tg) = TABLES.lock() {
             *tg = Some(recommender::build_tables(&pt, &pool, &chg_info, &replay_rows(&db)));

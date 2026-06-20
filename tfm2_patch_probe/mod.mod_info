@@ -1,0 +1,8 @@
+{
+  "name": "TFM2 패치 데이터 브릿지 프로토타입",
+  "author": "seyelive0",
+  "version": "0.0.1",
+  "description": "프로토타입: 서버 확장이 champion_action_patch_state(게임이 저작한 챔피언 패치 데이터)를 읽어 mod_save로 내보내고, 클라이언트가 읽어 C:/tmp에 덤프합니다. 저작-패치-데이터 브릿지의 런타임 검증용. 읽기 전용 — 자기 파일과 mod-save만 기록.",
+  "last_updated": "2026-06-20",
+  "dependencies": [ { "mod_id": "base", "version": ">=0.4.12" } ]
+}
