@@ -36,7 +36,8 @@ const GREY: [f32; 4] = [0.58, 0.62, 0.68, 1.0];
 
 /// Meta-tier color (matches report.html): S red · A orange · B yellow · C green · D grey.
 fn tier_color(t: &str) -> [f32; 4] {
-    match t {
+    // strip a trailing "?" (statistically-unstable tier marker) before matching.
+    match t.trim_end_matches('?') {
         "S" => [1.0, 0.36, 0.36, 1.0],
         "A" => [1.0, 0.62, 0.26, 1.0],
         "B" => [1.0, 0.79, 0.34, 1.0],
@@ -879,7 +880,7 @@ impl ImguiRenderLoop for Overlay {
         let auto_pool = self.tables.pool.clone();
         // per-champ meta tier (overall), index-aligned with CHAMPS — shown on every
         // grid button so the draft grid doubles as a live tier table.
-        let grid_tiers: Vec<&'static str> = CHAMPS.iter().map(|(id, _)| self.tables.tier_of(id, None)).collect();
+        let grid_tiers: Vec<&'static str> = CHAMPS.iter().map(|(id, _)| self.tables.tier_display(id, None)).collect();
         // patch-change tag per champ (▲버프/▼너프/⚡변경) — shown on the grid + a legend
         // line, so a blank/reset tier reads as "patched, stats refilling" not "no data".
         let grid_chg: Vec<&'static str> = CHAMPS.iter().map(|(id, _)| self.tables.chg_mark(id)).collect();

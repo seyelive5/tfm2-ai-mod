@@ -122,8 +122,9 @@ fn patch_current(patch: &str, changed: &HashSet<String>, chg_prev: Option<&str>)
     let c_rows = by
         .iter()
         .map(|(c, (w, m))| {
-            let mean = beta_post(*w, *m, 0.5, KAPPA_CHAMP).0;
-            format!("C\t{}\t{:.3}\t{}", c, mean - 0.5, m.round() as u32)
+            let (mean, sd) = beta_post(*w, *m, 0.5, KAPPA_CHAMP);
+            // 5th field = posterior sd (honest uncertainty) → engine's tier "?" gate.
+            format!("C\t{}\t{:.3}\t{}\t{:.4}", c, mean - 0.5, m.round() as u32, sd)
         })
         .collect();
     let champ_mean: BTreeMap<String, f64> =
@@ -136,8 +137,8 @@ fn patch_current(patch: &str, changed: &HashSet<String>, chg_prev: Option<&str>)
         .filter(|(_, (_, m))| *m > 0.0)
         .map(|((c, li), (w, m))| {
             let prior = champ_mean.get(c).copied().unwrap_or(0.5);
-            let mean = beta_post(*w, *m, prior, KAPPA_LANE).0;
-            format!("CP\t{}\t{}\t{:.3}\t{}", c, li, mean - 0.5, m.round() as u32)
+            let (mean, sd) = beta_post(*w, *m, prior, KAPPA_LANE);
+            format!("CP\t{}\t{}\t{:.3}\t{}\t{:.4}", c, li, mean - 0.5, m.round() as u32, sd)
         })
         .collect();
     // effective evidence: the tables blend ~prev_w×prev matches too — report that,
@@ -667,10 +668,12 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                 ));
             }
             if let Some(cof) = &lane.counter_of {
-                // counters() runs on real matchup data (laning dominance +
-                // head-to-head) — phrase the provenance honestly either way.
+                // counters() is driven by laning-dominance (LP z) + cold-start tags;
+                // the head-to-head record (MU direct) is weight-0 in the mod (BT
+                // residual τ≈0), so DON'T claim "상대 전적상 우위" — laning metric only
+                // (2026-07-05 review F10).
                 parts.push(format!(
-                    "1순위 픽은 상대 {}에게 라인전 지표·상대 전적상 우위가 있습니다.",
+                    "1순위 픽은 상대 {}에게 라인전 지표상 우위가 있습니다.",
                     cof
                 ));
             }
@@ -823,8 +826,11 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
             })
             .collect();
         let d = tables.strong_per_lane(&avail);
+        // NOTE(2026-07-05 review F10): don't flatly say "아껴두세요" — it contradicts the
+        // ★ guidance (which urges securing a thin lane NOW before the enemy takes it).
+        // Frame the thin lanes as a per-set allocation call, not a blanket "save".
         parts.push(format!(
-            "남은 강챔(S/A) ▶ 탑 {} · 정글 {} · 미드 {} · 바텀 {} · 서폿 {} — 적은 라인은 아껴두세요.",
+            "남은 강챔(S/A) ▶ 탑 {} · 정글 {} · 미드 {} · 바텀 {} · 서폿 {} — 적은 라인은 세트 배분에 주의(이번 세트 확보 vs 다음 세트 보존).",
             d[0], d[1], d[2], d[3], d[4]
         ));
     }
@@ -838,7 +844,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
     let tiers: HashMap<String, String> = CHAMPS
         .iter()
         .filter_map(|(id, _)| {
-            let t = tables.tier_of(id, None);
+            let t = tables.tier_display(id, None);
             let m = tables.chg_mark(id);
             if t.is_empty() && m.is_empty() {
                 None

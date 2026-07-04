@@ -92,6 +92,14 @@ const W_FLEX: f32 = 0.01;
 const W_FLEX_FEARLESS: f32 = 0.015;
 // confidence: full trust in DATA terms at this many matches (theory fully faded).
 const FULL_CONF_MATCHES: f32 = 200.0;
+// tier "?" gate: append "?" to a champ's tier letter when its 95% half-CI (1.96·sd,
+// in delta units) exceeds this — i.e. the letter is a coin-flip with an adjacent tier.
+// PRODUCT-CALIBRATED DEFAULT, needs an in-game look (2026-07-05 review F2): the
+// statistically-honest 0.04 (one tier band) would flag EVERY champ at this career's
+// ~312-match patch (even a 185-game champ has 1.96·sd ≈ 0.065), so this is set to flag
+// the genuinely thin (< ~90 games) while letters stay useful for well-sampled champs.
+// Lower toward 0.04 for full honesty, raise to hide more. One knob.
+const TIER_UNSTABLE: f32 = 0.10;
 // ---- lane-matchup axis (2026-06-12; the "respond to enemy picks" rebuild) ----
 // laning-dominance differential: LP rows carry a per-(champ,lane) z-score of
 // gold_line_phase/game within the lane; 0.008/z ⇒ a full z-spread (±2.5 vs ∓2.5)
@@ -137,10 +145,16 @@ pub struct Tables {
     /// games behind each champ's delta (optional 4th field of a `C` row); used to
     /// flag thin-sample recommendations as low-confidence in the UI.
     champ_games: std::collections::HashMap<String, u32>,
+    /// posterior sd of each champ's winrate (optional 5th field of a `C` row) — the
+    /// honest uncertainty of the delta. Drives the tier "?" gate (2026-07-05 review
+    /// F2: at this career's sample sizes the letter is statistically unstable).
+    champ_sd: std::collections::HashMap<String, f32>,
     /// per-(champ, lane index) winrate delta + games behind it (`CP` rows). Lane-
     /// SPECIFIC — so a champ strong in its main lane isn't credited that winrate in
     /// an off-lane. Falls back to the champ-level `champ_delta` when a cell is absent.
     champ_pos_delta: std::collections::HashMap<(String, u8), (f32, u32)>,
+    /// posterior sd of each per-lane cell (optional 6th field of a `CP` row).
+    champ_pos_sd: std::collections::HashMap<(String, u8), f32>,
     synergy: std::collections::HashMap<(String, String), f32>,
     counter: std::collections::HashMap<(String, String), f32>,
     taxon: std::collections::HashMap<String, Taxon>,
@@ -207,7 +221,9 @@ pub fn parse_tables_from_str(tsv: &str) -> Tables {
     let mut t = Tables {
         champ_delta: HashMap::new(),
         champ_games: HashMap::new(),
+        champ_sd: HashMap::new(),
         champ_pos_delta: HashMap::new(),
+        champ_pos_sd: HashMap::new(),
         synergy: HashMap::new(),
         counter: HashMap::new(),
         taxon: HashMap::new(),
@@ -241,8 +257,12 @@ pub fn parse_tables_from_str(tsv: &str) -> Tables {
                 if let Some(g) = f.get(3).and_then(|x| x.parse::<u32>().ok()) {
                     t.champ_games.insert(f[1].into(), g);
                 }
+                // optional 5th field = posterior sd (2026-07-05); absent in legacy TSVs.
+                if let Some(sd) = f.get(4).and_then(|x| x.parse::<f32>().ok()) {
+                    t.champ_sd.insert(f[1].into(), sd);
+                }
             }
-            // CP<TAB><champ><TAB><laneIdx><TAB><delta><TAB><games> — per-lane winrate.
+            // CP<TAB><champ><TAB><laneIdx><TAB><delta><TAB><games>[<TAB><sd>] — per-lane.
             "CP" if f.len() >= 5 => {
                 // drop out-of-range lane indices, don't fold them into Support (lane 4).
                 if let Ok(li) = f[2].parse::<u8>() {
@@ -250,6 +270,9 @@ pub fn parse_tables_from_str(tsv: &str) -> Tables {
                         let d = f[3].parse().unwrap_or(0.0);
                         let g = f[4].parse().unwrap_or(0);
                         t.champ_pos_delta.insert((f[1].into(), li), (d, g));
+                        if let Some(sd) = f.get(5).and_then(|x| x.parse::<f32>().ok()) {
+                            t.champ_pos_sd.insert((f[1].into(), li), sd);
+                        }
                     }
                 }
             }
@@ -356,7 +379,14 @@ impl Tables {
     fn delta(&self, c: &str) -> f32 { *self.champ_delta.get(c).unwrap_or(&0.0) }
     /// games behind a champ's winrate; u32::MAX if unknown (→ never flagged).
     fn games(&self, c: &str) -> u32 { *self.champ_games.get(c).unwrap_or(&u32::MAX) }
-    fn low_conf(&self, c: &str) -> bool { self.games(c) < LOW_CONF_GAMES }
+    fn low_conf(&self, c: &str) -> bool {
+        let g = self.games(c);
+        // zero-data champ (no C row → games unknown) in an otherwise-populated career
+        // is the LEAST-evidenced pick, not the most certain — flag it (2026-07-05
+        // review F2/F5). The matches>0 guard avoids flagging every champ in a truly
+        // cold-start career where nothing has data yet.
+        (g == u32::MAX && self.matches > 0) || g < LOW_CONF_GAMES
+    }
     /// patch-change tag: ▲ buffed / ▼ nerfed / ⚡ mixed-rework this patch, "" if unchanged.
     pub fn chg_mark(&self, c: &str) -> &'static str {
         match self.chg.get(c) {
@@ -549,6 +579,33 @@ impl Tables {
             "C"
         } else {
             "D"
+        }
+    }
+
+    /// 95% half-CI of the winrate delta (1.96·posterior-sd), in delta units. 0 when
+    /// no sd is known (legacy TSV / no cell) → treated as certain (no "?").
+    fn tier_conf(&self, c: &str, lane: Option<u8>) -> f32 {
+        let sd = match lane {
+            Some(l) => self.champ_pos_sd.get(&(c.to_string(), l)).copied(),
+            None => self.champ_sd.get(c).copied(),
+        };
+        sd.map(|s| 1.96 * s).unwrap_or(0.0)
+    }
+
+    /// UI tier letter with a "?" appended when the letter is statistically unstable
+    /// (2026-07-05 review F2). tier_of stays the raw letter for internal S/A logic.
+    pub fn tier_display(&self, c: &str, lane: Option<u8>) -> &'static str {
+        let t = self.tier_of(c, lane);
+        if t.is_empty() || self.tier_conf(c, lane) <= TIER_UNSTABLE {
+            return t;
+        }
+        match t {
+            "S" => "S?",
+            "A" => "A?",
+            "B" => "B?",
+            "C" => "C?",
+            "D" => "D?",
+            other => other,
         }
     }
 
@@ -759,7 +816,13 @@ impl Tables {
         // (2026-07-05 review F8). Kept for fresh careers; do not rely on them mid-career.
         let theory = 1.0 - data;
 
-        let base = power_ramp * self.delta_for(cand, lane) + self.chg_nudge(cand) + self.ai_prior_term(cand);
+        // split so the commentary can attribute honestly (2026-07-05 review F10): the
+        // measured strength vs the domain/cold-start priors (patch nudge + AI seed).
+        // At cold start a champ can top the list purely on the 45.4% AI prior — that
+        // must not read as "강챔" (strong champ).
+        let strength = power_ramp * self.delta_for(cand, lane);
+        let prior_part = self.chg_nudge(cand) + self.ai_prior_term(cand);
+        let base = strength + prior_part;
         let mut syn = 0.0;
         for a in allies {
             syn += data * W_SYN * self.syn(cand, a);
@@ -810,7 +873,7 @@ impl Tables {
         // `("디나이", deny)` to the dominant list here (uncommenting the feed alone
         // silently leaves the pick-side term dropped). See the ban-side twin below.
         let total = base + syn + cnt + comp + fam - dup;
-        (total, dominant(&[("강챔", base), ("시너지", syn), ("카운터", cnt), ("조합", comp), ("숙련", fam)]))
+        (total, dominant(&[("강챔", strength), ("패치/사전", prior_part), ("시너지", syn), ("카운터", cnt), ("조합", comp), ("숙련", fam)]))
     }
 
     /// BAN desirability. DATA terms mirror tfm2_draft_ai::score_ban; at cold-start
@@ -1052,7 +1115,7 @@ pub fn recommend(
             label,
             low_conf: tables.low_conf(id),
             role: tables.role_tag(id),
-            tier: tables.tier_of(id, None),
+            tier: tables.tier_display(id, None),
             chg: tables.chg_mark(id),
         });
     }
@@ -1311,7 +1374,7 @@ pub fn recommend_lanes(
                 // lane is flagged "?", even if it has many games in its main lane.
                 low_conf: tables.low_conf_for(id, Some(lane)),
                 role: tables.role_tag(id),
-                tier: tables.tier_of(id, Some(lane)),
+                tier: tables.tier_display(id, Some(lane)),
                 chg: tables.chg_mark(id),
             });
         }
