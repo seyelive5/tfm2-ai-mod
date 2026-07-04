@@ -175,8 +175,11 @@ atomic_write(&format!("{}/chg_authored.txt", out),
 4. 회귀 확인: 기존 관측 상태(노트 7개, 최신 2026.3.1)에서 dirs 9종 유지되는지.
 
 ### P1-4 마무리
-- [ ] 재빌드 + 게임 배포(A-2) + 인게임 스모크: 로드 프리즈 소멸 / "상대 AI 평가" 줄 부재 / chg ▲▼⚡ 정상 / bp_live 갱신
-- [ ] 커밋 (P1 전체 1커밋 권장; 메시지에 finding# 매핑)
+- [x] **P1-1~P1-3 코드 구현 완료 + 빌드(4.4초, 신규 경고 0) + 게임 배포(해시 일치)** — 2026-07-04
+- [x] 커밋 (P1 전체 1커밋)
+- [ ] **인게임 스모크 (게임 실행 필요 — 사용자가 확인)**: ① 커리어 로드 시 수 초 프리즈 소멸(P1-1) ② 드래프트 코멘터리에 "상대 AI 평가 상위(다음 픽/밴 유력)" 줄 부재(P1-2) ③ `probe\chg_authored.txt`가 `source=authored`, anchor=stats 버전축, dirs 알파벳 정렬(P1-3f) ④ chg ▲▼⚡ 마크 정상 ⑤ bp_live 갱신
+  - 확인법: 경기 1회 진행/시뮬 후 `%LOCALAPPDATA%\tfm2-overlay\probe\chg_authored.txt` 확인. 두 `.debug.txt`는 이제 `probe\DEBUG_DUMPS` 마커 파일이 있을 때만 갱신됨(P1-1)
+  - **현 세이브는 스냅샷 리시드 상태**라 `champ_changes.tsv`가 header-only → 'R' 승격은 다음 리워크 패치에서 자연 검증됨(P1-3e 문서화된 한계)
 
 ---
 
@@ -242,17 +245,17 @@ atomic_write(&format!("{}/chg_authored.txt", out),
 | # | 요지 | 앵커 | 상태 |
 |---|---|---|---|
 | 1 | stale $RustcHash → 이전 세대 rlib 무경고 링크 | build_db_export.ps1:8 | ✅ 완료 |
-| 2 | ~125MB {:#?} 덤프/리빌드 + 첫프레임 스로틀 우회 | lib.rs:1447 | P1-1 |
+| 2 | ~125MB {:#?} 덤프/리빌드 + 첫프레임 스로틀 우회 | lib.rs:1447 | ✅ P1-1 (코드; 인게임 스모크 대기) |
 | 3 | EAP=Stop 제거 → 가짜 "Build successful" | build_db_export.ps1:11 | ✅ 완료 |
-| 4 | AI_EVAL/enemy_intent 오귀속 잔존 | lib.rs:1305 / recommender.rs:758 | P1-2 |
-| 5 | 'R' 리워크 채널 사멸 (preferred 경로) | lib.rs:490 → recommender.rs:349 | P1-3e |
-| 6 | anchor=None/too-old → banrate·lane_dom stale-drop 스킵 | lib.rs:486 | P1-3a |
-| 7 | chg_authored.txt 거짓 잔존 + 셔플 재기록 | lib.rs:1471 | P1-3f |
+| 4 | AI_EVAL/enemy_intent 오귀속 잔존 | lib.rs:1305 / recommender.rs:758 | ✅ P1-2 (코드) |
+| 5 | 'R' 리워크 채널 사멸 (preferred 경로) | lib.rs:490 → recommender.rs:349 | ✅ P1-3e (코드; 다음 리워크 패치서 자연검증) |
+| 6 | anchor=None/too-old → banrate·lane_dom stale-drop 스킵 | lib.rs:486 | ✅ P1-3a (코드) |
+| 7 | chg_authored.txt 거짓 잔존 + 셔플 재기록 | lib.rs:1471 | ✅ P1-3f (코드) |
 | 8 | CLAUDE.md §0/§3/§5 모순 + 재현불가 "proven" | CLAUDE.md:20 | P2-3 |
 | 9 | 프로브 아티팩트 모순 클러스터 (E0609 포함) | tfm2_patch_probe/src/lib.rs:15 | P2-2 |
-| 10 | currency 미검사 (PLAUSIBLE) | lib.rs:1457 | P1-3b |
-| 11 | 빈-노트 conflation (PLAUSIBLE) | lib.rs:494 | P1-3c |
-| 12 | 빈 변경Vec → '~' (PLAUSIBLE) | lib.rs:467 | P1-3d |
+| 10 | currency 미검사 (PLAUSIBLE) | lib.rs:1457 | ✅ P1-3b (코드) |
+| 11 | 빈-노트 conflation (PLAUSIBLE) | lib.rs:494 | ✅ P1-3c (코드) |
+| 12 | 빈 변경Vec → '~' (PLAUSIBLE) | lib.rs:467 | ✅ P1-3d (코드) |
 | 13 | 스크립트 3중복 + 수동 핀 | build_patch_probe.ps1:12 | P2-1 |
 | 14 | RUSTUP_TOOLCHAIN 누수 | build_patch_probe.ps1:10 | ✅ 완료 |
 | 15 | 9-영역 비활성화 + 재작성 줄 트랩 | engine.rs:783 | P2-4 |

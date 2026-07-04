@@ -454,8 +454,9 @@ fn champ_changes_update(db: &ClientDatabase, out: &str, fp: &str) -> String {
 ///         { key, target_action, pre_value, after_value, is_buff }>)>, .. }
 fn authored_chg(db: &ClientDatabase) -> Option<ChgInfo> {
     use std::collections::{BTreeMap, HashMap};
-    // version-key -> (version-string, champ -> (buffs, nerfs)); deduped across the
-    // ~120 teams that each receive the same global patch note.
+    // version-key -> (version-string, champ -> (buffs, nerfs)). Patch notes are
+    // SINGLE-instance per version across all inboxes (dump 2026-07-04: 120 teams,
+    // 1313 news, 7 notes / 7 versions) — the is_empty() guard below is defensive only.
     let mut by_ver: BTreeMap<Vec<u32>, (String, HashMap<String, (u32, u32)>)> = BTreeMap::new();
     for (_id, team) in db.teams.iter() {
         for news in &team.news {
@@ -465,6 +466,9 @@ fn authored_chg(db: &ClientDatabase) -> Option<ChgInfo> {
                     .or_insert_with(|| (version.clone(), HashMap::new()));
                 if entry.1.is_empty() {
                     for (champ, changes) in champion_patch_data {
+                        if changes.is_empty() {
+                            continue; // empty change list → would misclassify as '~' (spurious ⚡ + stats reset)
+                        }
                         let mut bn = (0u32, 0u32);
                         for cpd in changes {
                             if cpd.is_buff { bn.0 += 1 } else { bn.1 += 1 }
@@ -480,20 +484,38 @@ fn authored_chg(db: &ClientDatabase) -> Option<ChgInfo> {
     if by_ver.is_empty() {
         return None;
     }
-    // latest version = the current patch; the one before it = the stale-row anchor.
-    let mut iter = by_ver.iter().rev();
-    let (_lk, (_lver, latest)) = iter.next()?;
-    let anchor = iter.next().map(|(_, (v, _))| v.clone());
-    let dirs: Vec<(String, char)> = latest
+    // latest PatchNote version = the current patch.
+    let (lver, latest) = by_ver.iter().next_back().map(|(_, (v, m))| (v.clone(), m))?;
+    let lk = vkey(&lver);
+    // currency guard: if a fresher patch is already being played but its note hasn't
+    // landed (stats version > newest note), defer to the self-correcting defs-snapshot
+    // fallback rather than apply last patch's change-set as the current one.
+    if let Some(smax) = db.champion_patch_statistics.keys().max_by_key(|v| vkey(v.as_str())) {
+        if vkey(smax.as_str()) > lk {
+            return None;
+        }
+    }
+    // anchor = the last STATS version actually played before this patch (the axis the
+    // stale-row filters compare against) — NOT the previous note version, so a
+    // note-less stats bump between two notes can't survive the drop and a single note
+    // still yields a real anchor.
+    let anchor = db
+        .champion_patch_statistics
+        .keys()
+        .filter(|v| vkey(v.as_str()) < lk)
+        .max_by_key(|v| vkey(v.as_str()))
+        .cloned();
+    // empty dirs (a patch that changed zero champions) is a VALID authoritative answer
+    // → Some(dirs: []); only "no PatchNote at all" (by_ver empty, above) yields None,
+    // so the fallback heuristic can't re-inject the previous patch's marks over it.
+    let mut dirs: Vec<(String, char)> = latest
         .iter()
         .map(|(champ, (b, n))| {
             let dir = if *b > 0 && *n == 0 { '+' } else if *n > 0 && *b == 0 { '-' } else { '~' };
             (champ.clone(), dir)
         })
         .collect();
-    if dirs.is_empty() {
-        return None;
-    }
+    dirs.sort(); // stable order for the chg_authored.txt verification artifact
     Some(ChgInfo { anchor, dirs })
 }
 
@@ -772,9 +794,9 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                 fl_my = u.clone();
                 fl_enemy = u;
             }
-            // enemy AI intent: its latest deliberation block (fresh ≤120s), top
-            // remaining candidates → ids, minus taken/enemy-locked. The AI picks
-            // its argmax, so the runners-up are its likely NEXT actions.
+            // enemy_intent: built from AI_EVAL but NO LONGER RENDERED (code review
+            // 2026-07-04 — the feed is background-sim noise, not the player's
+            // opponent; see the AI_EVAL note). Kept only as a cache-key component.
             let mut enemy_intent: Vec<String> = Vec::new();
             if let (Ok(ev), Ok(order)) = (AI_EVAL.lock(), CHAMP_ORDER.lock()) {
                 let now = std::time::SystemTime::now()
@@ -1252,8 +1274,10 @@ static AI_SCORE_TICK: AtomicU32 = AtomicU32::new(0);
 /// filtered to the 60 base champs; runtime-verified 15/15 anchors 2026-06-13).
 static CHAMP_ORDER: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// latest AI evaluation block: (board signature, unix secs, [(cand, score, phase)]).
-/// During the player's banpick this is the ENEMY AI's deliberation — its top
-/// remaining candidates are its likely next actions.
+/// NOTE(2026-07-04 review): the draft-score hook fires only for BACKGROUND league
+/// sims — the player's opponent never invokes it (CLAUDE.md §2c) — so this is NOT
+/// the enemy's deliberation and must not be attributed to the current match. The
+/// user-facing "next picks" line built from it was removed; kept as a raw feed only.
 static AI_EVAL: Mutex<(String, u64, Vec<(usize, f32, char)>)> =
     Mutex::new((String::new(), 0, Vec::new()));
 /// per-champ intrinsic valuation by the GAME's draft AI: average of its
@@ -1444,8 +1468,15 @@ impl ModExtension for E {
         atomic_write(&format!("{}/champ_changes.tsv", out), &chg_tsv);
         let pt = patch_tsv(&db);
         atomic_write(&format!("{}/champion_patch_statistics.tsv", out), &pt);
-        atomic_write(&format!("{}/solo_rank_matches.debug.txt", out), &format!("{:#?}", db.solo_rank_matches));
-        atomic_write(&format!("{}/match_replays.debug.txt", out), &format!("{:#?}", db.match_replays));
+        // heavy {:#?} debug dumps (match_replays ~110MB, solo ~15MB) — NOT read by
+        // the live pipeline (it reads db directly via replay_rows); only offline
+        // report tools consume these. Gated behind a marker file so the default
+        // path doesn't freeze the frame thread on load / hitch every ~8s during
+        // season sim (code review 2026-07-04). Create probe/DEBUG_DUMPS to re-enable.
+        if std::path::Path::new(&format!("{}/DEBUG_DUMPS", out)).exists() {
+            atomic_write(&format!("{}/solo_rank_matches.debug.txt", out), &format!("{:#?}", db.solo_rank_matches));
+            atomic_write(&format!("{}/match_replays.debug.txt", out), &format!("{:#?}", db.match_replays));
+        }
         let mut pool: Vec<String> = db.available_champions.iter().cloned().collect();
         pool.sort_unstable();
         atomic_write(&format!("{}/pool.txt", b), &pool.join(","));
@@ -1454,20 +1485,8 @@ impl ModExtension for E {
         // the game's OWN authored patch notes (authoritative is_buff, per-patch); only
         // if no PatchNote is present do we fall back to the defs-snapshot diff (the
         // chg_tsv we just rendered). Single anchor/dir contract either way.
-        let chg_info = match authored_chg(&db) {
-            Some(ci) => {
-                let dbg = ci
-                    .dirs
-                    .iter()
-                    .map(|(c, d)| format!("{}\t{}", c, d))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                atomic_write(
-                    &format!("{}/chg_authored.txt", out),
-                    &format!("source=authored anchor={:?}\n{}", ci.anchor, dbg),
-                );
-                ci
-            }
+        let (mut chg_info, chg_src) = match authored_chg(&db) {
+            Some(ci) => (ci, "authored"),
             None => {
                 let mut info = ChgInfo::default();
                 for l in chg_tsv.lines() {
@@ -1481,9 +1500,46 @@ impl ModExtension for E {
                         }
                     }
                 }
-                info
+                (info, "fallback")
             }
         };
+        // 'R' (structural rework) can't come from is_buff, so the authored path never
+        // emits it — but build_tables' `reworked` set (→ compute_pos/compute_roles
+        // distrust of a reworked champ's old-kit lane/role rows) is built ONLY from 'R'.
+        // Promote it from the defs-diff (chg_tsv), which detects kit/line changes: the
+        // direction stays authoritative (authored), only the rework distrust is restored.
+        // (Best-effort: right after an fp reseed chg_tsv is empty → no promotion that run.)
+        if chg_src == "authored" {
+            use std::collections::HashSet;
+            let rework: HashSet<&str> = chg_tsv
+                .lines()
+                .filter(|l| !l.starts_with('#') && !l.starts_with("champion\t"))
+                .filter_map(|l| {
+                    let mut f = l.split('\t');
+                    let c = f.next()?;
+                    if f.nth(1)?.starts_with('R') { Some(c) } else { None }
+                })
+                .collect();
+            for (c, d) in chg_info.dirs.iter_mut() {
+                if rework.contains(c.as_str()) {
+                    *d = 'R';
+                }
+            }
+        }
+        // verification artifact — written on BOTH branches so it never falsely claims
+        // "source=authored" after a fallback run (code review 2026-07-04).
+        {
+            let body = chg_info
+                .dirs
+                .iter()
+                .map(|(c, d)| format!("{}\t{}", c, d))
+                .collect::<Vec<_>>()
+                .join("\n");
+            atomic_write(
+                &format!("{}/chg_authored.txt", out),
+                &format!("source={} anchor={:?}\n{}", chg_src, chg_info.anchor, body),
+            );
+        }
         if let Ok(mut tg) = TABLES.lock() {
             *tg = Some(recommender::build_tables(&pt, &pool, &chg_info, &replay_rows(&db)));
             TABLES_GEN.fetch_add(1, Ordering::Relaxed);

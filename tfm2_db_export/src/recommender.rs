@@ -528,7 +528,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         board.ban_count,
         board.teams,
         board.attributed, // commentary's style claim depends on it
-    ) + &board.enemy_intent.join(","); // AI-intent line changes the commentary
+    ) + &board.enemy_intent.join(","); // kept in the cache key so a restored intent line stays cache-correct
     if let Ok(g) = OUTPUT.lock() {
         if let Some((k, out)) = g.as_ref() {
             if *k == key {
@@ -752,14 +752,11 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
             }
         }
     }
-    // enemy AI intent (observed via the draft-score hook): the AI executes its
-    // argmax, so its remaining top candidates are its likely next actions —
-    // steal or pre-counter them.
-    if !board.enemy_intent.is_empty() {
-        let kos: Vec<String> =
-            board.enemy_intent.iter().map(|id| engine::ko_name(id)).collect();
-        parts.push(format!("상대 AI 평가 상위(다음 픽/밴 유력): {}.", kos.join(" · ")));
-    }
+    // enemy-AI-intent commentary REMOVED (code review 2026-07-04): the draft-score
+    // hook that feeds board.enemy_intent fires only for BACKGROUND league sims, never
+    // the player's opponent (CLAUDE.md §2c) — so the line presented league-wide noise
+    // as "the enemy's likely next picks". Same root cause as the disabled deny/steal
+    // term. The field is still built (harmless) but no longer surfaced to the user.
     // honesty line: without matchup data the ranking cannot react to enemy picks.
     if !tables.has_matchup() && !board.enemy_pick.is_empty() {
         parts.push("상대 픽 대응(매치업) 데이터가 아직 없습니다 — 이 순위는 상대 픽을 반영하지 못합니다.".to_string());
