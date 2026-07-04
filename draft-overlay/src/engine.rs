@@ -780,6 +780,10 @@ impl Tables {
         // ── deny/steal DISABLED (code review 2026-06-20): the enemy-AI valuation
         // feed was league-wide background-sim noise, not the current-match enemy.
         // let deny = 0.3 * self.deny_value(cand);
+        // REVIVAL NOTE (2026-07-04): the two lines below were REWRITTEN, not just
+        // commented — to restore deny you must re-add `+ deny` to `total` and
+        // `("디나이", deny)` to the dominant list here (uncommenting the feed alone
+        // silently leaves the pick-side term dropped). See the ban-side twin below.
         let total = base + syn + cnt + comp + fam - dup;
         (total, dominant(&[("강챔", base), ("시너지", syn), ("카운터", cnt), ("조합", comp), ("숙련", fam)]))
     }

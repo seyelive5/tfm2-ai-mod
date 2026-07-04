@@ -16,10 +16,14 @@ IMPOSSIBLE-PROVEN below, and do not downgrade UNTESTED items to IMPOSSIBLE witho
 ## 0. TL;DR / fixed facts
 
 - **Engine:** custom **Rust** engine (panic strings, `struct … with N elements`, glutin/egui/OpenGL). Not Unity/Godot.
-- **Game + SDK version:** **0.4.6**. `mod_api` `API_VERSION == (0, 7)` (`API_VERSION_ENCODED: u64 = major<<32 | minor`).
-- **Toolchain (ABI-critical):** `rustc 1.98.0-nightly (cced03bfd 2026-05-28)` = rustup channel **`nightly-2026-05-29`**
-  (NOT `-05-28`, which ships `57d06900f` → rejected E0514). Mods are `cdylib`s statically linked against prebuilt
-  `.rlib`s; Rust has no stable rlib ABI, so the exact nightly is mandatory. **MSVC C++ build tools + Windows SDK
+- **Game version: PER-PATCH — do not hardcode.** Current: **0.4.14** (`C:\tmp\mod-sdk`, base_version.txt, 2026-07-04).
+  The repo's gitignored `sdk\mod-sdk\` may lag. `mod_api` `API_VERSION == (0, 7)` as of the 0.4.6 SDK — not re-verified on 0.4.14.
+- **Toolchain (ABI-critical, PER-SDK — do not hardcode a nightly):** mods are `cdylib`s statically linked against prebuilt
+  `.rlib`s and Rust has no stable rlib ABI, so the nightly MUST match the SDK exactly (mismatch → E0514, or *silently* broken
+  cross-DLL `Any` downcasts — see the MatchUIRunner raw-cast in §4). The exact nightly is **DERIVED from the SDK's own
+  `<SDK>\toolchain_version.txt`** (`rustc … (HASH DATE)` → channel = **DATE + 1**, cross-checked by the SDK's `rust-toolchain.toml`);
+  **`build_mod.ps1` derives + applies it automatically** — never hand-pin. Current `C:\tmp\mod-sdk` (0.4.14): **`nightly-2026-05-24`
+  (rustc `23a3312d9`)**; the older 0.4.6-era SDK was `nightly-2026-05-29` (`cced03bfd`). **MSVC C++ build tools + Windows SDK
   (link.exe) REQUIRED** — target is `x86_64-pc-windows-msvc`.
 - **Two mod kinds:** (1) **Database Pack** = JSON/data only (`.tfm2db`); (2) **Code Mod** = native Rust `cdylib`
   built against the injected `mod_api` crate. This project builds code mods + data/asset content.
@@ -205,14 +209,25 @@ Client via `ClientData::mod_save_*` (in `Scene::InGame`); server-direct via `ctx
 
 ## 3. BUILD + DEPLOY pipeline
 
-**Toolchain (one-time):**
+**Toolchain (one-time, PER SDK):** install the nightly the SDK was built with — read it from
+`<SDK>\toolchain_version.txt` (`rustc … (HASH DATE)` → channel = DATE + 1). For the current 0.4.14 SDK:
 ```powershell
-rustup toolchain install nightly-2026-05-29   # the ABI-correct nightly (cced03bfd)
-rustup default nightly-2026-05-29
+rustup toolchain install nightly-2026-05-24 --profile minimal   # rustc 23a3312d9 (C:\tmp\mod-sdk)
 # + MSVC C++ build tools (link.exe) and Windows SDK must be installed
 ```
+Don't `rustup default` it — `build_mod.ps1` sets `RUSTUP_TOOLCHAIN` per-build and restores it after.
 
-**Build via the SDK script** (recommended; guarantees ABI match; run from **PowerShell**):
+**Build the game_view/game_core-linking mods** (`tfm2_db_export`, `tfm2_patch_probe`) — these need the
+`game_view`/`engine_ui`/`game_core` rlib externs on top of `mod_api`, which `build_mod_cargo.ps1` does NOT inject.
+Use the unified **`build_mod.ps1`** (auto-derives toolchain+rustc hash from the SDK, picks a consistent rlib set by
+that hash, restores env):
+```powershell
+& C:\tmp\tfm2-ai-mod\build_mod.ps1 -Crate C:\tmp\tfm2-ai-mod\tfm2_db_export
+& C:\tmp\tfm2-ai-mod\build_mod.ps1 -Crate C:\tmp\tfm2-ai-mod\tfm2_patch_probe -CheckOnly   # compile canary, no DLL
+```
+(`build_db_export.ps1` / `check_patch_probe.ps1` are thin shims to these; no per-patch pin edits needed.)
+
+**Build via the SDK script** (for `mod_api`-only mods like `tfm2_combat_ai`; run from **PowerShell**):
 ```powershell
 $env:PATH="$env:USERPROFILE\.cargo\bin;$env:PATH"
 cd C:\tmp\tfm2-ai-mod\tfm2_combat_ai     # rustup resolves rust-toolchain.toml from CWD, not manifest — cd in first!
@@ -252,7 +267,7 @@ cd C:\tmp\tfm2-ai-mod\tfm2_combat_ai     # rustup resolves rust-toolchain.toml f
 | Custom champions / items / effects / passives | **POSSIBLE** | `ModChampionInfo`+`ModAction`+`ModEffectType`+`ModPassive`; `ModItemInfo`. Data-champions for JSON-only. |
 | `ModEffectBuff` registration | **UNTESTED** | Type exists, no `ModRegistration` path in (0,7); reachable only via internal engine effects not exposed to data champions. |
 | Live in-game winrate/banrate/pool export | **POSSIBLE** | `db.available_champions` + `db.champion_patch_statistics` readable by value, clean (no sim noise). |
-| **Authored per-patch champion buff/nerf** (exact pre→after + direction + reasons) | **★ POSSIBLE — RUNTIME-VERIFIED 2026-06-20** | CLIENT-readable, NO server ext needed: `ClientDatabase.teams: HashMap<usize, Team>` → `Team.news: Vec<News>` → `News.ty: NewsType::PatchNote { version:String, champion_patch_data: Vec<(champ, Vec<ChampionPatchData{ key, target_action:Option<String>, pre_value:String, after_value:String, is_buff:bool }>)>, champion_patch_reasons:Vec<String>, .. }`. Latest `version` = current patch; **`is_buff` is the GAME's OWN authoritative direction → the `field_sign` "bigger-is-better" heuristic is obsolete**. `game_core::{NewsType, ChampionPatchData}` are PUB (canonical `game_core::data::news`/`::data::patch`; need `--extern game_core`). Shipped in `tfm2_db_export::authored_chg()` → recommender `chg`/`chg_nudge`/`chg_mark`/stale-blend-drop; the defs-snapshot diff (`champ_changes_update`/`field_sign`) demoted to FALLBACK. ⚠️ Sibling `Database.champion_action_patch_state: HashMap<champ, ChampionActionPatchState{ base_attack/skill1/skill2/ult: HashMap<field, f32 ratio>, *_value: HashMap<field, String> }>` is CUMULATIVE-vs-base (38/60 champs; server-only) — already in winrate ⇒ double-counts ⇒ NOT used. Bridge proven too: `ModServerExtension` reads `ctx.database` + `mod_save_data.set_string` → client `mod_save_get_string` (single-player server ext fires; verified). |
+| **Authored per-patch champion buff/nerf** (exact pre→after + direction + reasons) | **★ POSSIBLE — RUNTIME-VERIFIED 2026-06-20** | CLIENT-readable, NO server ext needed: `ClientDatabase.teams: HashMap<usize, Team>` → `Team.news: Vec<News>` → `News.ty: NewsType::PatchNote { version:String, champion_patch_data: Vec<(champ, Vec<ChampionPatchData{ key, target_action:Option<String>, pre_value:String, after_value:String, is_buff:bool }>)>, champion_patch_reasons:Vec<String>, .. }`. Latest `version` = current patch; **`is_buff` is the GAME's OWN authoritative direction → the `field_sign` "bigger-is-better" heuristic is obsolete**. `game_core::{NewsType, ChampionPatchData}` are PUB (canonical `game_core::data::news`/`::data::patch`; need `--extern game_core`). Shipped in `tfm2_db_export::authored_chg()` → recommender `chg`/`chg_nudge`/`chg_mark`/stale-blend-drop; the defs-snapshot diff (`champ_changes_update`/`field_sign`) demoted to FALLBACK. ⚠️ Sibling `Database.champion_action_patch_state: HashMap<champ, ChampionActionPatchState{ base_attack/skill1/skill2/ult: HashMap<field, f32 ratio>, *_value: HashMap<field, String> }>` is CUMULATIVE-vs-base (38/60 champs; server-only) — already in winrate ⇒ double-counts ⇒ NOT used. (The client-direct route above IS the shipped one and is verified in-tree via `authored_chg` + the `tfm2_patch_probe` compile canary. A server-ext→mod_save bridge was *also* observed to fire in a throwaway session but its code was NEVER committed — treat as UNVERIFIABLE-FROM-TREE, not needed since the client route works.) 2026-07-04 review hardened `authored_chg`: stats-derived anchor, currency guard, empty-note = `Some([])`, `'R'` rework promotion — see `REVIEW-FIXES.md`. |
 | Dynamic in-game recommender UI (text/score readout, reacts to clicks) | **IMPOSSIBLE-PROVEN** | No node text/value setter (`runner` sealed, `NodeTemplate::property` opaque, no `NodeTemplate::new`) + no immediate-mode text draw (`RenderState` has no draw methods, no safe `debug_text`). See §4b. |
 | Adding/showing/hiding/positioning UI nodes + click handlers | **POSSIBLE** | `ui.root.add_child`, public `Node` fields, `register_handler` — proven to compile to a real cdylib. Just can't carry dynamic text. |
 | Mod commands/events, mod save data, inter-mod services | **POSSIBLE** | §2g–2i. |
@@ -314,7 +329,7 @@ Full and reliable (PROVEN, docs accurate) but ONLY from `&GameCtx` callbacks ins
 
 ## 5. GOTCHAS
 
-- **Toolchain ABI:** use `nightly-2026-05-29` (commit `cced03bfd`). `nightly-2026-05-28` ships a different commit and is rejected E0514. `rust-toolchain.toml` only pins `channel="nightly"` (not the date) — it will NOT stop you from using the wrong one; pin manually.
+- **Toolchain ABI (per-SDK, auto-derived — don't hardcode):** the nightly MUST match the SDK; derive it from `<SDK>\toolchain_version.txt` (channel = rustc date + 1). `build_mod.ps1` does this and restores `RUSTUP_TOOLCHAIN` after each build; a mismatch → E0514 or *silently* broken `Any` downcasts. Current 0.4.14 SDK = `nightly-2026-05-24` (`23a3312d9`); the 0.4.6-era SDK was `nightly-2026-05-29` (`cced03bfd`). (The SDK's `rust-toolchain.toml` pins the exact channel; the older one only pinned `channel="nightly"` — hence the historical "pin manually" warning, now handled by `build_mod.ps1`.)
 - **Build from PowerShell, cd into the mod folder first:** rustup resolves `rust-toolchain.toml` from the **CWD**, not the manifest path. Building from elsewhere silently uses the wrong nightly → E0514.
 - **Never add `mod-api` to `[dependencies]`** — the SDK injects the ABI-matched prebuilt rlib. Plain `cargo build` fails E0432 (expected). For rust-analyzer only, point at the SDK rlib locally; never commit a machine path dep into the upload package.
 - **SDK template bug:** `mod-sdk/template/src/lib.rs` ends with `declare_mod(init);` — **missing the `!`** — and won't compile. Use `declare_mod!(init);`.
@@ -362,4 +377,7 @@ Full and reliable (PROVEN, docs accurate) but ONLY from `&GameCtx` callbacks ins
 - [ ] If §4a passes: build a server-extension that emits the live board to the overlay (replacing manual clicks).
 - [ ] Optional: live-stats exporter mod (`db.champion_patch_statistics`), champion-creator content polish.
 - [x] **Authored patch-change integration (2026-06-20):** recommender `chg` now driven by the game's OWN `PatchNote.is_buff` (client-direct via `db.teams` → `Team.news` → `NewsType::PatchNote`), replacing the `field_sign` defs-snapshot heuristic (kept as fallback). Shipped in `tfm2_db_export::authored_chg`; writes `chg_authored.txt` for verification. The `champion_action_patch_state` route was rejected (cumulative-vs-base = double-counts winrate). Settled by ~8 compile probes (no game) + 2 in-game runs; `tfm2_patch_probe/` is the throwaway prototype (disable in Mods menu).
-- [x] **2026-07-04 max code review follow-up (0.4.14) — build fixes + Phase 1 shipped:** 15 findings reported. Build-script trio fixed (pins `nightly-2026-05-24`/`23a3312d9`, EAP=Stop restored, RUSTUP_TOOLCHAIN restore). **Phase 1 (recommender truthfulness) code-complete + deployed:** debug-dump gating behind `probe/DEBUG_DUMPS` marker (kills load-freeze/8s hitch), enemy_intent commentary cut (background-sim misattribution), `authored_chg` surgical bundle (stats-derived anchor, currency guard, empty-note = `Some([])`, empty-changeVec skip, `'R'` rework promotion from defs-diff, both-branch `chg_authored.txt`). ⏳ in-game smoke pending (user runs game). Remaining = **Phase 2** (patch resilience) + do-not-relitigate refutations: see **`REVIEW-FIXES.md`** (unified build script w/ auto-derived pins, patch-probe→canary, CLAUDE.md §0/§3/§5 reconciliation).
+- [x] **2026-07-04 max code review follow-up (0.4.14) — Phase 1 + Phase 2 shipped:** 15 findings, all actioned (see **`REVIEW-FIXES.md`** for per-finding detail + do-not-relitigate refutations).
+  - **Phase 1 (recommender truthfulness), deployed:** debug-dump gating behind `probe/DEBUG_DUMPS` marker (kills load-freeze/8s hitch); enemy_intent commentary cut (background-sim misattribution); `authored_chg` hardened (stats-derived anchor, currency guard, empty-note = `Some([])`, empty-changeVec skip, `'R'` rework promotion from defs-diff, both-branch `chg_authored.txt`). ⏳ in-game smoke pending (user runs game).
+  - **Phase 2 (patch resilience), verified:** `build_mod.ps1` unified builder auto-derives toolchain+rustc hash from the SDK (no more per-patch hand-pins — was finding #1); `tfm2_patch_probe` is now a compile **canary** (`check_patch_probe.ps1`), not a broken/misleading mod (mod.mod_info + build_patch_probe.ps1 deleted); §0/§3/§5 reconciled (this line's siblings).
+  - Only Phase 2 leftover: stale disabled `tfm2_patch_probe\` in the *game* mods folder (repo no longer produces it) — user can delete.

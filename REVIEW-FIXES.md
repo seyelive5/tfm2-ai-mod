@@ -13,16 +13,19 @@
 - `tfm2_db_export/src/lib.rs` = 모드 본체: `authored_chg`(:455-498), `champ_changes_update`(:~330-445), 리빌드 블록(:1400-1494), `observe_score`/AI 통계(:1240-1330), bp_export(:~700-900), `atomic_write`(:51), `THROTTLE_MS=8000`(:49), `vkey`(:275-277).
 - `tfm2_draft_ai/`는 **은퇴한 구 모드**(자체 Tables 사본) — 건드리지 말 것.
 
-### A-2. 빌드/배포 의식 (2026-07-04 이후 상태)
+### A-2. 빌드/배포 의식 (P2-1 이후 — 핀 자동 도출)
 ```powershell
-& C:\tmp\tfm2-ai-mod\build_db_export.ps1        # 핀: nightly-2026-05-24 / 23a3312d9 (SDK 0.4.14)
-# 산출: C:\tmp\tfm2-ai-mod\tfm2_db_export\tfm2_db_export.dll (당일 빌드 9.6초)
+# 빌드 (핀/툴체인은 build_mod.ps1이 SDK toolchain_version.txt에서 자동 도출 — 수동 갱신 불필요)
+& C:\tmp\tfm2-ai-mod\build_mod.ps1 -Crate C:\tmp\tfm2-ai-mod\tfm2_db_export     # ≈4초
+# 산출: C:\tmp\tfm2-ai-mod\tfm2_db_export\tfm2_db_export.dll
 Copy-Item C:\tmp\tfm2-ai-mod\tfm2_db_export\tfm2_db_export.dll `
   "C:\Program Files (x86)\Steam\steamapps\common\Teamfight Manager2\mods\tfm2_db_export\" -Force
 # (구 06-20 DLL 백업이 같은 폴더 tfm2_db_export.dll.bak-0620 로 존재)
+
+& C:\tmp\tfm2-ai-mod\check_patch_probe.ps1     # 패치 후 카나리: client-direct PatchNote 경로 컴파일 확인
 ```
-- P2-1 완료 전까지 **게임 패치마다** 3개 스크립트의 `$Toolchain`/`$RustcHash`를 SDK `C:\tmp\mod-sdk\toolchain_version.txt`(`rustc …(HASH DATE)`; 채널=DATE+1)에 맞춰 수동 갱신해야 함.
-- typecheck만 원하면: 빌드가 9.6초라 그냥 빌드해도 됨.
+- `build_db_export.ps1`은 이제 `build_mod.ps1 -Crate ...\tfm2_db_export` 셔틀. `build_patch_probe.ps1`은 삭제됨.
+- **게임/SDK 패치 시**: 새 SDK를 `C:\tmp\mod-sdk`에 설치 → 필요하면 `rustup toolchain install <새채널> --profile minimal` (경고에 명령 출력됨) → 재빌드. **스크립트 핀 수정 불필요** — SDK 메타데이터에서 도출.
 - 런타임 검증 파일: `%LOCALAPPDATA%\tfm2-overlay\probe\` — `chg_authored.txt`, `champ_changes.tsv`, `defs_snapshot.txt`, `champion_patch_statistics.tsv`, `_stamp.txt`. 원시 뉴스 덤프: `C:\tmp\patch_notes_dump.txt` (teams=120, patchnotes=7, distinct_versions=7 — **노트는 버전당 단일 인스턴스**, 팀별 사본 아님).
 
 ### A-3. 금지/주의
@@ -183,9 +186,12 @@ atomic_write(&format!("{}/chg_authored.txt", out),
 
 ---
 
-## Phase 2 — 패치 내성 (0.4.15 대비)
+## Phase 2 — 패치 내성 (0.4.15 대비) — ✅ 완료 (2026-07-04, 커밋 `<P2>`)
 
-### P2-1 (#13 CONFIRMED) 빌드 스크립트 통합 + 핀 자동 도출
+> P2-1~P2-4 전부 구현·검증됨. 아래 스펙은 구현 기록으로 보존.
+> 검증: `build_mod.ps1`이 SDK에서 `rustc 23a3312d9 / nightly-2026-05-24` 자동 도출 → db_export 빌드 성공(4.4s) + env 원복; `check_patch_probe.ps1` 카나리 그린(E0308/E0609 소멸); 두 셔틀 exit 0.
+
+### P2-1 (#13 CONFIRMED) 빌드 스크립트 통합 + 핀 자동 도출 — ✅
 현재 3개 스크립트가 ~30줄 코어(param/Pick/4-rlib+throw/$flags/[char]31/try-finally) verbatim 3중복, 차이는 `$Crate` 기본값·DLL명·`--emit=metadata`뿐. 핀 2개×3파일=패치당 6군데 lockstep — 0.4.14 SDK 드롭에서 실제 전부 누락됐던 사고가 #1.
 - [ ] `build_mod.ps1 -Crate <path> [-CheckOnly] [-Sdk C:\tmp\mod-sdk] [-Toolchain <override>] [-RustcHash <override>]` 단일화
   - DLL명 = `(Split-Path $Crate -Leaf) + ".dll"` (하이픈→언더스코어 치환은 SDK build_mod_cargo.ps1:61 참조)
@@ -205,7 +211,7 @@ atomic_write(&format!("{}/chg_authored.txt", out),
 - [ ] 검증: tfm2_db_export 빌드 해시가 기존 산출물과 동작 동일(재빌드 후 인게임), tfm2_patch_probe `-CheckOnly`가 P2-2 이후 초록.
 - 참고: SDK 자체 `build_mod_cargo.ps1`은 무필터 `Select-Object -First 1` glob — 혼합 deps에서 최고(最古) 세대를 잡는다. 다른 모드(tfm2_combat_ai 등) 빌드 시 이 스크립트 대신 통합 스크립트 사용 권장.
 
-### P2-2 (#9 CONFIRMED) tfm2_patch_probe → 패치 카나리 재목적화
+### P2-2 (#9 CONFIRMED) tfm2_patch_probe → 패치 카나리 재목적화 — ✅ (mod.mod_info·build_patch_probe.ps1 삭제, src는 컴파일되는 카나리로)
 현재: 컴파일 불가 유물 — `:10` 의도적 E0308(`let _: () = &db.teams;`) + `:15-16` **비의도** 튜플 순회(`for team in db.teams.iter()` 후 `&team.news` — HashMap iter는 `(&usize, &Team)`) = "경로가 컴파일되나"에 항상 아니오라고 답하는 false-negative 계기. `declare_mod!` 없음(로드 불가). mod.mod_info는 이 커밋이 기각한 champion_action_patch_state 브릿지를 서술.
 - [ ] `:9-11` `client_direct` fn 삭제 (답은 `authored_chg`로 출하됨)
 - [ ] `:15` → `for (_id, team) in db.teams.iter() {` (출하 코드 lib.rs:460과 동일 패턴)
@@ -214,7 +220,7 @@ atomic_write(&format!("{}/chg_authored.txt", out),
 - [ ] lib.rs 헤더 주석을 카나리 용도로 갱신
 - 검증: `build_mod.ps1 -Crate ...\tfm2_patch_probe -CheckOnly` → 에러 0. 패치 의식에 편입: SDK 갱신 후 카나리 먼저 → 초록이면 db_export 빌드.
 
-### P2-3 (#8 CONFIRMED) CLAUDE.md 정합화 — **P2-1/P2-2 이후에** (문서는 마지막)
+### P2-3 (#8 CONFIRMED) CLAUDE.md 정합화 — ✅ (§0/§3/§5 절차 서술 전환, §4:255 bridge 완화)
 현재 모순: §0:19 "Game + SDK version: **0.4.6**", §0:20+§3:210-211+§5:317 "nightly-2026-05-29 (cced03bfd) 필수" ↔ 현행 0.4.14/`nightly-2026-05-24`/`23a3312d9`(그리고 SDK마다 변동). §4:255 끝 "Bridge proven too … (single-player server ext fires; verified)"는 커밋된 아티팩트 없음(probe는 round-8 클라 프로브만 커밋됨).
 - [ ] §0: 버전/툴체인을 하드코딩에서 **절차 서술**로 전환 — "게임+SDK는 패치마다 갱신; 정확 nightly는 SDK `toolchain_version.txt`에서 도출(채널=rustc날짜+1), 빌드는 `build_mod.ps1`이 자동 적용. 2026-07-04 기준 0.4.14 / nightly-2026-05-24 (23a3312d9)."
 - [ ] §3 명령 예시를 build_mod.ps1 기준으로 교체; §5 툴체인 gotcha를 "env var 우선순위 + 자동도출" 서술로
@@ -223,11 +229,10 @@ atomic_write(&format!("{}/chg_authored.txt", out),
 - 함정: CLAUDE.md는 세션 지시문 — 고치기 전까지 새 세션이 §3을 따르면 E0514. **이 문서(A-2)가 그동안의 진실.**
 
 ### P2-4 잔손질 (컷 3건 수용 + 저우선)
-- [ ] (#15 CONFIRMED) `engine.rs:783-784` 리바이벌 트랩: 재작성된 두 줄에 주석 조각 복원 —
-  `let total = base + syn + cnt + comp + fam - dup; // (deny 복원 시: + deny)` / dominant 목록에 `/* ("디나이", deny) */`
-- [ ] PLAN.md:141 "의도 표시/디나이 — 이미 배포" → "2026-06-20 비활성(훅 무귀속 — CLAUDE.md §2c); P1-2로 intent 표시도 제거" 반영
-- [ ] (C19 PLAUSIBLE) 통합 스크립트 Pick에서 Select-String 에러를 삼키지 말고 잠금/읽기실패를 별도 경고로 표면화 (해시 불일치 throw와 구분)
-- [ ] (선택, 리포 외부) `c:\tmp\tfm2-overlay\HOW_TO_USE.md` inject-overlay 안내에 은퇴 명시
+- [x] (#15 CONFIRMED) `engine.rs:780` 리바이벌 트랩 노트 추가 — 재작성된 pick-side 두 줄 복원법 명기
+- [x] PLAN.md:139-142 "의도 표시/디나이 — 이미 배포" → 전면 비활성 반영(취소선 + 근거)
+- [x] (C19 PLAUSIBLE) `build_mod.ps1`의 Pick가 try/catch로 잠금/읽기실패를 `Write-Warning`로 표면화(스캔 계속) — 해시 불일치 throw와 구분
+- [ ] (선택, 리포 외부) 게임 mods 폴더의 stale `tfm2_patch_probe\`(06-20 배포, 현재 비활성) 정리 — 사용자 게임 설치라 미삭제; `c:\tmp\tfm2-overlay\HOW_TO_USE.md` inject-overlay 은퇴 명시(리포 외부)
 
 ---
 
@@ -251,11 +256,11 @@ atomic_write(&format!("{}/chg_authored.txt", out),
 | 5 | 'R' 리워크 채널 사멸 (preferred 경로) | lib.rs:490 → recommender.rs:349 | ✅ P1-3e (코드; 다음 리워크 패치서 자연검증) |
 | 6 | anchor=None/too-old → banrate·lane_dom stale-drop 스킵 | lib.rs:486 | ✅ P1-3a (코드) |
 | 7 | chg_authored.txt 거짓 잔존 + 셔플 재기록 | lib.rs:1471 | ✅ P1-3f (코드) |
-| 8 | CLAUDE.md §0/§3/§5 모순 + 재현불가 "proven" | CLAUDE.md:20 | P2-3 |
-| 9 | 프로브 아티팩트 모순 클러스터 (E0609 포함) | tfm2_patch_probe/src/lib.rs:15 | P2-2 |
+| 8 | CLAUDE.md §0/§3/§5 모순 + 재현불가 "proven" | CLAUDE.md:20 | ✅ P2-3 |
+| 9 | 프로브 아티팩트 모순 클러스터 (E0609 포함) | tfm2_patch_probe/src/lib.rs:15 | ✅ P2-2 (카나리化) |
 | 10 | currency 미검사 (PLAUSIBLE) | lib.rs:1457 | ✅ P1-3b (코드) |
 | 11 | 빈-노트 conflation (PLAUSIBLE) | lib.rs:494 | ✅ P1-3c (코드) |
 | 12 | 빈 변경Vec → '~' (PLAUSIBLE) | lib.rs:467 | ✅ P1-3d (코드) |
-| 13 | 스크립트 3중복 + 수동 핀 | build_patch_probe.ps1:12 | P2-1 |
+| 13 | 스크립트 3중복 + 수동 핀 | build_patch_probe.ps1:12 | ✅ P2-1 (build_mod.ps1 통합) |
 | 14 | RUSTUP_TOOLCHAIN 누수 | build_patch_probe.ps1:10 | ✅ 완료 |
-| 15 | 9-영역 비활성화 + 재작성 줄 트랩 | engine.rs:783 | P2-4 |
+| 15 | 9-영역 비활성화 + 재작성 줄 트랩 | engine.rs:783 | ✅ P2-4 (리바이벌 노트) |
