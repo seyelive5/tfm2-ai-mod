@@ -427,22 +427,25 @@ impl Tables {
         self.enemy_valued.get(c).map(|v| (v - 0.8).clamp(0.0, 0.3)).unwrap_or(0.0)
     }
     */
-    /// cold-start prior from the game AI's own valuation: strongest while OUR
-    /// stats are thin, then shrinking as real evidence arrives. Unlike the old
-    /// hard 15-game cliff this never fully vanishes, but it fades fast and is
-    /// clamped small (±0.05) so real games dominate (e.g. white_mage at 127g
-    /// keeps only a sliver). The AI network ships seeded priors for just-released
-    /// champs the stats can't rate yet.
-    /// Bayesian blend (K=10 pseudo-games): g=0 → full prior, g=10 → half,
-    /// g=30 → quarter.
+    /// cold-start ONLY prior from the game AI's intrinsic valuation. That signal
+    /// FAILED outcome validation for established champs (aip standalone 45.4%, ~5σ
+    /// below chance on 3293 matches — PLAN.md 2026-06-13), so it must never outvote
+    /// authored patch direction (±0.02) or real evidence. Linear fade to ZERO at
+    /// 15 games — the approved scope (PLAN.md:144-145 "통계 0 챔프만, 15판 페이드");
+    /// the earlier never-vanishing K=10 blend (640edf8) silently widened a
+    /// same-night-rejected signal. Cap 0.024 (0.6 tier) so it can't clear a tier
+    /// or beat nudge+evidence at any g≥5. Zero-data champs (g==u32::MAX, e.g. a
+    /// release-day seed) keep the full prior — the one regime where the dev-intent
+    /// seed is plausibly informative (the anti-correlation was measured on
+    /// established champs only).
     fn ai_prior_term(&self, c: &str) -> f32 {
         let p = match self.ai_prior.get(c) {
             Some(v) => *v,
             None => return 0.0,
         };
         let g = self.games(c);
-        let fresh = if g == u32::MAX { 1.0 } else { 10.0 / (g as f32 + 10.0) };
-        (0.4 * p * fresh).clamp(-0.05, 0.05)
+        let fresh = if g == u32::MAX { 1.0 } else { (1.0 - g as f32 / 15.0).max(0.0) };
+        (0.4 * p * fresh).clamp(-0.024, 0.024)
     }
 
     // ---- lane-matchup axis (MU + LP rows) ----

@@ -1286,6 +1286,10 @@ static AI_EVAL: Mutex<(String, u64, Vec<(usize, f32, char)>)> =
 /// stats can't rate yet (e.g. chef: 1 game): the AI's network ships with
 /// informative priors for unreleased champs — borrow them until ~15 real games.
 static AI_PRIOR: Mutex<Option<HashMap<usize, (f64, u32)>>> = Mutex::new(None);
+/// last authored-patch anchor seen by the rebuild block — used to detect a patch
+/// rollover so AI_PRIOR's running average doesn't blend pre/post-patch ban scans
+/// (2026-07-05 review F1). Cleared → prior re-accumulates within the new patch.
+static LAST_ANCHOR: Mutex<Option<String>> = Mutex::new(None);
 // deny/steal feature DISABLED (code review 2026-06-20): the contextual-valuation
 // feed below fires for ALL draft-score-hook calls, which per this project's own
 // finding (CLAUDE.md §2c/§4) are background league sims — the player's actual
@@ -1539,6 +1543,19 @@ impl ModExtension for E {
                 &format!("{}/chg_authored.txt", out),
                 &format!("source={} anchor={:?}\n{}", chg_src, chg_info.anchor, body),
             );
+        }
+        // patch rollover (authored anchor advanced) → the game AI's online ban-scan
+        // tallies shift, so drop the prior's running average and let it re-accumulate
+        // patch-consistent (2026-07-05 review F1). Skip on the session's first rebuild.
+        if let Ok(mut la) = LAST_ANCHOR.lock() {
+            if *la != chg_info.anchor {
+                if la.is_some() {
+                    if let Ok(mut p) = AI_PRIOR.lock() {
+                        *p = None;
+                    }
+                }
+                *la = chg_info.anchor.clone();
+            }
         }
         if let Ok(mut tg) = TABLES.lock() {
             *tg = Some(recommender::build_tables(&pt, &pool, &chg_info, &replay_rows(&db)));
