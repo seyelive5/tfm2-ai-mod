@@ -3,10 +3,12 @@
 # print the compiler errors. Never produces/loads a DLL. No game required.
 param(
     [string]$Sdk = "C:\tmp\mod-sdk",
-    [string]$Toolchain = "nightly-2026-06-16",
-    [string]$RustcHash = "01dfd7924",      # the rustc commit the current SDK rlibs were built with
+    [string]$Toolchain = "nightly-2026-05-24",
+    [string]$RustcHash = "23a3312d9",      # the rustc commit the current SDK rlibs were built with
     [string]$Crate = "C:\tmp\tfm2-ai-mod\tfm2_patch_probe"
 )
+$ErrorActionPreference = "Stop"
+$prevToolchain = $env:RUSTUP_TOOLCHAIN
 $env:RUSTUP_TOOLCHAIN = $Toolchain
 $deps = Join-Path $Sdk "deps"
 function Pick($pat) {
@@ -39,4 +41,5 @@ try {
         --target-dir (Join-Path $Crate "target") --lib -- --crate-type cdylib --emit=metadata
 } finally {
     $env:CARGO_ENCODED_RUSTFLAGS = $null
+    $env:RUSTUP_TOOLCHAIN = $prevToolchain
 }

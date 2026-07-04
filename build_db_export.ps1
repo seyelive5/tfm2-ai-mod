@@ -4,10 +4,12 @@
 # the new SDK's toolchain_version.txt (channel = rustc date + 1).
 param(
     [string]$Sdk = "C:\tmp\mod-sdk",
-    [string]$Toolchain = "nightly-2026-06-16",
-    [string]$RustcHash = "01dfd7924",
+    [string]$Toolchain = "nightly-2026-05-24",
+    [string]$RustcHash = "23a3312d9",
     [string]$Crate = "C:\tmp\tfm2-ai-mod\tfm2_db_export"
 )
+$ErrorActionPreference = "Stop"
+$prevToolchain = $env:RUSTUP_TOOLCHAIN
 $env:RUSTUP_TOOLCHAIN = $Toolchain
 $deps = Join-Path $Sdk "deps"
 function Pick($pat) {
@@ -36,6 +38,7 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } finally {
     $env:CARGO_ENCODED_RUSTFLAGS = $null
+    $env:RUSTUP_TOOLCHAIN = $prevToolchain
 }
 $dll = Join-Path $Crate "target\release\tfm2_db_export.dll"
 Copy-Item $dll (Join-Path $Crate "tfm2_db_export.dll") -Force
