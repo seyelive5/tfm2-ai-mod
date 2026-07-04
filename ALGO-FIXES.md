@@ -66,7 +66,11 @@ New-Item "$env:LOCALAPPDATA\tfm2-overlay\probe\DEBUG_DUMPS" -ItemType File
 
 ---
 
-## Step 1 — 즉시 집행 (증거 완비; 항목별 커밋+스모크)
+## Step 1 — 즉시 집행 (증거 완비; 항목별 커밋+스모크) — ✅ 코드 완료 (2026-07-05)
+
+> S1-1~S1-6 전부 구현·빌드·배포됨 (커밋 `7bfc340`·`252d434`·`794200f`·`fa6abbb`·`dcbf913`·`7da11fc`). 각 항목 독립 빌드 그린, 양 크레이트(tfm2_db_export + draft-overlay) 컴파일 확인.
+> **인게임 스모크 대기(사용자)**: ① ai_prior 축소 후 신규/시드 챔프가 실전 기록을 뒤엎지 않는지 ② 노프론트 상황서 프론트 후보 1티어 점프 소멸 ③ 티어에 "?" 표기 — **`TIER_UNSTABLE=0.10` 밀도 확인**(현 패치 대부분 "?"면 상향, 잘 표집된 챔프도 "?"면 그대로가 정직): engine.rs 한 상수 ④ 코멘터리 "패치/사전" 라벨·"라인전 지표상"(전적 주장 제거)·피어리스 세트배분 문구.
+> **의도적 defer**: S1-5 플렉스 귀속(LaneCand에 flex_bonus 배선 필요, 저가치) — 향후 항목으로 남김. **S1-4 note 정정**: matchup_games는 배선 대신 counter_of 문구를 직접 수정(dir 데이터가 weight-0라 게이트 무의미) — pub이라 무해하게 잔존.
 
 ### S1-1 (F1) ai_prior 재게이트 — engine.rs:438-446
 **현재** (원문):
