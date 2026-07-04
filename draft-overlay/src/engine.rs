@@ -454,8 +454,11 @@ impl Tables {
         self.athlete_bonus = af;
         self.enemy_pocket = pocket;
     }
-    /// MY athlete-at-this-lane's familiarity bonus for the champ (0 = no history
-    /// or lane unknown). Already weight-scaled by the producer (0.08·famg+0.25·famc).
+    /// MY athlete-at-this-lane's familiarity bonus for the champ (0 = no history or
+    /// lane unknown). Weight-scaled by the producer, but DELIBERATELY DETUNED from the
+    /// validated fit: it ships 0.020·ln(1+min(g,20)) + 0.15·centered-wr, cap 0.05 (NOT
+    /// the validated 0.08·famg + 0.25·famc) — the predictive coefficient overstates the
+    /// causal cost (endogeneity); see tfm2_db_export/src/lib.rs:102-114 (review F10).
     fn af(&self, c: &str, lane: Option<u8>) -> f32 {
         lane.and_then(|l| self.athlete_bonus.get(&(c.into(), l))).copied().unwrap_or(0.0)
     }
@@ -506,9 +509,12 @@ impl Tables {
     pub fn matchup_games(&self, a: &str, b: &str) -> u32 {
         self.matchup_pair.get(&(a.into(), b.into())).map(|&(_, g)| g).unwrap_or(0)
     }
-    /// Expected lane-matchup advantage of `a` over `b`, in winrate points (±0.05
-    /// cap ≈ one tier step): dense laning-dominance differential + sparse direct
-    /// head-to-head record (beta-shrunk hard — ~2 games/pair is typical).
+    /// Expected lane-matchup advantage of `a` over `b`, in winrate points (±0.05 cap
+    /// ≈ one tier step): laning-dominance differential (LP) only — the direct head-to-
+    /// head term is weight-0 (W_MU_DIRECT). Median 19 games/pair on the 2026-07-05
+    /// career (629/990 pairs populated), but pair counters DON'T EXIST here anyway: a
+    /// Bradley-Terry decomposition leaves same-lane pair residuals at τ≈0 once champ
+    /// strength is removed (analysis/recommender-algorithm-review.md §4).
     pub fn matchup(&self, a: &str, b: &str, lane: Option<u8>) -> f32 {
         let lp = match lane {
             Some(l) => W_MU_LP * (self.lane_dom_z(a, l) - self.lane_dom_z(b, l)),
@@ -862,8 +868,10 @@ impl Tables {
         // Healer is the only comp dimension that measurably matters (+2.3%p, 2.1σ);
         // comp_need now weights heal UP and the unmeasured dims DOWN to tiebreaker scale.
         let dup = W_DUP * self.overlap(cand, allies);
-        // ── athlete familiarity (validated strongest signal; weights baked by
-        // the producer): my athlete at this lane is BETTER on champs they know.
+        // ── athlete familiarity (the validated strongest SIGNAL — famg 66.0%
+        // standalone; the shipped WEIGHTS are deliberately detuned from the validated
+        // fit for endogeneity, see af()/lib.rs:102-114): my athlete is BETTER on champs
+        // they know.
         let fam = self.af(cand, lane);
         // ── deny/steal DISABLED (code review 2026-06-20): the enemy-AI valuation
         // feed was league-wide background-sim noise, not the current-match enemy.
