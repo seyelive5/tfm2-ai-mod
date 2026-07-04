@@ -50,6 +50,16 @@ pub fn ko_name(id: &str) -> String {
 // incrementally (base+syn 59.0%, base+cnt 58.9% — ≤ base; their high standalone is
 // confounding with champ strength). comp HURTS when weighted (base+comp ≤ base at
 // every weight). So base must DOMINATE; the rest are tiny cold-start/guardrail terms.
+//
+// ZOMBIE-IN-MOD (2026-07-05 review F8): the shipped in-mod build (tfm2_db_export
+// recommender::build_tables) emits only T + live C/CP/POS/… rows — NO data S/K rows —
+// so self.syn()/self.cnt() are ALWAYS 0 there and W_SYN/W_CNT/W_WEAK/W_BAN_SYN + the
+// cnt half of W_BAN_CNT multiply nothing in the recommender. NOT deleted because the
+// legacy full-TSV path — parse_tables_from_str(WEIGHTS_TSV); draft_weights.tsv still
+// ships 1020 S + 1126 K rows — used by backtest/meta-report/validate-terms/the retired
+// overlay DOES load S/K, where these weights are live. So: live off the baked TSV, inert
+// in the mod. Do NOT add new score terms on syn()/cnt() expecting data (BT residual τ≈0
+// says same-lane pair counters don't exist anyway — review §4).
 const W_SYN: f32 = 0.15; // was 0.7 — validation: no incremental value (confounded with base)
 const W_CNT: f32 = 0.15; // was 0.5 — "
 const W_WEAK: f32 = 0.15; // was 0.5 — "
@@ -743,6 +753,10 @@ impl Tables {
         // proven signal by 40% while the counter tables sat empty).
         let power_ramp = if self.has_matchup() { 1.0 - 0.15 * late } else { 1.0 };
         let data = self.confidence(); // trust pairwise DATA proportional to match volume
+        // theory = tag-based cold-start terms; confidence() is GLOBAL (matches/200), so
+        // in a mature career (≥200 matches) theory == 0 and the tag_synergy/tag_counter
+        // paths below contribute nothing — they are strictly a cold-start scaffold
+        // (2026-07-05 review F8). Kept for fresh careers; do not rely on them mid-career.
         let theory = 1.0 - data;
 
         let base = power_ramp * self.delta_for(cand, lane) + self.chg_nudge(cand) + self.ai_prior_term(cand);
