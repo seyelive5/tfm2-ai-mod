@@ -355,6 +355,7 @@ Full and reliable (PROVEN, docs accurate) but ONLY from `&GameCtx` callbacks ins
   ▶ **Update this:** downgrade the live-draft verdict from "IMPOSSIBLE-PROVEN" to "UNTESTED — server-command path (§4a)".
 
 **Analysis writeups** (`c:\tmp\tfm2-ai-mod\analysis\`):
+- `recommender-algorithm-review.md` — **2026-07-05 알고리즘 건전성 심사**: 5-도메인 병렬 분석 + 실측(BT 분해 τ≈0, comp 층화, EB κ\*, W_* 출처 전수 감사). 핵심: 코어(κ-수축/posterior-mean/블렌딩)는 건전, ai_prior 신뢰서열 역전·comp 부스트 반증·dup 부호 반대·티어 허위확신·비인과 CV가 결함. Step 0–3 로드맵 + 재론금지 표 포함 — **점수 모델을 만지기 전에 반드시 읽을 것**.
 - `builtin-ai-architecture.md` — `FactoredBanpickAgent` + base AI strategies/operations.
 - `behavior-design-space.md` — what GameCtx mutations allow; VERIFIED-ABSENT list.
 - `draft-ai-design.md` — `ModDraftScoreHook` design notes (base_score scale unknown).
