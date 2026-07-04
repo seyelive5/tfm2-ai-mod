@@ -1,0 +1,52 @@
+=== term validation v3 (LEGACY i%5 interleave — NON-CAUSAL, inflated) ===
+matches scored: 4488 of 4488 (4488 with full position data) · noise 1sd ≈ ±0.7%p
+baseline always-blue: 51.5%
+
+STANDALONE:
+  base      (champ winrate)             : 60.0%
+  base_lane (per-lane winrate)          : 59.4%
+  syn       (legacy pair)               : 60.5%
+  cnt       (legacy all-vs-all)         : 60.7%
+  mu        (same-lane h2h) ★new        : 57.0%
+  lp        (laning z) ★new/caveat      : 49.4%
+  comp      (taxonomy)                  : 52.1%
+  fam       (athlete-champ) ★ph2        : 57.2%
+  fam_c     (centered, no team confound): 57.7%
+  fam_g     (games-only familiarity)    : 64.8%
+  fam_gc    (career-centered comfort)   : 62.9%
+  fit       (athlete lane stat) ★ph2    : 54.3%
+  aip       (game-AI intrinsic) ★caveat : 50.0%
+
+INCREMENTAL over base_lane (scale sweep; >noise lift = earns weight):
+  base_lane alone                  : 59.4%
+  base_lane + s*mu    s=0.25 : 60.0%  s=0.5  : 59.5%  s=1    : 59.0%  s=2    : 58.3%
+  base_lane + s*lp    s=0.004: 59.3%  s=0.008: 59.3%  s=0.016: 59.4%  s=0.032: 58.4%
+  base_lane + s*cnt   s=0.05 : 59.9%  s=0.1  : 60.1%  s=0.15 : 60.5%  s=0.3  : 60.5%
+  base_lane + s*syn   s=0.05 : 59.6%  s=0.1  : 59.7%  s=0.15 : 60.1%  s=0.3  : 60.4%
+  base_lane + s*comp  s=0.01 : 59.4%  s=0.02 : 59.2%  s=0.04 : 59.1%  s=0.08 : 59.0%
+  base_lane + s*fam   s=0.25 : 61.5%  s=0.5  : 59.9%  s=1    : 59.3%  s=2    : 58.3%
+  base_lane + s*famc  s=0.25 : 61.4%  s=0.5  : 60.6%  s=1    : 59.6%  s=2    : 58.6%
+  base_lane + s*famg  s=0.02 : 62.8%  s=0.04 : 64.8%  s=0.08 : 66.3%  s=0.16 : 67.2%
+  base_lane + s*famgc  s=0.02 : 62.4%  s=0.04 : 64.1%  s=0.08 : 66.0%  s=0.16 : 65.7%
+  base_lane + s*fit   s=0.02 : 59.7%  s=0.05 : 59.9%  s=0.1  : 60.6%  s=0.2  : 61.1%
+  base_lane + s*aip   s=0.25 : 59.4%  s=0.5  : 59.4%  s=1    : 59.4%  s=2    : 59.4%
+
+COMBOS (base anchor too — base beat base_lane standalone):
+  base_lane + 0.5*mu                              : 59.5%
+  base_lane + 0.5*fam                             : 59.9%
+  base      + 0.5*fam                             : 60.5%
+  base      + 0.5*fam_c                           : 60.7%
+  base      + 0.5*fam + 0.15*syn                  : 61.2%
+  base      + 0.5*fam + 0.05*fit                  : 60.2%
+  base+blend(0.5*lane) + 0.5*fam                  : 60.1%
+  base + 0.5*fam + 0.15*syn + 0.05*fit + 0.008*lp : 61.2%
+  base_lane + 0.08*famg                           : 66.3%
+  base_lane + 0.08*famgc                          : 66.0%
+  base_lane + 0.08*famg + 0.25*fam_c              : 66.1%
+  base_lane + 0.08*famg + 0.25*famc + 0.05*fit    : 66.2%
+  base_lane + 0.5*aip                             : 59.4%
+  base_lane + 0.08*famg + 0.5*aip                 : 66.3%
+  aip + 0.08*famg (AI + athlete only)             : 64.8%
+  kitchen sink (yesterday's engine shape)         : 61.9%
+
+>> A term EARNS engine weight only if it lifts base_lane beyond ~±0.7%p noise.

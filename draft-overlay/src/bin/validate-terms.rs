@@ -104,6 +104,9 @@ struct Match {
     blue: Vec<Ath>,
     red: Vec<Ath>,
     blue_win: bool,
+    /// patch version this replay was played on (MatchReplayData.version, e.g.
+    /// "2026.3.1") — drives the causal rolling-origin split.
+    version: String,
 }
 
 fn parse_team(arr: &str) -> Vec<Ath> {
@@ -153,7 +156,8 @@ fn parse_matches(text: &str) -> Vec<Match> {
         if blue.len() < 2 || red.len() < 2 {
             continue;
         }
-        out.push(Match { blue, red, blue_win });
+        let version = quoted(block, "version").unwrap_or_default();
+        out.push(Match { blue, red, blue_win, version });
     }
     out
 }
@@ -263,9 +267,13 @@ struct Terms {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    // --legacy = the old non-causal i%5 interleave (kept for comparison); default is
+    // the causal rolling-origin split (train on strictly-earlier patches only).
+    let raw: Vec<String> = std::env::args().collect();
+    let legacy = raw.iter().any(|a| a == "--legacy");
+    let args: Vec<String> = raw.into_iter().filter(|a| !a.starts_with("--")).collect();
     if args.len() < 2 {
-        eprintln!("usage: validate-terms <match_replays.debug.txt> [draft_weights.tsv] [champion_patch_statistics.tsv]");
+        eprintln!("usage: validate-terms [--legacy] <match_replays.debug.txt> [draft_weights.tsv] [champion_patch_statistics.tsv] [ai_intrinsic.tsv]");
         std::process::exit(2);
     }
     let matches = parse_matches(&std::fs::read_to_string(&args[1]).unwrap_or_default());
@@ -317,9 +325,28 @@ fn main() {
         s
     };
 
-    // ---- 5-fold CV: every match scored exactly once, under tables built from the other folds ----
+    // ---- CV: every match scored once, under tables built from OTHER data. Default =
+    // rolling-origin (train on strictly-EARLIER patch versions → causal, matches
+    // deployment where only the past exists); --legacy = the old i%5 interleave, which
+    // trains on each test match's FUTURE and inflates every number (2026-07-05 review S0).
+    let vkey = |v: &str| -> Vec<u32> { v.split('.').map(|x| x.parse::<u32>().unwrap_or(0)).collect() };
+    let mut vsorted: Vec<Vec<u32>> = matches.iter().map(|m| vkey(&m.version)).collect();
+    vsorted.sort();
+    vsorted.dedup();
+    let groups: Vec<usize> = matches
+        .iter()
+        .enumerate()
+        .map(|(i, m)| if legacy { i % 5 } else { vsorted.binary_search(&vkey(&m.version)).unwrap_or(0) })
+        .collect();
+    let n_groups = if legacy { 5 } else { vsorted.len() };
+    // train membership: legacy = all OTHER folds; rolling-origin = only EARLIER groups.
+    let is_train = |i: usize, g: usize| if legacy { groups[i] != g } else { groups[i] < g };
     let mut recs: Vec<Terms> = Vec::with_capacity(matches.len());
-    for fold in 0..5usize {
+    for g in 0..n_groups {
+        // rolling-origin's earliest version has no earlier data → nothing to train on.
+        if !(0..matches.len()).any(|i| is_train(i, g)) {
+            continue;
+        }
         let mut champ: HashMap<&str, WL> = HashMap::new();
         let mut cp: HashMap<(&str, usize), WL> = HashMap::new();
         let mut syn: HashMap<(String, String), WL> = HashMap::new();
@@ -329,8 +356,8 @@ fn main() {
         let mut ath_all: HashMap<u64, WL> = HashMap::new();
         let pair = |a: &str, b: &str| if a < b { (a.to_string(), b.to_string()) } else { (b.to_string(), a.to_string()) };
         for (i, m) in matches.iter().enumerate() {
-            if i % 5 == fold {
-                continue; // held out
+            if !is_train(i, g) {
+                continue; // not in this origin/fold's training set
             }
             for (team, won) in [(&m.blue, m.blue_win), (&m.red, !m.blue_win)] {
                 for a in team {
@@ -377,8 +404,8 @@ fn main() {
             cdelta(&a.champ)
         };
         for (i, m) in matches.iter().enumerate() {
-            if i % 5 != fold {
-                continue;
+            if groups[i] != g {
+                continue; // score only this origin/fold's matches
             }
             let mut t = Terms { win: m.blue_win, ..Default::default() };
             let side = |team: &[Ath]| -> (f64, f64, f64, f64, f64, f64, f64) {
@@ -460,8 +487,18 @@ fn main() {
     };
     let blue_rate = recs.iter().filter(|t| t.win).count() as f64 / n * 100.0;
 
-    println!("=== term validation v2 (5-fold CV, every match scored once) ===");
-    println!("matches: {} ({} with full position data) · noise 1sd ≈ ±{:.1}%p", recs.len(), n_pos, 50.0 / n.sqrt());
+    println!(
+        "=== term validation v3 ({}) ===",
+        if legacy { "LEGACY i%5 interleave — NON-CAUSAL, inflated" } else { "rolling-origin — causal, deployment-realistic" }
+    );
+    println!(
+        "matches scored: {} of {} ({} with full position data){} · noise 1sd ≈ ±{:.1}%p",
+        recs.len(),
+        matches.len(),
+        n_pos,
+        if legacy { String::new() } else { format!(" · {} patch origins", n_groups) },
+        50.0 / n.sqrt()
+    );
     println!("baseline always-blue: {:.1}%\n", blue_rate);
 
     println!("STANDALONE:");

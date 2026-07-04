@@ -39,7 +39,11 @@ cd C:\tmp\tfm2-ai-mod\draft-overlay; cargo run --release --bin validate-terms   
 
 ## Step 0 — 하네스 인과화 (Step 2의 게이트)
 
-### S0-1. rolling-origin 폴드
+### S0-1. rolling-origin 폴드 — ✅ 완료 (2026-07-05) — ⚠️ 결과가 프로젝트 #1 신호를 뒤엎음
+구현·실행·검증 완료. `--legacy`가 구 i%5를 비트단위 재현 → 리팩터 무결. **rolling-origin이 famg("숙련 games") 검증을 누출 아티팩트로 폭로**: base_lane+0.08famg 66.3%→**57.8%** (리프트 → 해악), famg 단독 64.8→52.4. base_lane 견고(59.4→59.0), fam_c만 생존(+1.0%p 인과). → **`analysis/harness-causal-findings.md`** (전문·표·해석·신규 **F15 fam 재가중**) + `analysis/harness-rolling-origin.txt`·`harness-legacy-i5.txt`. **다음: S0-3(프로덕션 수학 이식) 후 famc 재가중 확정 — 그 전엔 fam 가중 변경 금지.**
+
+<details><summary>원 스펙 (구현 기록)</summary>
+
 현재 `validate-terms.rs:332-334`:
 ```rust
 for (i, m) in matches.iter().enumerate() {
@@ -49,6 +53,7 @@ for (i, m) in matches.iter().enumerate() {
 ```
 문제: 인터리브 = 미래로 과거 예측(비인과) → 전 수치 낙관 상한.
 **변경**: 버전 경계 rolling-origin — origin v에 대해 train = version < v 전체, test = version == v (8 origins; 매치의 version 필드는 리플레이에 존재). 매치 벡터가 시간순인지 먼저 확인(아니면 (version, index) 정렬). 풀드 정확도 + origin별 표. 기존 i%5 모드는 `--legacy` 플래그로 보존(수치 비교용).
+</details>
 
 ### S0-2. 데이터 재캡처
 ```powershell
