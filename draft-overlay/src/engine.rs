@@ -54,7 +54,13 @@ const W_SYN: f32 = 0.15; // was 0.7 — validation: no incremental value (confou
 const W_CNT: f32 = 0.15; // was 0.5 — "
 const W_WEAK: f32 = 0.15; // was 0.5 — "
 const W_COMP: f32 = 0.2; // was 0.6 — comp barely predicts wins; keep only as a small anti-degenerate guardrail
-const W_DUP: f32 = 0.4;
+const W_DUP: f32 = 0.0; // was 0.4 — NEVER validated, and measurement says the SIGN
+// is wrong: the side with the bigger same-category stack wins 53.2% raw and shows a
+// ~+2%p strength-stratified residual in BOTH strata (4,488 replays, 2026-07-05 review
+// F4; 4-stacks 58.1%, 5-stacks 64.1%). Lane overlap is already handled structurally by
+// recommend_lanes/assign_lanes, so this term's only unique job was anti-stacking — in
+// the wrong direction. overlap() is kept (weight 0); if a controlled harness test
+// confirms the +2%p, add a small POSITIVE stack term instead (Step 2 S2-7).
 const W_BAN_CNT: f32 = 0.4; // was 1.0 — same noise tables, trimmed
 const W_BAN_SYN: f32 = 0.3; // was 0.8 — "
 // was 0.5 → 0.2 → 0.05: banrate is a RAW 0..1 fraction (top champs hit ~0.64),
