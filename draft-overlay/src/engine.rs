@@ -619,22 +619,27 @@ impl Tables {
         let is_tank = |c: &str| self.has_tag(c, "Tank") || self.is_tank_data(c);
         let is_front = |c: &str| self.has_tag(c, "Frontline") || self.is_frontline_data(c);
         let is_heal = |c: &str| self.has_tag(c, "Heal") || self.has_tag(c, "Shield") || self.is_healer_data(c);
+        // weights recalibrated to measured effects (2026-07-05 review F3): only the
+        // healer gap predicts wins (+2.3%p, 2.1σ); the frontline/tank residual ≈ 0 and
+        // CC/backline are unmeasured — so heal is weighted UP and the rest is dropped to
+        // tiebreaker scale. (Full component validation is Step 2 S2-8; this is the
+        // evidence-consistent interim.)
         let mut s = 0.0;
         if !allies.iter().any(|a| is_tank(a)) && is_tank(cand) {
-            s += COMP_UNIT;
+            s += COMP_UNIT * 0.2;
         } else if !allies.iter().any(|a| is_front(a)) && is_front(cand) {
-            s += COMP_UNIT * 0.5;
+            s += COMP_UNIT * 0.2;
         }
         if !team_has("CC") && self.has_tag(cand, "CC") {
-            s += COMP_UNIT * 0.7;
+            s += COMP_UNIT * 0.3;
         }
         if !allies.iter().any(|a| is_heal(a)) && is_heal(cand) {
-            s += COMP_UNIT * 0.6;
+            s += COMP_UNIT * 0.85;
         }
         if !(team_has("Backline") || self.category_team(allies, "Range"))
             && (self.has_tag(cand, "Backline") || self.category(cand) == "Range")
         {
-            s += COMP_UNIT * 0.6;
+            s += COMP_UNIT * 0.3;
         }
         // AD/AP balance bonus REMOVED 2026-06-05: holdout (4298 matches) shows damage-type
         // balance does NOT help in TFM2 — AD-only teams win MORE (55% vs 49% balanced), and
@@ -767,15 +772,12 @@ impl Tables {
                 cnt += mu_ramp * (sum / opps.len() as f32);
             }
         }
-        let mut comp = W_COMP * self.comp_need(cand, allies);
-        // BOUNDARY guardrail (beyond the small linear comp term): 3+ picks with
-        // no frontline is the degenerate comp the autobattle punishes hardest —
-        // close the gap with a full-tier boost on frontline candidates only.
-        let is_front =
-            |c: &str| self.has_tag(c, "Tank") || self.has_tag(c, "Frontline") || self.is_frontline_data(c);
-        if allies.len() >= 3 && !allies.iter().any(|a| is_front(a)) && is_front(cand) {
-            comp += 0.05;
-        }
+        let comp = W_COMP * self.comp_need(cand, allies);
+        // no-frontline boundary boost REMOVED (2026-07-05 review F3): measured across
+        // 4,488 replays, the more-frontline side wins 50.0% and the strength-stratified
+        // residual ≈ 0 (n=3077) — the "autobattle punishes it hardest" premise is false.
+        // Healer is the only comp dimension that measurably matters (+2.3%p, 2.1σ);
+        // comp_need now weights heal UP and the unmeasured dims DOWN to tiebreaker scale.
         let dup = W_DUP * self.overlap(cand, allies);
         // ── athlete familiarity (validated strongest signal; weights baked by
         // the producer): my athlete at this lane is BETTER on champs they know.
