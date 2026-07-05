@@ -95,23 +95,23 @@ fn patch_tsv(db: &ClientDatabase) -> String {
     s
 }
 
-/// Phase 2 — athlete familiarity for THIS match's starting lineups (the
-/// strongest validated PREDICTION signal: games-on-champ 66.0% standalone —
-/// validate-terms v2, 2837 matches, 5-fold CV).
+/// Phase 2 — athlete familiarity for THIS match's starting lineups.
 ///
-/// ‼️ DECISION weights ≠ the backtest's prediction weights (0.08/0.25).
-/// Games-on-champ is ENDOGENOUS — athletes accumulate games on champs that fit
-/// them and the meta — so the predictive coefficient wildly overstates the
-/// causal cost of picking an unfamiliar-but-stronger champ. At 0.08·log the
-/// comfort term peaked at +0.26 (6+ tier steps): heavily NERFED comfort picks
-/// still topped every ranking (user-reported defect 2026-06-13). Anchor to the
-/// game's actual mechanic instead — the most-champion stat bonus
-/// (most_champion_bonus_tooltip: "+{Value}% 선수 능력치") is worth a few %p
-/// winrate — and CAP the whole term at one tier step:
-///   af((champ,lane))  = min(0.05, 0.020·ln(1+min(g,20)) + 0.15·centered-wr)
+/// ⚠️ HISTORY CORRECTED BY THE CAUSAL HARNESS (2026-07-05, S0-1/S0-1b/S0-4 —
+/// analysis/harness-causal-findings.md): the old "strongest validated signal —
+/// games-on-champ 66.0% standalone / +7.9%p incremental" was i%5 future-volume
+/// LEAKAGE (a champ an athlete ends up maining leaks its career volume back
+/// into early matches). Under causal rolling-origin the games component is
+/// flat-to-HARMFUL at every scale (standalone <50% at late origins), and its
+/// 0.020·ln form alone saturated the 0.05 cap from g≈11 — crowding the real
+/// signal out of af entirely (shipped af measured −0.1 [−1.0,+0.8] vs base).
+/// The sole causal survivor is CENTERED WINRATE (+1.0~1.6%p point lift,
+/// CI-unproven at n=3,953 → budget term: keep 0.15, do NOT grow — S0-4 gate).
+///   af((champ,lane))  = min(0.05, 0.15·centered-wr)     [F15: famg removed]
 ///   pocket(champ)     = 0.015·ln(1+min(g,20)), max over ENEMY starters
-/// (The small scales keep most of the validated signal: the sweep showed
-/// +2.5%p at s=0.02 and +4.2%p at s=0.04 vs +7.9%p at 0.16.)
+/// pocket KEEPS the volume form deliberately: it models what the ENEMY relies
+/// on (usage/ban-threat proxy), not a self-performance claim — the leakage
+/// finding is volume→own-winrate, not volume→reliance.
 /// ASSUMPTION (runtime-verified via the starting_my line in bp_live.txt):
 /// team*_starting = athlete ids in lane order (top..support).
 fn athlete_tables(
@@ -141,9 +141,10 @@ fn athlete_tables(
         let (tg, tw) = hist.values().fold((0.0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1));
         let wr_a = (tw + 4.0) / (tg + 8.0); // athlete overall winrate, shrunk
         for (c, (g, w)) in &hist {
-            let famg = 0.020 * (1.0 + g.min(20.0)).ln();
+            // F15: games-volume component removed (leakage artifact + it saturated
+            // the cap, see the doc block above). Centered winrate only, cap kept.
             let famc = 0.15 * ((w + 4.0 * wr_a) / (g + 4.0) - wr_a);
-            af.insert((c.clone(), lane as u8), (famg + famc).min(0.05) as f32);
+            af.insert((c.clone(), lane as u8), famc.min(0.05) as f32);
         }
         dbg.push_str(&format!(
             "{}:{}:{} ",

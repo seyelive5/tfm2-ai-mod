@@ -182,8 +182,9 @@ pub struct Tables {
     /// team id -> total games (usage-share denominator), from `OPPN` rows.
     opp_team_games: std::collections::HashMap<u32, u32>,
     /// Phase 2 (set at runtime per match, not from TSV rows): MY starting
-    /// athletes' familiarity bonus per (champ, lane) — the strongest validated
-    /// signal (validate-terms v2: comfort 66.0% standalone vs winrate 60.9%).
+    /// athletes' familiarity bonus per (champ, lane). F15 (2026-07-05): the old
+    /// "strongest validated signal (comfort 66.0%)" was i%5 leakage — producer
+    /// now ships centered-winrate only (min(0.05, 0.15·cwr)).
     athlete_bonus: std::collections::HashMap<(String, u8), f32>,
     /// ENEMY starters' comfort per champ (max over their five) — ban targeting.
     enemy_pocket: std::collections::HashMap<String, f32>,
@@ -455,10 +456,13 @@ impl Tables {
         self.enemy_pocket = pocket;
     }
     /// MY athlete-at-this-lane's familiarity bonus for the champ (0 = no history or
-    /// lane unknown). Weight-scaled by the producer, but DELIBERATELY DETUNED from the
-    /// validated fit: it ships 0.020·ln(1+min(g,20)) + 0.15·centered-wr, cap 0.05 (NOT
-    /// the validated 0.08·famg + 0.25·famc) — the predictive coefficient overstates the
-    /// causal cost (endogeneity); see tfm2_db_export/src/lib.rs:102-114 (review F10).
+    /// lane unknown). Producer-scaled: min(0.05, 0.15·centered-wr) — the games-volume
+    /// component was REMOVED (F15, 2026-07-05): its "validated" lift was i%5 leakage
+    /// (causal harness: flat-to-harmful, famg standalone <50% at late origins), and it
+    /// saturated the 0.05 cap from g≈11, crowding famc out (shipped af measured −0.1
+    /// [−1.0,+0.8] vs base — S0-4). Centered winrate is the sole causal survivor
+    /// (+1.0~1.6%p point, CI-unproven → budget term, do not grow). See the producer in
+    /// tfm2_db_export/src/lib.rs + analysis/harness-causal-findings.md §S0-4.
     fn af(&self, c: &str, lane: Option<u8>) -> f32 {
         lane.and_then(|l| self.athlete_bonus.get(&(c.into(), l))).copied().unwrap_or(0.0)
     }
@@ -868,10 +872,10 @@ impl Tables {
         // Healer is the only comp dimension that measurably matters (+2.3%p, 2.1σ);
         // comp_need now weights heal UP and the unmeasured dims DOWN to tiebreaker scale.
         let dup = W_DUP * self.overlap(cand, allies);
-        // ── athlete familiarity (the validated strongest SIGNAL — famg 66.0%
-        // standalone; the shipped WEIGHTS are deliberately detuned from the validated
-        // fit for endogeneity, see af()/lib.rs:102-114): my athlete is BETTER on champs
-        // they know.
+        // ── athlete familiarity — centered-winrate ONLY (F15, 2026-07-05): the old
+        // "strongest SIGNAL (famg 66.0%)" was i%5 leakage (harness-causal-findings
+        // §S0-1b). Causal survivor = famc, shipped at 0.15 with the 0.05 cap; S0-4
+        // rates the whole term CI-unproven (budget item — do not grow).
         let fam = self.af(cand, lane);
         // ── deny/steal DISABLED (code review 2026-06-20): the enemy-AI valuation
         // feed was league-wide background-sim noise, not the current-match enemy.
