@@ -8,7 +8,7 @@ STANDALONE:
   syn       (legacy pair)               : 60.5%
   cnt       (legacy all-vs-all)         : 60.7%
   mu        (same-lane h2h) ★new        : 57.0%
-  lp        (laning z) ★new/caveat      : 49.4%
+  lp        (laning z) ★new/caveat      : 49.3%
   comp      (taxonomy)                  : 52.1%
   fam       (athlete-champ) ★ph2        : 57.2%
   fam_c     (centered, no team confound): 57.7%
@@ -20,7 +20,7 @@ STANDALONE:
 INCREMENTAL over base_lane (scale sweep; >noise lift = earns weight):
   base_lane alone                  : 59.4%
   base_lane + s*mu    s=0.25 : 60.0%  s=0.5  : 59.5%  s=1    : 59.0%  s=2    : 58.3%
-  base_lane + s*lp    s=0.004: 59.3%  s=0.008: 59.3%  s=0.016: 59.4%  s=0.032: 58.4%
+  base_lane + s*lp    s=0.004: 59.3%  s=0.008: 59.2%  s=0.016: 59.4%  s=0.032: 58.4%
   base_lane + s*cnt   s=0.05 : 59.9%  s=0.1  : 60.1%  s=0.15 : 60.5%  s=0.3  : 60.5%
   base_lane + s*syn   s=0.05 : 59.6%  s=0.1  : 59.7%  s=0.15 : 60.1%  s=0.3  : 60.4%
   base_lane + s*comp  s=0.01 : 59.4%  s=0.02 : 59.2%  s=0.04 : 59.1%  s=0.08 : 59.0%

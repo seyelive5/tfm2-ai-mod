@@ -117,7 +117,7 @@
 S0 하네스(v3.4 POST-HOC 진단 + T-nudge/T-amnesia)로 Step 2 전 항목을 판정했다. 상세 수치: `harness-rolling-origin.txt` POST-HOC 섹션 + `ALGO-FIXES.md` Step 2 집행 결과.
 - **출하 3건**: F15(af famg 제거, `3648700`) · S2-4(W_MU_LP=0 + power_ramp 1.0 복원 — matchup 축 전체 weight-0, `0b3ae2a`) · S2-2(카운트-스케일 chg_nudge — T-nudge slope +0.0125/chg, r +0.66, n=46; CHG 행 5필드 하위호환, `641f7dd`). DLL 재배포 완료(백업 유지).
 - **기각/종결 4건**: S2-7 스택(Δ−0.1 [−0.5,+0.3]) · S2-8 comp 전 성분 가산 미입증(heal −0.2 포함 — W_COMP는 UX 가드레일로만 유지) · S2-3 κ 스윕 평탄(40 확정, EB 불채택) · S2-1 이월(n≤2 모집단 1개 — 전량 리셋 유지).
-- **잔여 2건**: S2-5(솔로랭크 power prior) · S2-6(BT θ) — 표본 민감 실험, S0-2 재캡처(9버전·~5,000판) 후 실행.
+- **잔여 2건 → 예비 기각 (v3.5, 07-05)**: S2-5 솔로 prev-블렌드 Δ+0.0 [−0.1,+0.2](솔로 분포가 3.0/3.1 쏠림 — prev-경로 얇음) · S2-6 BT θ 단독 58.8% vs base_prod 60.0, thin 층 −2.7(수축 없는 joint fit의 얇은-챔프 과적합). 둘 다 S0-2 재캡처 후 재확인. 부수: parse_lane_dom 비결정성(BTreeMap 결정화 — `--legacy` 바이트 회귀가 검출).
 
 ## 남은 Step 0
 - **S0-2 재캡처**(게임 세션 필요 — 사용자): 07-04 이후 debug 덤프 게이트로 최신 2패치 누락. `probe\DEBUG_DUMPS` 마커 후 1세션 → ~5,000판/9버전. rolling-origin은 origin이 많을수록·초기 훈련량이 클수록 정확해짐(현재 첫 origin은 훈련량 적어 노이즈↑).

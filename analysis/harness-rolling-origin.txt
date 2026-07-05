@@ -8,7 +8,7 @@ STANDALONE:
   syn       (legacy pair)               : 58.1%
   cnt       (legacy all-vs-all)         : 58.7%
   mu        (same-lane h2h) ★new        : 55.7%
-  lp        (laning z) ★new/caveat      : 50.4%
+  lp        (laning z) ★new/caveat      : 50.3%
   comp      (taxonomy)                  : 52.1%
   fam       (athlete-champ) ★ph2        : 55.2%
   fam_c     (centered, no team confound): 56.3%
@@ -20,7 +20,7 @@ STANDALONE:
 INCREMENTAL over base_lane (scale sweep; >noise lift = earns weight):
   base_lane alone                  : 59.0%
   base_lane + s*mu    s=0.25 : 58.9%  s=0.5  : 58.8%  s=1    : 57.8%  s=2    : 57.4%
-  base_lane + s*lp    s=0.004: 58.8%  s=0.008: 59.0%  s=0.016: 58.8%  s=0.032: 59.0%
+  base_lane + s*lp    s=0.004: 58.8%  s=0.008: 58.9%  s=0.016: 59.0%  s=0.032: 59.1%
   base_lane + s*cnt   s=0.05 : 58.9%  s=0.1  : 59.1%  s=0.15 : 59.1%  s=0.3  : 58.9%
   base_lane + s*syn   s=0.05 : 58.9%  s=0.1  : 59.2%  s=0.15 : 59.4%  s=0.3  : 58.9%
   base_lane + s*comp  s=0.01 : 59.1%  s=0.02 : 59.0%  s=0.04 : 59.0%  s=0.08 : 59.5%
@@ -39,7 +39,7 @@ COMBOS (base anchor too — base beat base_lane standalone):
   base      + 0.5*fam + 0.15*syn                  : 59.4%
   base      + 0.5*fam + 0.05*fit                  : 59.1%
   base+blend(0.5*lane) + 0.5*fam                  : 59.1%
-  base + 0.5*fam + 0.15*syn + 0.05*fit + 0.008*lp : 59.7%
+  base + 0.5*fam + 0.15*syn + 0.05*fit + 0.008*lp : 59.6%
   base_lane + 0.08*famg                           : 57.8%
   base_lane + 0.08*famgc                          : 57.2%
   base_lane + 0.08*famg + 0.25*fam_c              : 58.7%
@@ -86,14 +86,14 @@ PRE-REGISTERED 6-MODEL COMPARISON + BOOTSTRAP CI (S0-4; 1000× match resample, x
   ② base_lane (pooled κ8 harness anchor)        :  59.0%  [ 57.5,  60.5]
   ③ ② + shipped af (.020·lng+.15·cwr cap .05)   :  58.9%  [ 57.5,  60.4]
   ④ shipped pick score (board-independent)      :  59.7%  [ 58.2,  61.3]
-  ⑤ ④ − comp                                    :  59.7%  [ 58.2,  61.2]
+  ⑤ ④ − comp                                    :  59.8%  [ 58.3,  61.3]
   ⑥ ④ − LP                                      :  59.8%  [ 58.2,  61.3]
   PAIRED DELTAS (adoption gate: bootstrap CI lower bound > 0):
     ②−① base_lane vs coin (sanity)    :  +7.6  [ +5.3,  +9.7]  PASS
     ③−② shipped af contribution       :  -0.1  [ -1.0,  +0.8]  FAIL (미입증 — 예산 항목, 키우기 금지)
-    ④−② shipped bundle vs base_lane   :  +0.7  [ -1.2,  +2.5]  FAIL (미입증 — 예산 항목, 키우기 금지)
-    ④−⑤ comp contribution             :  +0.1  [ -0.4,  +0.5]  FAIL (미입증 — 예산 항목, 키우기 금지)
-    ④−⑥ LP contribution               :  -0.1  [ -0.8,  +0.7]  FAIL (미입증 — 예산 항목, 키우기 금지)
+    ④−② shipped bundle vs base_lane   :  +0.7  [ -1.1,  +2.5]  FAIL (미입증 — 예산 항목, 키우기 금지)
+    ④−⑤ comp contribution             :  -0.1  [ -0.6,  +0.4]  FAIL (미입증 — 예산 항목, 키우기 금지)
+    ④−⑥ LP contribution               :  -0.1  [ -0.8,  +0.6]  FAIL (미입증 — 예산 항목, 키우기 금지)
 
 POST-HOC S2 DIAGNOSTICS (not pre-registered; paired bootstrap, same seed):
   af_new over base_lane (F15 verify)  : 59.0% → 59.3%  Δ +0.3 [ -0.5,  +1.1]  
@@ -104,6 +104,12 @@ POST-HOC S2 DIAGNOSTICS (not pre-registered; paired bootstrap, same seed):
   0.02·front_gap (S2-8)               : 59.5% → 59.5%  Δ +0.0 [ -0.1,  +0.1]  REJECT (미입증)
   0.02·backline_gap (S2-8)            : 59.5% → 59.4%  Δ -0.1 [ -0.4,  +0.3]  REJECT (미입증)
   S2-3 κ sweep (champ prod state): κ20 60.1% · κ40 60.0% (ship) · κ80 60.1% · κ150 59.9%
+
+S2-5/S2-6 EXPERIMENTS (post-hoc; solo file: 1091 matches):
+  S2-5 w_solo=0.10 (prev-ver solo)  : 60.0% vs base_prod 60.0%  Δ +0.0 [ -0.1,  +0.1] · thin(n=1974) Δ +0.0 · thick Δ +0.0  REJECT (미입증)
+  S2-5 w_solo=0.25 (prev-ver solo)  : 60.0% vs base_prod 60.0%  Δ +0.0 [ -0.1,  +0.2] · thin(n=1974) Δ +0.1 · thick Δ +0.0  REJECT (미입증)
+  S2-6 BT θ standalone              : 58.8% vs base_prod 60.0%  Δ -1.1 [ -3.0,  +0.7] · thin(n=1974) Δ -2.7 · thick Δ +0.4  REJECT (미입증)
+  (θ̂ 비교 축: pooled base κ8 58.8% · base_lane 59.0% — BT는 base 대체 후보로만 평가, 스케일이 달라 블렌드는 무의미)
   S2-2 T-nudge: realized Δdelta vs signed change-count — slope +0.0125/chg, r +0.66, n 46  → count-scaling has signal → adopt S2-2 sizes
   S2-1 T-amnesia n≤2 (small tweaks): n=1   MAE reset 0.250 · full-0.35prev 0.234 · count-scaled 0.242  → scaled beats reset → S2-1 adopt candidate
   S2-1 T-amnesia n≥3 (big changes) : n=51  MAE reset 0.112 · full-0.35prev 0.115 · count-scaled 0.111  → reset fine

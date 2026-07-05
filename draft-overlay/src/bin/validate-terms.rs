@@ -174,6 +174,64 @@ fn parse_matches(text: &str) -> Vec<Match> {
     out
 }
 
+/// solo-rank matches (S2-5): `SoloRankMatch { win, version, blue_team/red_team:
+/// [SoloRankAthlete { champion, .. }] }` — 5v5, champs only (no positions).
+struct SoloM {
+    blue: Vec<String>,
+    red: Vec<String>,
+    blue_win: bool,
+    version: String,
+}
+fn parse_solo(text: &str) -> Vec<SoloM> {
+    let b = text.as_bytes();
+    let needle = b"SoloRankMatch {";
+    let mut out = Vec::new();
+    let mut off = 0;
+    while let Some(start) = find_from(b, needle, off) {
+        let brace = start + needle.len() - 1;
+        let (s, e) = match read_balanced(b, brace, b'{', b'}') {
+            Some(v) => v,
+            None => break,
+        };
+        let block = &text[s..=e];
+        off = e + 1;
+        let champs = |arr: Option<&str>| -> Vec<String> {
+            let arr = match arr {
+                Some(a) => a,
+                None => return vec![],
+            };
+            let ab = arr.as_bytes();
+            let an = b"SoloRankAthlete {";
+            let mut cs = Vec::new();
+            let mut ao = 0;
+            while let Some(ast) = find_from(ab, an, ao) {
+                let abr = ast + an.len() - 1;
+                let (as_, ae) = match read_balanced(ab, abr, b'{', b'}') {
+                    Some(v) => v,
+                    None => break,
+                };
+                if let Some(c) = quoted(&arr[as_..=ae], "champion") {
+                    cs.push(c);
+                }
+                ao = ae + 1;
+            }
+            cs
+        };
+        let blue = champs(extract_array(block, "blue_team"));
+        let red = champs(extract_array(block, "red_team"));
+        let blue_win = match parse_bool(block, "win") {
+            Some(v) => v,
+            None => continue,
+        };
+        if blue.len() < 2 || red.len() < 2 {
+            continue;
+        }
+        let version = quoted(block, "version").unwrap_or_default();
+        out.push(SoloM { blue, red, blue_win, version });
+    }
+    out
+}
+
 // ---------- taxonomy (T rows) for comp ----------
 struct Taxon {
     category: String,
@@ -195,7 +253,10 @@ fn parse_taxonomy(tsv: &str) -> HashMap<String, Taxon> {
 
 // ---------- LP (laning dominance z) from the cumulative stats TSV ----------
 fn parse_lane_dom(tsv: &str) -> HashMap<(String, usize), f64> {
-    let mut agg: HashMap<(String, usize), (f64, f64)> = HashMap::new(); // (gold, matches)
+    // BTreeMap: HashMap iteration order + non-associative f64 summation made the
+    // lane mean/sd (and thus lp's last display digit) NON-DETERMINISTIC across
+    // runs — caught by the --legacy byte-regression on 2026-07-05.
+    let mut agg: std::collections::BTreeMap<(String, usize), (f64, f64)> = Default::default(); // (gold, matches)
     for line in tsv.lines().skip(1) {
         let f: Vec<&str> = line.split('\t').collect();
         if f.len() < 19 {
@@ -447,6 +508,8 @@ fn main() {
     // --notes=<patch_notes_dump.txt> → per-version changed-champ sets for the S0-3
     // production base (stale-blend-drop). Optional: absent = no resets (reported).
     let notes_path: Option<String> = raw.iter().find_map(|a| a.strip_prefix("--notes=").map(str::to_string));
+    // --solo=<solo_rank_matches.debug.txt> → S2-5 solo-rank power-prior experiment.
+    let solo_path: Option<String> = raw.iter().find_map(|a| a.strip_prefix("--solo=").map(str::to_string));
     let args: Vec<String> = raw.into_iter().filter(|a| !a.starts_with("--")).collect();
     if args.len() < 2 {
         eprintln!("usage: validate-terms [--legacy] [--notes=patch_notes_dump.txt] <match_replays.debug.txt> [draft_weights.tsv] [champion_patch_statistics.tsv] [ai_intrinsic.tsv]");
@@ -478,6 +541,10 @@ fn main() {
     let notes: HashMap<String, Changed> = notes_path
         .as_deref()
         .map(|p| parse_patch_notes(&std::fs::read_to_string(p).unwrap_or_default()))
+        .unwrap_or_default();
+    let solo: Vec<SoloM> = solo_path
+        .as_deref()
+        .map(|p| parse_solo(&std::fs::read_to_string(p).unwrap_or_default()))
         .unwrap_or_default();
     let n_pos = matches
         .iter()
@@ -525,6 +592,12 @@ fn main() {
     // S2-3 κ sweep side-channel: per scored match (rolling only), the production
     // champ-state diff at κ ∈ {20, 80, 150} (κ40 lives in Terms::base_prod).
     let mut kprod: Vec<[f64; 3]> = Vec::new();
+    // S2-5/S2-6 side-channels (rolling only, aligned with recs): solo-augmented
+    // production champ base at w_solo {0.1, 0.25}, BT θ diff, and the match's
+    // mean blended champ games (thin/thick stratification for T-solo).
+    let mut solo_v: Vec<[f64; 2]> = Vec::new();
+    let mut bt_v: Vec<f64> = Vec::new();
+    let mut mgames_v: Vec<f64> = Vec::new();
     for g in 0..n_groups {
         // rolling-origin's earliest version has no earlier data → nothing to train on.
         if !(0..matches.len()).any(|i| is_train(i, g)) {
@@ -612,6 +685,65 @@ fn main() {
                         if a.lane < 5 {
                             prev_cp.entry((&a.champ, a.lane)).or_default().rec(won);
                         }
+                    }
+                }
+            }
+        }
+        // S2-5: prev tables augmented with PREV-VERSION solo-rank games at w_solo
+        // (champ-level only — solo has no positions). Same-version solo is OMITTED:
+        // there is no cross-file play order, so including it would risk leakage;
+        // this under-estimates the deployment value (conservative).
+        let mut prev_c_s: [HashMap<&str, WL>; 2] = [prev_c.clone(), prev_c.clone()];
+        if !legacy && g >= 1 && !solo.is_empty() {
+            let pv = &vsorted[g - 1];
+            for sm in &solo {
+                if &vkey(&sm.version) != pv {
+                    continue;
+                }
+                for (team, won) in [(&sm.blue, sm.blue_win), (&sm.red, !sm.blue_win)] {
+                    for c in team {
+                        for (k, w) in [(0usize, 0.1f64), (1, 0.25)] {
+                            let e = prev_c_s[k].entry(c.as_str()).or_default();
+                            e.g += w;
+                            if won {
+                                e.w += w;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // S2-6: Bradley-Terry-style joint champ strengths on the pooled train
+        // window — full-batch logistic GD with L2 (deterministic, no RNG).
+        let mut theta: HashMap<&str, f64> = HashMap::new();
+        if !legacy {
+            let train: Vec<&Match> =
+                matches.iter().enumerate().filter(|(i, _)| is_train(*i, g)).map(|(_, m)| m).collect();
+            if !train.is_empty() {
+                for m in &train {
+                    for a in m.blue.iter().chain(m.red.iter()) {
+                        theta.entry(&a.champ).or_insert(0.0);
+                    }
+                }
+                let n = train.len() as f64;
+                let (lr, l2, epochs) = (2.0, 0.02, 300);
+                for _ in 0..epochs {
+                    let mut grad: HashMap<&str, f64> = HashMap::new();
+                    for m in &train {
+                        let d: f64 = m.blue.iter().map(|a| theta[a.champ.as_str()]).sum::<f64>()
+                            - m.red.iter().map(|a| theta[a.champ.as_str()]).sum::<f64>();
+                        let p = 1.0 / (1.0 + (-d).exp());
+                        let e = p - if m.blue_win { 1.0 } else { 0.0 };
+                        for a in &m.blue {
+                            *grad.entry(&a.champ).or_insert(0.0) += e;
+                        }
+                        for a in &m.red {
+                            *grad.entry(&a.champ).or_insert(0.0) -= e;
+                        }
+                    }
+                    for (c, t) in theta.iter_mut() {
+                        let gr = grad.get(c).copied().unwrap_or(0.0) / n;
+                        *t -= lr * (gr + l2 * *t);
                     }
                 }
             }
@@ -849,6 +981,26 @@ fn main() {
                     kp(80.0, &m.blue) - kp(80.0, &m.red),
                     kp(150.0, &m.blue) - kp(150.0, &m.red),
                 ]);
+                let solo_side = |k: usize| -> f64 {
+                    let f = |team: &[Ath]| -> f64 {
+                        team.iter()
+                            .map(|a| prod_champ_post(&a.champ, &cur_c, &prev_c_s[k], changed) - 0.5)
+                            .sum()
+                    };
+                    f(&m.blue) - f(&m.red)
+                };
+                solo_v.push([solo_side(0), solo_side(1)]);
+                let btd = |team: &[Ath]| -> f64 {
+                    team.iter().map(|a| theta.get(a.champ.as_str()).copied().unwrap_or(0.0)).sum()
+                };
+                bt_v.push(btd(&m.blue) - btd(&m.red));
+                let gsum: f64 = m
+                    .blue
+                    .iter()
+                    .chain(m.red.iter())
+                    .map(|a| prod_games(&a.champ, &cur_c, &prev_c, changed))
+                    .sum();
+                mgames_v.push(gsum / (m.blue.len() + m.red.len()) as f64);
             }
             recs.push(t);
             if !legacy {
@@ -1269,6 +1421,101 @@ fn main() {
                 acc(&|t: &Terms| t.base_prod),
                 kacc(1),
                 kacc(2)
+            );
+        }
+
+        // ---- S2-5 / S2-6 experiments (post-hoc; preliminary until the S0-2 recapture) ----
+        if solo_v.len() == recs.len() && bt_v.len() == recs.len() {
+            println!(
+                "\nS2-5/S2-6 EXPERIMENTS (post-hoc; solo file: {} matches{}):",
+                solo.len(),
+                if solo.is_empty() { " — MISSING → solo variants ≡ base_prod" } else { "" }
+            );
+            let mk = |f: &dyn Fn(usize) -> f64| -> Vec<f64> {
+                recs.iter()
+                    .enumerate()
+                    .map(|(i, t)| {
+                        let s = f(i);
+                        if s.abs() < 1e-12 {
+                            0.5
+                        } else if (s > 0.0) == t.win {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    })
+                    .collect()
+            };
+            let ecorr: Vec<Vec<f64>> = vec![
+                mk(&|i: usize| recs[i].base_prod),
+                mk(&|i: usize| solo_v[i][0]),
+                mk(&|i: usize| solo_v[i][1]),
+                mk(&|i: usize| bt_v[i]),
+            ];
+            let epoint: Vec<f64> = ecorr.iter().map(|c| c.iter().sum::<f64>() / nrec as f64 * 100.0).collect();
+            let mut sorted_g: Vec<f64> = mgames_v.clone();
+            sorted_g.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let med = sorted_g[nrec / 2];
+            let strat = |corr: &[f64], thin: bool| -> (f64, usize) {
+                let (mut c, mut k) = (0.0, 0usize);
+                for (i, v) in corr.iter().enumerate() {
+                    if (mgames_v[i] < med) == thin {
+                        c += v;
+                        k += 1;
+                    }
+                }
+                (if k > 0 { c / k as f64 * 100.0 } else { 50.0 }, k)
+            };
+            let mut rng3: u64 = 20260705;
+            let mut next3 = move || {
+                rng3 ^= rng3 << 13;
+                rng3 ^= rng3 >> 7;
+                rng3 ^= rng3 << 17;
+                rng3
+            };
+            let mut eboot: Vec<[f64; 4]> = Vec::with_capacity(B);
+            for _ in 0..B {
+                let mut s = [0.0f64; 4];
+                for _ in 0..nrec {
+                    let i = (next3() % nrec as u64) as usize;
+                    for (k, sk) in s.iter_mut().enumerate() {
+                        *sk += ecorr[k][i];
+                    }
+                }
+                for sk in s.iter_mut() {
+                    *sk = *sk / nrec as f64 * 100.0;
+                }
+                eboot.push(s);
+            }
+            for (k, name) in [
+                (1usize, "S2-5 w_solo=0.10 (prev-ver solo)"),
+                (2, "S2-5 w_solo=0.25 (prev-ver solo)"),
+                (3, "S2-6 BT θ standalone"),
+            ] {
+                let mut v: Vec<f64> = eboot.iter().map(|r| r[k] - r[0]).collect();
+                let (lo, hi) = ci(&mut v);
+                let (thin_x, tn) = strat(&ecorr[k], true);
+                let (thin_b, _) = strat(&ecorr[0], true);
+                let (thk_x, _) = strat(&ecorr[k], false);
+                let (thk_b, _) = strat(&ecorr[0], false);
+                println!(
+                    "  {:<34}: {:>4.1}% vs base_prod {:>4.1}%  Δ{:>+5.1} [{:>+5.1}, {:>+5.1}] · thin(n={}) Δ{:>+5.1} · thick Δ{:>+5.1}  {}",
+                    name,
+                    epoint[k],
+                    epoint[0],
+                    epoint[k] - epoint[0],
+                    lo,
+                    hi,
+                    tn,
+                    thin_x - thin_b,
+                    thk_x - thk_b,
+                    if lo > 0.0 { "ADOPT-candidate" } else { "REJECT (미입증)" }
+                );
+            }
+            println!(
+                "  (θ̂ 비교 축: pooled base κ8 {:.1}% · base_lane {:.1}% — BT는 base 대체 후보로만 평가, 스케일이 달라 블렌드는 무의미)",
+                acc(&|t: &Terms| t.base),
+                acc(&|t: &Terms| t.base_lane)
             );
         }
 
