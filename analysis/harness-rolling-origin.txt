@@ -118,6 +118,11 @@ S2-5/S2-6 EXPERIMENTS (post-hoc; solo file: 1019 matches):
 T4 ADVICE BENCH (post-hoc; shipped board-independent score, comp/LP omitted; pool = champs − bans − other picks):
   winner-team mean pick percentile 0.678 vs loser 0.625 · Δ+0.053 [+0.047, +0.060] · winner-higher 58.3%
   (Δ>0 = 승팀의 실픽이 우리 랭킹에서 더 상위 — 픽 랭킹 축이 승리와 정합. 가중 변경 시의 회귀 기준선.)
+
+T-BAN BEHAVIORAL GRADER (post-hoc; chronological, enemy history ≥20 champ-games; 11138 preds, 480 skipped):
+  recall@5 of the enemy's actual picks: global-pickrate 0.185 · team-usage OPP 0.184 · OPP+pocket 0.162
+    OPP − global  : Δ-0.002 [-0.005, +0.001]  미입증
+    +pocket − OPP : Δ-0.021 [-0.024, -0.019]  미입증
   S2-2 T-nudge: realized Δdelta vs signed change-count — slope +0.0134/chg, r +0.60, n 62  → count-scaling has signal → adopt S2-2 sizes
   S2-1 T-amnesia n≤2 (small tweaks): n=17  MAE reset 0.091 · full-0.35prev 0.076 · count-scaled 0.076  → scaled beats reset → S2-1 adopt candidate
   S2-1 T-amnesia n≥3 (big changes) : n=51  MAE reset 0.113 · full-0.35prev 0.116 · count-scaled 0.112  → reset fine

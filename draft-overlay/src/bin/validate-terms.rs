@@ -118,6 +118,9 @@ struct Match {
     id: u64,
     /// both teams' bans (pool exclusion for the T4 advice bench).
     bans: Vec<String>,
+    /// team ids (T-ban behavioral grader: per-team usage history).
+    blue_tid: u32,
+    red_tid: u32,
 }
 
 /// plain string array (`["a", "b"]`) → items (quote-delimited).
@@ -178,7 +181,9 @@ fn parse_matches(text: &str) -> Vec<Match> {
         let id = num_field(block, "id").unwrap_or(0.0) as u64;
         let mut bans = parse_str_array(extract_array(block, "blue_ban"));
         bans.extend(parse_str_array(extract_array(block, "red_ban")));
-        out.push(Match { blue, red, blue_win, version, id, bans });
+        let blue_tid = num_field(block, "blue_team_id").unwrap_or(0.0) as u32;
+        let red_tid = num_field(block, "red_team_id").unwrap_or(0.0) as u32;
+        out.push(Match { blue, red, blue_win, version, id, bans, blue_tid, red_tid });
     }
     out
 }
@@ -1632,6 +1637,123 @@ fn main() {
                 rate
             );
             println!("  (Δ>0 = 승팀의 실픽이 우리 랭킹에서 더 상위 — 픽 랭킹 축이 승리와 정합. 가중 변경 시의 회귀 기준선.)");
+        }
+
+        // ---- T-ban behavioral grader (ALGO-FIXES §밴 레이어 검증): do the
+        // production opponent-model shapes — per-team usage × wr-excess (score_ban
+        // :966-975) + athlete pocket (0.015·ln, max over starters) — predict the
+        // ENEMY's actual pick set better than global pickrate? Chronological
+        // expanding (id order), strictly-prior tables, both sides predicted.
+        {
+            let mut order2: Vec<usize> = (0..matches.len()).collect();
+            order2.sort_by_key(|&i| matches[i].id);
+            let mut gl_g: HashMap<&str, f64> = HashMap::new();
+            let mut tm: HashMap<(u32, &str), WL> = HashMap::new();
+            let mut tm_tot: HashMap<u32, f64> = HashMap::new();
+            let mut ath_g: HashMap<(u64, &str), f64> = HashMap::new();
+            let mut tb: Vec<[f64; 3]> = Vec::new(); // recall@5: [global, opp, opp+pocket]
+            let mut skipped = 0usize;
+            for &i in &order2 {
+                let m = &matches[i];
+                for (enemy, tid) in [(&m.blue, m.blue_tid), (&m.red, m.red_tid)] {
+                    let tg = tm_tot.get(&tid).copied().unwrap_or(0.0);
+                    if tg < 20.0 {
+                        skipped += 1;
+                        continue;
+                    }
+                    let scored: Vec<(&str, f64, f64, f64)> = universe
+                        .iter()
+                        .map(|&c| {
+                            let g = gl_g.get(c).copied().unwrap_or(0.0);
+                            let w = tm.get(&(tid, c)).copied().unwrap_or_default();
+                            let usage = (w.g + 1.0) / (tg + 3.0);
+                            let wr = (w.w + 3.0) / (w.g + 6.0);
+                            let opp = 0.08 * usage * (1.0 + 2.0 * (wr - 0.5));
+                            let pocket = enemy
+                                .iter()
+                                .map(|a| {
+                                    let ag = ath_g.get(&(a.aid, c)).copied().unwrap_or(0.0);
+                                    0.015 * (1.0 + ag.min(20.0)).ln()
+                                })
+                                .fold(0.0f64, f64::max);
+                            (c, g, opp, opp + pocket)
+                        })
+                        .collect();
+                    let actual: Vec<&str> = enemy.iter().map(|a| a.champ.as_str()).collect();
+                    let recall = |key: &dyn Fn(&(&str, f64, f64, f64)) -> f64| -> f64 {
+                        let mut v = scored.clone();
+                        v.sort_by(|a, b| {
+                            key(b)
+                                .partial_cmp(&key(a))
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                                .then(a.0.cmp(b.0))
+                        });
+                        let top: Vec<&str> = v.iter().take(5).map(|x| x.0).collect();
+                        actual.iter().filter(|c| top.contains(*c)).count() as f64
+                            / actual.len().max(1) as f64
+                    };
+                    tb.push([recall(&|x| x.1), recall(&|x| x.2), recall(&|x| x.3)]);
+                }
+                for (team, tid, won_team) in
+                    [(&m.blue, m.blue_tid, m.blue_win), (&m.red, m.red_tid, !m.blue_win)]
+                {
+                    for a in team {
+                        *gl_g.entry(&a.champ).or_insert(0.0) += 1.0;
+                        tm.entry((tid, &a.champ)).or_default().rec(won_team);
+                        *tm_tot.entry(tid).or_insert(0.0) += 1.0;
+                        *ath_g.entry((a.aid, &a.champ)).or_insert(0.0) += 1.0;
+                    }
+                }
+            }
+            if !tb.is_empty() {
+                let ntb = tb.len() as f64;
+                let mean = |j: usize| tb.iter().map(|r| r[j]).sum::<f64>() / ntb;
+                let (ma, mb, mc) = (mean(0), mean(1), mean(2));
+                let mut rng5: u64 = 20260705;
+                let mut next5 = move || {
+                    rng5 ^= rng5 << 13;
+                    rng5 ^= rng5 >> 7;
+                    rng5 ^= rng5 << 17;
+                    rng5
+                };
+                let mut d1: Vec<f64> = Vec::with_capacity(B);
+                let mut d2: Vec<f64> = Vec::with_capacity(B);
+                for _ in 0..B {
+                    let (mut s1, mut s2) = (0.0, 0.0);
+                    for _ in 0..tb.len() {
+                        let i = (next5() % tb.len() as u64) as usize;
+                        s1 += tb[i][1] - tb[i][0];
+                        s2 += tb[i][2] - tb[i][1];
+                    }
+                    d1.push(s1 / ntb);
+                    d2.push(s2 / ntb);
+                }
+                let (lo1, hi1) = ci(&mut d1);
+                let (lo2, hi2) = ci(&mut d2);
+                println!(
+                    "\nT-BAN BEHAVIORAL GRADER (post-hoc; chronological, enemy history ≥20 champ-games; {} preds, {} skipped):",
+                    tb.len(),
+                    skipped
+                );
+                println!(
+                    "  recall@5 of the enemy's actual picks: global-pickrate {:.3} · team-usage OPP {:.3} · OPP+pocket {:.3}",
+                    ma, mb, mc
+                );
+                println!(
+                    "    OPP − global  : Δ{:+.3} [{:+.3}, {:+.3}]  {}",
+                    mb - ma,
+                    lo1,
+                    hi1,
+                    if lo1 > 0.0 { "PASS — 상대 모델에 실제 예측 신호" } else { "미입증" }
+                );
+                println!(
+                    "    +pocket − OPP : Δ{:+.3} [{:+.3}, {:+.3}]  {}",
+                    mc - mb,
+                    lo2,
+                    hi2,
+                    if lo2 > 0.0 { "PASS — pocket 증분 실재" } else { "미입증" }
+                );
+            }
         }
 
         if !notes.is_empty() {

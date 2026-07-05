@@ -92,13 +92,14 @@ const W_FLEX: f32 = 0.01;
 // strong tiebreaker that can no longer beat a genuine tier gap. Also no longer
 // paid on the last pick (no remaining option value).
 const W_FLEX_FEARLESS: f32 = 0.015;
-// S3-3 (2026-07-05): pick-side pocket steal — taking the champ the ENEMY's player
-// is deepest on both denies their comfort and (in fearless) removes it for the
-// series. enemy_pocket = 0.015·ln(1+min(g,20)), max over their starters (≤0.046)
-// → effective term ≤0.016 (~0.4 tier): a tiebreaker, never the reason. The
-// fearless ×1.5 escalation is DEFERRED until rule-test T1 confirms bans are
-// set-scoped while picks are series-locked (ALGO-FIXES Step 3).
-const W_PICK_DENY: f32 = 0.35;
+// S3-3 (2026-07-05): pick-side pocket steal — ZEROED the same day it shipped, by
+// the grader built to adjudicate it (T-ban, 11,138 predictions): pocket predicts
+// the enemy's actual picks significantly WORSE than global pickrate (Δ−0.021
+// [−0.024, −0.019]) — the "deny what they'd pick" premise fails behaviorally
+// (athlete volume = old-meta mains; the AI picks current meta). The fearless
+// ×1.5 branch was separately refuted by T1 (pick locks are per-team — my steal
+// never erases the enemy's series pool). Plumbing + "저격픽" label kept at 0.
+const W_PICK_DENY: f32 = 0.0; // was 0.35 for ~3 hours
 // confidence: full trust in DATA terms at this many matches (theory fully faded).
 const FULL_CONF_MATCHES: f32 = 200.0;
 // tier "?" gate: append "?" to a champ's tier letter when its 95% half-CI (1.96·sd,
@@ -128,7 +129,12 @@ const W_MU_LP: f32 = 0.0; // was 0.008
 const MU_KAPPA: f32 = 12.0;
 const W_MU_DIRECT: f32 = 0.0;
 // opponent-aware ban: usage-share × winrate-excess of the SPECIFIC enemy team.
-const W_BAN_OPP: f32 = 0.08; // 60%-usage comfort champ ≈ +0.05 ≈ one tier step
+// ZEROED (T-ban behavioral grader, 2026-07-05, 11,138 chronological predictions):
+// recall@5 of the enemy's actual picks — team-usage OPP 0.184 vs global pickrate
+// 0.185, Δ−0.002 [−0.005, +0.001]. TFM2's AI teams have NO team-specific champ
+// identity beyond the global meta, which base+banrate already price in; the term
+// was pure double-counted meta noise. Rows stay parsed for display.
+const W_BAN_OPP: f32 = 0.0; // was 0.08
 // a champ with fewer games than this behind its winrate is flagged low-confidence
 // in the UI (its `C` is too thin to trust). Unknown game count = not flagged.
 const LOW_CONF_GAMES: u32 = 15;
@@ -1033,9 +1039,13 @@ impl Tables {
                 }
             }
         }
-        // ── enemy pocket pick (athlete-level comfort, max over their starters):
-        // denying a champ their player is deep on outvalues a generic strong ban.
-        opp += self.enemy_pocket.get(cand).copied().unwrap_or(0.0);
+        // ── enemy pocket pick — REMOVED from the ban score (T-ban grader,
+        // 2026-07-05): adding pocket made enemy-pick prediction significantly
+        // WORSE than global pickrate (recall@5 0.162 vs 0.184, Δ−0.021
+        // [−0.024, −0.019], n=11,138) — athlete volume points at OLD-meta mains
+        // while the AI picks the current meta. "Deny what they'll pick" fails
+        // its own premise. The feed stays (display/diagnostics).
+        // opp += self.enemy_pocket.get(cand).copied().unwrap_or(0.0);
         // ── deny/steal next-set ban DISABLED (code review 2026-06-20): the
         // enemy-AI valuation feed was league-wide background-sim noise, not the
         // current-match enemy.
