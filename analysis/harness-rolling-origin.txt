@@ -1,53 +1,53 @@
 === term validation v3 (rolling-origin — causal, deployment-realistic) ===
-matches scored: 3953 of 4488 (4488 with full position data) · 8 patch origins · noise 1sd ≈ ±0.8%p
-baseline always-blue: 51.4%
+matches scored: 5274 of 5809 (5809 with full position data) · 10 patch origins · noise 1sd ≈ ±0.7%p
+baseline always-blue: 51.7%
 
 STANDALONE:
-  base      (champ winrate)             : 58.8%
-  base_lane (per-lane winrate)          : 59.0%
-  syn       (legacy pair)               : 58.1%
-  cnt       (legacy all-vs-all)         : 58.7%
-  mu        (same-lane h2h) ★new        : 55.7%
-  lp        (laning z) ★new/caveat      : 49.6%
-  comp      (taxonomy)                  : 52.1%
-  fam       (athlete-champ) ★ph2        : 55.2%
-  fam_c     (centered, no team confound): 56.3%
-  fam_g     (games-only familiarity)    : 52.4%
+  base      (champ winrate)             : 58.2%
+  base_lane (per-lane winrate)          : 58.1%
+  syn       (legacy pair)               : 57.9%
+  cnt       (legacy all-vs-all)         : 58.6%
+  mu        (same-lane h2h) ★new        : 55.5%
+  lp        (laning z) ★new/caveat      : 50.4%
+  comp      (taxonomy)                  : 52.0%
+  fam       (athlete-champ) ★ph2        : 55.1%
+  fam_c     (centered, no team confound): 56.2%
+  fam_g     (games-only familiarity)    : 52.7%
   fam_gc    (career-centered comfort)   : 51.6%
-  fit       (athlete lane stat) ★ph2    : 54.3%
-  aip       (game-AI intrinsic) ★caveat : 48.4%
+  fit       (athlete lane stat) ★ph2    : 53.3%
+  aip       (game-AI intrinsic) ★caveat : 50.2%
 
 INCREMENTAL over base_lane (scale sweep; >noise lift = earns weight):
-  base_lane alone                  : 59.0%
-  base_lane + s*mu    s=0.25 : 58.9%  s=0.5  : 58.8%  s=1    : 57.8%  s=2    : 57.4%
-  base_lane + s*lp    s=0.004: 58.9%  s=0.008: 59.0%  s=0.016: 58.9%  s=0.032: 58.7%
-  base_lane + s*cnt   s=0.05 : 58.9%  s=0.1  : 59.1%  s=0.15 : 59.1%  s=0.3  : 58.9%
-  base_lane + s*syn   s=0.05 : 58.9%  s=0.1  : 59.2%  s=0.15 : 59.4%  s=0.3  : 58.9%
-  base_lane + s*comp  s=0.01 : 59.1%  s=0.02 : 59.0%  s=0.04 : 59.0%  s=0.08 : 59.5%
-  base_lane + s*fam   s=0.25 : 59.6%  s=0.5  : 58.9%  s=1    : 58.2%  s=2    : 57.3%
-  base_lane + s*famc  s=0.25 : 60.0%  s=0.5  : 59.3%  s=1    : 58.6%  s=2    : 57.5%
-  base_lane + s*famg  s=0.02 : 59.1%  s=0.04 : 58.6%  s=0.08 : 57.8%  s=0.16 : 56.6%
-  base_lane + s*famgc  s=0.02 : 59.0%  s=0.04 : 58.1%  s=0.08 : 57.2%  s=0.16 : 55.6%
-  base_lane + s*fit   s=0.02 : 59.0%  s=0.05 : 59.3%  s=0.1  : 59.3%  s=0.2  : 59.9%
-  base_lane + s*aip   s=0.25 : 58.8%  s=0.5  : 59.2%  s=1    : 59.1%  s=2    : 59.0%
+  base_lane alone                  : 58.1%
+  base_lane + s*mu    s=0.25 : 58.1%  s=0.5  : 58.0%  s=1    : 57.2%  s=2    : 56.9%
+  base_lane + s*lp    s=0.004: 58.0%  s=0.008: 58.0%  s=0.016: 58.3%  s=0.032: 58.6%
+  base_lane + s*cnt   s=0.05 : 58.2%  s=0.1  : 58.5%  s=0.15 : 58.6%  s=0.3  : 58.5%
+  base_lane + s*syn   s=0.05 : 58.1%  s=0.1  : 58.3%  s=0.15 : 58.5%  s=0.3  : 58.2%
+  base_lane + s*comp  s=0.01 : 58.2%  s=0.02 : 58.1%  s=0.04 : 58.0%  s=0.08 : 58.5%
+  base_lane + s*fam   s=0.25 : 59.1%  s=0.5  : 58.6%  s=1    : 57.8%  s=2    : 57.1%
+  base_lane + s*famc  s=0.25 : 59.5%  s=0.5  : 59.0%  s=1    : 58.3%  s=2    : 57.0%
+  base_lane + s*famg  s=0.02 : 58.4%  s=0.04 : 58.6%  s=0.08 : 57.8%  s=0.16 : 56.6%
+  base_lane + s*famgc  s=0.02 : 58.1%  s=0.04 : 57.9%  s=0.08 : 57.1%  s=0.16 : 55.3%
+  base_lane + s*fit   s=0.02 : 58.2%  s=0.05 : 58.4%  s=0.1  : 58.4%  s=0.2  : 58.9%
+  base_lane + s*aip   s=0.25 : 58.1%  s=0.5  : 58.6%  s=1    : 58.8%  s=2    : 58.9%
 
 COMBOS (base anchor too — base beat base_lane standalone):
-  base_lane + 0.5*mu                              : 58.8%
-  base_lane + 0.5*fam                             : 58.9%
-  base      + 0.5*fam                             : 59.0%
-  base      + 0.5*fam_c                           : 59.0%
-  base      + 0.5*fam + 0.15*syn                  : 59.4%
-  base      + 0.5*fam + 0.05*fit                  : 59.1%
-  base+blend(0.5*lane) + 0.5*fam                  : 59.1%
-  base + 0.5*fam + 0.15*syn + 0.05*fit + 0.008*lp : 59.7%
+  base_lane + 0.5*mu                              : 58.0%
+  base_lane + 0.5*fam                             : 58.6%
+  base      + 0.5*fam                             : 58.5%
+  base      + 0.5*fam_c                           : 58.7%
+  base      + 0.5*fam + 0.15*syn                  : 59.1%
+  base      + 0.5*fam + 0.05*fit                  : 58.6%
+  base+blend(0.5*lane) + 0.5*fam                  : 58.7%
+  base + 0.5*fam + 0.15*syn + 0.05*fit + 0.008*lp : 59.5%
   base_lane + 0.08*famg                           : 57.8%
-  base_lane + 0.08*famgc                          : 57.2%
-  base_lane + 0.08*famg + 0.25*fam_c              : 58.7%
-  base_lane + 0.08*famg + 0.25*famc + 0.05*fit    : 59.0%
-  base_lane + 0.5*aip                             : 59.2%
-  base_lane + 0.08*famg + 0.5*aip                 : 57.6%
-  aip + 0.08*famg (AI + athlete only)             : 52.7%
-  kitchen sink (yesterday's engine shape)         : 59.9%
+  base_lane + 0.08*famgc                          : 57.1%
+  base_lane + 0.08*famg + 0.25*fam_c              : 58.6%
+  base_lane + 0.08*famg + 0.25*famc + 0.05*fit    : 58.8%
+  base_lane + 0.5*aip                             : 58.6%
+  base_lane + 0.08*famg + 0.5*aip                 : 57.9%
+  aip + 0.08*famg (AI + athlete only)             : 52.9%
+  kitchen sink (yesterday's engine shape)         : 59.5%
 
 PER-ORIGIN (Δ = accuracy minus base_lane, within that origin's test set):
   origin    train  test | base_ln    famg  Δ.02*fg  Δ.08*fg  Δ.25*fc |  ±1sd
@@ -57,20 +57,22 @@ PER-ORIGIN (Δ = accuracy minus base_lane, within that origin's test set):
   2026.1.2   2666   355 |   56.9%   50.7%     +0.0     -0.6     +2.0 |   2.7
   2026.2.0   3021   270 |   53.7%   48.3%     -2.2     -3.7     -0.4 |   3.0
   2026.3.0   3291   541 |   55.5%   47.3%     -1.3     -4.8     -1.3 |   2.1
-  2026.3.1   3832   656 |   59.8%   49.2%     +0.5     -2.4     -1.1 |   2.0
-  EARLY-POOLED (4 origins) n=2486 | base_lane  60.1%  Δ.08*famg  +0.2  Δ.25*famc  +2.1  (±1.0%p)
-  LATE-POOLED  (3 origins, train≥3021) n=1467 | base_lane  57.1%  Δ.08*famg  -3.5  Δ.25*famc  -1.0  (±1.3%p)
+  2026.3.1   3832   892 |   58.0%   49.3%     +0.1     -1.8     +0.7 |   1.7
+  2026.4.0   4724   608 |   55.6%   54.4%     +0.0     +2.0     -0.5 |   2.0
+  2026.4.1   5332   477 |   56.6%   53.8%     +2.7     +4.2     +5.5 |   2.3
+  EARLY-POOLED (6 origins) n=3297 | base_lane  58.8%  Δ.08*famg  -0.9  Δ.25*famc  +1.4  (±0.9%p)
+  LATE-POOLED  (3 origins, train≥3832) n=1977 | base_lane  56.9%  Δ.08*famg  +0.8  Δ.25*famc  +1.5  (±1.1%p)
   → leakage: Δfamg ≈0/negative in BOTH pools · data starvation: negative early, POSITIVE late.
 
-PRODUCTION-MATH BASE (S0-3) — patch-local: current(expanding, play order) + prev·0.35·(1−cm/40), changed-champ prev-drop, κ40/κ20 beta_post [notes: 7 versions]:
-  base_prod      (champ, production state)     : 60.0%
-  base_lane_prod (lane,  production state)     : 59.5%
-  pooled-history comparison: base κ8 58.8% / κ40 58.6%  ·  base_lane κ8 59.0% / κ40 58.9%
+PRODUCTION-MATH BASE (S0-3) — patch-local: current(expanding, play order) + prev·0.35·(1−cm/40), changed-champ prev-drop, κ40/κ20 beta_post [notes: 9 versions]:
+  base_prod      (champ, production state)     : 60.2%
+  base_lane_prod (lane,  production state)     : 59.9%
+  pooled-history comparison: base κ8 58.2% / κ40 58.0%  ·  base_lane κ8 58.1% / κ40 58.1%
   INCREMENTAL over base_lane_prod (does each athlete term earn weight on the SHIPPED base?):
-    base_lane_prod + s*famc  s=0.25 : 61.1%  s=0.5  : 60.6%  s=1    : 59.7%  s=2    : 58.3%
-    base_lane_prod + s*fam   s=0.25 : 60.8%  s=0.5  : 60.8%  s=1    : 59.3%  s=2    : 58.0%
-    base_lane_prod + s*famg  s=0.02 : 59.4%  s=0.04 : 59.2%  s=0.08 : 58.7%  s=0.16 : 57.1%
-    base_lane_prod + s*fit   s=0.02 : 59.5%  s=0.05 : 59.6%  s=0.1  : 60.2%  s=0.2  : 60.1%
+    base_lane_prod + s*famc  s=0.25 : 61.5%  s=0.5  : 60.4%  s=1    : 59.2%  s=2    : 57.8%
+    base_lane_prod + s*fam   s=0.25 : 61.5%  s=0.5  : 60.8%  s=1    : 59.0%  s=2    : 57.7%
+    base_lane_prod + s*famg  s=0.02 : 59.5%  s=0.04 : 59.2%  s=0.08 : 58.5%  s=0.16 : 57.2%
+    base_lane_prod + s*fit   s=0.02 : 59.9%  s=0.05 : 60.0%  s=0.1  : 60.5%  s=0.2  : 60.4%
   PER-ORIGIN (Δ over base_lane_prod; chg = champs reset by that version's note):
     origin     chg |  bl_prod  Δ.25*fc   Δ.5*fc  Δ.08*fg
     2026.0.1     4 |    58.8%     +0.6     +1.5     +1.1
@@ -79,43 +81,45 @@ PRODUCTION-MATH BASE (S0-3) — patch-local: current(expanding, play order) + pr
     2026.1.2     9 |    65.9%     -1.4     -4.2     -2.3
     2026.2.0    11 |    58.9%     -2.2     -2.2     -5.2
     2026.3.0    11 |    58.6%     -1.3     -1.1     -2.0
-    2026.3.1     9 |    61.0%     -0.8     +0.3     -4.6
+    2026.3.1     9 |    63.1%     -0.4     -1.2     -4.8
+    2026.4.0    11 |    63.0%     +1.0     -2.8     -5.1
+    2026.4.1     9 |    54.1%     +3.6     +3.4     +1.7
 
 PRE-REGISTERED 6-MODEL COMPARISON + BOOTSTRAP CI (S0-4; 1000× match resample, xorshift64 seed 20260705):
-  ① always-first-side                           :  51.4%  [ 49.8,  52.9]
-  ② base_lane (pooled κ8 harness anchor)        :  59.0%  [ 57.5,  60.5]
-  ③ ② + shipped af (.020·lng+.15·cwr cap .05)   :  58.9%  [ 57.5,  60.4]
-  ④ shipped pick score (board-independent)      :  59.7%  [ 58.2,  61.3]
-  ⑤ ④ − comp                                    :  59.7%  [ 58.1,  61.3]
-  ⑥ ④ − LP                                      :  59.8%  [ 58.2,  61.3]
+  ① always-first-side                           :  51.7%  [ 50.4,  52.9]
+  ② base_lane (pooled κ8 harness anchor)        :  58.1%  [ 56.8,  59.4]
+  ③ ② + shipped af (.020·lng+.15·cwr cap .05)   :  58.4%  [ 57.2,  59.7]
+  ④ shipped pick score (board-independent)      :  60.3%  [ 59.0,  61.7]
+  ⑤ ④ − comp                                    :  60.0%  [ 58.8,  61.4]
+  ⑥ ④ − LP                                      :  60.1%  [ 58.8,  61.4]
   PAIRED DELTAS (adoption gate: bootstrap CI lower bound > 0):
-    ②−① base_lane vs coin (sanity)    :  +7.6  [ +5.3,  +9.7]  PASS
-    ③−② shipped af contribution       :  -0.1  [ -1.0,  +0.8]  FAIL (미입증 — 예산 항목, 키우기 금지)
-    ④−② shipped bundle vs base_lane   :  +0.7  [ -1.1,  +2.5]  FAIL (미입증 — 예산 항목, 키우기 금지)
-    ④−⑤ comp contribution             :  +0.0  [ -0.4,  +0.5]  FAIL (미입증 — 예산 항목, 키우기 금지)
-    ④−⑥ LP contribution               :  -0.1  [ -0.8,  +0.6]  FAIL (미입증 — 예산 항목, 키우기 금지)
+    ②−① base_lane vs coin (sanity)    :  +6.4  [ +4.6,  +8.3]  PASS
+    ③−② shipped af contribution       :  +0.3  [ -0.5,  +1.1]  FAIL (미입증 — 예산 항목, 키우기 금지)
+    ④−② shipped bundle vs base_lane   :  +2.2  [ +0.6,  +3.8]  PASS
+    ④−⑤ comp contribution             :  +0.3  [ -0.1,  +0.8]  FAIL (미입증 — 예산 항목, 키우기 금지)
+    ④−⑥ LP contribution               :  +0.3  [ -0.4,  +0.9]  FAIL (미입증 — 예산 항목, 키우기 금지)
 
 POST-HOC S2 DIAGNOSTICS (not pre-registered; paired bootstrap, same seed):
-  af_new over base_lane (F15 verify)  : 59.0% → 59.3%  Δ +0.3 [ -0.5,  +1.1]  
-  af_new over prod anchor (F15 verify): 59.5% → 59.6%  Δ +0.1 [ -0.7,  +0.8]  
-  0.01·stack (S2-7)                   : 59.5% → 59.4%  Δ -0.1 [ -0.5,  +0.3]  REJECT (미입증)
-  0.02·heal_gap (S2-8)                : 59.5% → 59.3%  Δ -0.2 [ -0.4,  +0.1]  REJECT (미입증)
-  0.02·cc_gap (S2-8)                  : 59.5% → 59.5%  Δ +0.0 [ +0.0,  +0.0]  REJECT (미입증)
-  0.02·front_gap (S2-8)               : 59.5% → 59.5%  Δ +0.0 [ -0.1,  +0.1]  REJECT (미입증)
-  0.02·backline_gap (S2-8)            : 59.5% → 59.4%  Δ -0.1 [ -0.4,  +0.3]  REJECT (미입증)
-  S2-3 κ sweep (champ prod state): κ20 60.1% · κ40 60.0% (ship) · κ80 60.1% · κ150 59.9%
+  af_new over base_lane (F15 verify)  : 58.1% → 58.5%  Δ +0.4 [ -0.4,  +1.0]  
+  af_new over prod anchor (F15 verify): 59.9% → 59.9%  Δ +0.0 [ -0.6,  +0.7]  
+  0.01·stack (S2-7)                   : 59.9% → 59.7%  Δ -0.2 [ -0.5,  +0.1]  REJECT (미입증)
+  0.02·heal_gap (S2-8)                : 59.9% → 59.8%  Δ -0.1 [ -0.3,  +0.1]  REJECT (미입증)
+  0.02·cc_gap (S2-8)                  : 59.9% → 59.9%  Δ +0.0 [ +0.0,  +0.0]  REJECT (미입증)
+  0.02·front_gap (S2-8)               : 59.9% → 59.8%  Δ -0.0 [ -0.1,  +0.1]  REJECT (미입증)
+  0.02·backline_gap (S2-8)            : 59.9% → 59.9%  Δ +0.0 [ -0.3,  +0.3]  REJECT (미입증)
+  S2-3 κ sweep (champ prod state): κ20 60.1% · κ40 60.2% (ship) · κ80 60.4% · κ150 60.2%
 
-S2-5/S2-6 EXPERIMENTS (post-hoc; solo file: 1091 matches):
-  S2-5 w_solo=0.10 (prev-ver solo)  : 60.0% vs base_prod 60.0%  Δ +0.0 [ -0.1,  +0.1] · thin(n=1974) Δ +0.0 · thick Δ +0.0  REJECT (미입증)
-  S2-5 w_solo=0.25 (prev-ver solo)  : 60.0% vs base_prod 60.0%  Δ +0.0 [ -0.1,  +0.2] · thin(n=1974) Δ +0.1 · thick Δ +0.0  REJECT (미입증)
-  S2-6 BT θ standalone              : 58.8% vs base_prod 60.0%  Δ -1.1 [ -3.0,  +0.7] · thin(n=1974) Δ -2.7 · thick Δ +0.4  REJECT (미입증)
-  (θ̂ 비교 축: pooled base κ8 58.8% · base_lane 59.0% — BT는 base 대체 후보로만 평가, 스케일이 달라 블렌드는 무의미)
+S2-5/S2-6 EXPERIMENTS (post-hoc; solo file: 1019 matches):
+  S2-5 w_solo=0.10 (prev-ver solo)  : 60.2% vs base_prod 60.2%  Δ +0.0 [ -0.1,  +0.1] · thin(n=2637) Δ +0.1 · thick Δ +0.0  REJECT (미입증)
+  S2-5 w_solo=0.25 (prev-ver solo)  : 60.2% vs base_prod 60.2%  Δ +0.0 [ -0.1,  +0.2] · thin(n=2637) Δ +0.1 · thick Δ +0.0  REJECT (미입증)
+  S2-6 BT θ standalone              : 58.6% vs base_prod 60.2%  Δ -1.6 [ -3.1,  -0.1] · thin(n=2637) Δ -2.2 · thick Δ -1.0  REJECT (미입증)
+  (θ̂ 비교 축: pooled base κ8 58.2% · base_lane 58.1% — BT는 base 대체 후보로만 평가, 스케일이 달라 블렌드는 무의미)
 
 T4 ADVICE BENCH (post-hoc; shipped board-independent score, comp/LP omitted; pool = champs − bans − other picks):
-  winner-team mean pick percentile 0.668 vs loser 0.615 · Δ+0.053 [+0.046, +0.061] · winner-higher 57.9%
+  winner-team mean pick percentile 0.678 vs loser 0.625 · Δ+0.053 [+0.047, +0.060] · winner-higher 58.3%
   (Δ>0 = 승팀의 실픽이 우리 랭킹에서 더 상위 — 픽 랭킹 축이 승리와 정합. 가중 변경 시의 회귀 기준선.)
-  S2-2 T-nudge: realized Δdelta vs signed change-count — slope +0.0125/chg, r +0.66, n 46  → count-scaling has signal → adopt S2-2 sizes
-  S2-1 T-amnesia n≤2 (small tweaks): n=1   MAE reset 0.250 · full-0.35prev 0.234 · count-scaled 0.242  → scaled beats reset → S2-1 adopt candidate
-  S2-1 T-amnesia n≥3 (big changes) : n=51  MAE reset 0.112 · full-0.35prev 0.115 · count-scaled 0.111  → reset fine
+  S2-2 T-nudge: realized Δdelta vs signed change-count — slope +0.0134/chg, r +0.60, n 62  → count-scaling has signal → adopt S2-2 sizes
+  S2-1 T-amnesia n≤2 (small tweaks): n=17  MAE reset 0.091 · full-0.35prev 0.076 · count-scaled 0.076  → scaled beats reset → S2-1 adopt candidate
+  S2-1 T-amnesia n≥3 (big changes) : n=51  MAE reset 0.113 · full-0.35prev 0.116 · count-scaled 0.112  → reset fine
 
->> A term EARNS engine weight only if it lifts base_lane beyond ~±0.8%p noise.
+>> A term EARNS engine weight only if it lifts base_lane beyond ~±0.7%p noise.

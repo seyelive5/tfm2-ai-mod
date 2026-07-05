@@ -56,11 +56,12 @@ for (i, m) in matches.iter().enumerate() {
 **변경**: 버전 경계 rolling-origin — origin v에 대해 train = version < v 전체, test = version == v (8 origins; 매치의 version 필드는 리플레이에 존재). 매치 벡터가 시간순인지 먼저 확인(아니면 (version, index) 정렬). 풀드 정확도 + origin별 표. 기존 i%5 모드는 `--legacy` 플래그로 보존(수치 비교용).
 </details>
 
-### S0-2. 데이터 재캡처
+### S0-2. 데이터 재캡처 — ✅ 완료 (2026-07-05 저녁)
 ```powershell
 New-Item "$env:LOCALAPPDATA\tfm2-overlay\probe\DEBUG_DUMPS" -ItemType File
 # 게임 1세션(커리어 로드 + 경기 1회) → match_replays.debug.txt 갱신(≈5,000판, 9버전) → 마커 삭제
 ```
+**결과**: 5,809판/10버전(4.0=608·4.1=477) 확보, 전 섹션 재실행 → 판정 이동 4건(**④−② +2.2 PASS 승격**, famc early-집중 해소, famg 단조-논거 폐기 — 누출 결론은 유지, BT −1.6 유의-음성). 상세 **findings §S0-2 재검**. 노트 공백은 `analysis/patch_notes_ext.txt`(4.0/4.1 합성 n=1)로 메움 → **T-amnesia n≤2 층 오염**(판정 무효) → 뉴스 덤프를 DEBUG_DUMPS 게이트에 추가 배포(다음 캡처부터 실카운트).
 
 ### S0-3. 프로덕션 수학 이식 — ✅ 완료 (2026-07-05)
 하네스의 base 계산을 출하 수학으로: `beta_post` κ40(champ, prior 0.5)/κ20(lane, prior champ-mean), prev 블렌드 `0.35·(1−cm/40)` power-prior, 변경 챔프 리셋(버전별 changed-set은 `patch_notes_dump.txt`의 7개 노트에서 재구성 — authored_chg와 동일 규칙). 현행 하네스 κ8과의 차이를 한 번 리포트(κ8 검증이 κ40 출하를 대변하는지가 F7/F11의 미해결점).
