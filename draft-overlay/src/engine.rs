@@ -92,6 +92,13 @@ const W_FLEX: f32 = 0.01;
 // strong tiebreaker that can no longer beat a genuine tier gap. Also no longer
 // paid on the last pick (no remaining option value).
 const W_FLEX_FEARLESS: f32 = 0.015;
+// S3-3 (2026-07-05): pick-side pocket steal — taking the champ the ENEMY's player
+// is deepest on both denies their comfort and (in fearless) removes it for the
+// series. enemy_pocket = 0.015·ln(1+min(g,20)), max over their starters (≤0.046)
+// → effective term ≤0.016 (~0.4 tier): a tiebreaker, never the reason. The
+// fearless ×1.5 escalation is DEFERRED until rule-test T1 confirms bans are
+// set-scoped while picks are series-locked (ALGO-FIXES Step 3).
+const W_PICK_DENY: f32 = 0.35;
 // confidence: full trust in DATA terms at this many matches (theory fully faded).
 const FULL_CONF_MATCHES: f32 = 200.0;
 // tier "?" gate: append "?" to a champ's tier letter when its 95% half-CI (1.96·sd,
@@ -913,6 +920,9 @@ impl Tables {
         // §S0-1b). Causal survivor = famc, shipped at 0.15 with the 0.05 cap; S0-4
         // rates the whole term CI-unproven (budget item — do not grow).
         let fam = self.af(cand, lane);
+        // ── pick-side pocket steal (S3-3): athlete-level, current-match feed —
+        // NOT the retired background-sim deny below. See W_PICK_DENY.
+        let steal = W_PICK_DENY * self.enemy_pocket.get(cand).copied().unwrap_or(0.0);
         // ── deny/steal DISABLED (code review 2026-06-20): the enemy-AI valuation
         // feed was league-wide background-sim noise, not the current-match enemy.
         // let deny = 0.3 * self.deny_value(cand);
@@ -920,8 +930,8 @@ impl Tables {
         // commented — to restore deny you must re-add `+ deny` to `total` and
         // `("디나이", deny)` to the dominant list here (uncommenting the feed alone
         // silently leaves the pick-side term dropped). See the ban-side twin below.
-        let total = base + syn + cnt + comp + fam - dup;
-        (total, dominant(&[("강챔", strength), ("패치/사전", prior_part), ("시너지", syn), ("카운터", cnt), ("조합", comp), ("숙련", fam)]))
+        let total = base + syn + cnt + comp + fam - dup + steal;
+        (total, dominant(&[("강챔", strength), ("패치/사전", prior_part), ("시너지", syn), ("카운터", cnt), ("조합", comp), ("숙련", fam), ("저격픽", steal)]))
     }
 
     /// BAN desirability. DATA terms mirror tfm2_draft_ai::score_ban; at cold-start
