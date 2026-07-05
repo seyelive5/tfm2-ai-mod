@@ -968,7 +968,9 @@ impl Tables {
                 (self.opp.get(&(enemy_team, cand.into())), self.opp_team_games.get(&enemy_team))
             {
                 if tg > 0 {
-                    let usage = g as f32 / tg as f32;
+                    // S3-8: usage share shrunk (g+1)/(tg+3) — a 2-of-3-games champ
+                    // read as 67% "reliance" off a 3-game team sample; now 0.5.
+                    let usage = (g as f32 + 1.0) / (tg as f32 + 3.0);
                     let wr = (w as f32 + 3.0) / (g as f32 + 6.0); // shrunk (k=6)
                     opp = W_BAN_OPP * usage * (1.0 + 2.0 * (wr - 0.5));
                 }
