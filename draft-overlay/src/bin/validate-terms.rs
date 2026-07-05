@@ -6,7 +6,13 @@
 //! is validated BEFORE it is built. The replay dump stores each athlete's stat
 //! snapshot AT MATCH TIME → no leakage for fit; familiarity is train-fold-built.
 //!
-//! Usage: validate-terms <match_replays.debug.txt> [draft_weights.tsv] [champion_patch_statistics.tsv] [ai_intrinsic.tsv]
+//! v3.2 (2026-07-05, ALGO-FIXES S0-3): production-math base — the SHIPPED
+//! patch-local state (current + prev·0.35·(1−cm/40), κ40/κ20 beta_post,
+//! changed-champ prev-drop from the patch-note dump), expanding in play order
+//! (replay `id`, verified monotone with version) so what gets validated is the
+//! model we actually ship, not the harness's pooled-history approximation.
+//!
+//! Usage: validate-terms [--legacy] [--notes=patch_notes_dump.txt] <match_replays.debug.txt> [draft_weights.tsv] [champion_patch_statistics.tsv] [ai_intrinsic.tsv]
 //!   draft_weights.tsv               → T rows (taxonomy) for the comp term
 //!   champion_patch_statistics.tsv   → LP (gold_line_phase z) — CAVEAT: career-
 //!                                     cumulative (includes test matches); champ
@@ -18,7 +24,7 @@
 //!                                     learned from these same matches → treat as
 //!                                     an upper bound like LP.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // ---------- balanced-scan parse ----------
 fn read_balanced(b: &[u8], open_idx: usize, open: u8, close: u8) -> Option<(usize, usize)> {
@@ -107,6 +113,9 @@ struct Match {
     /// patch version this replay was played on (MatchReplayData.version, e.g.
     /// "2026.3.1") — drives the causal rolling-origin split.
     version: String,
+    /// chronological match id (top-level MatchReplayData.id; verified: sorting by
+    /// id makes version monotone, 0 violations) — play order for expanding tables.
+    id: u64,
 }
 
 fn parse_team(arr: &str) -> Vec<Ath> {
@@ -157,7 +166,10 @@ fn parse_matches(text: &str) -> Vec<Match> {
             continue;
         }
         let version = quoted(block, "version").unwrap_or_default();
-        out.push(Match { blue, red, blue_win, version });
+        // top-level `id:` is the block's first field, so find() hits it before any
+        // athlete_id (which contains "id: " as a substring but appears later).
+        let id = num_field(block, "id").unwrap_or(0.0) as u64;
+        out.push(Match { blue, red, blue_win, version, id });
     }
     out
 }
@@ -240,11 +252,89 @@ impl WL {
     }
 }
 
+// ---------- production scoring math (S0-3) — mirrors tfm2_db_export/src/recommender.rs:23-151 ----------
+const PROD_PREV_W: f64 = 0.35; // PREV_PATCH_WEIGHT
+const PROD_CONF_CHAMP: f64 = 40.0; // per-champ current-patch matches at which the prev blend fades out
+const PROD_KAPPA_CHAMP: f64 = 40.0; // KAPPA_CHAMP
+const PROD_KAPPA_LANE: f64 = 20.0; // KAPPA_LANE
+
+fn beta_mean(w: f64, m: f64, prior_mean: f64, kappa: f64) -> f64 {
+    let pm = prior_mean.clamp(0.001, 0.999);
+    let a = w.max(0.0) + pm * kappa;
+    let b = (m - w).max(0.0) + (1.0 - pm) * kappa;
+    a / (a + b)
+}
+
+/// champ posterior MEAN under the shipped patch-local state: current-version WL
+/// + previous-version WL at 0.35·(1−cm/40) (cm = champ's current games so far);
+/// champs in this version's patch note drop the prev blend (stale — restart).
+fn prod_champ_post(c: &str, cur: &HashMap<&str, WL>, prev: &HashMap<&str, WL>, changed: &HashSet<String>) -> f64 {
+    let cu = cur.get(c).copied().unwrap_or_default();
+    let pv = if changed.contains(c) { WL::default() } else { prev.get(c).copied().unwrap_or_default() };
+    let pw = PROD_PREV_W * (1.0 - (cu.g / PROD_CONF_CHAMP).min(1.0));
+    beta_mean(cu.w + pw * pv.w, cu.g + pw * pv.g, 0.5, PROD_KAPPA_CHAMP)
+}
+
+/// lane delta under the shipped state: κ20 beta with the champ's own posterior
+/// mean as prior; the prev fade uses CHAMP-level current games (recommender.rs
+/// keys cur_m by champ, not (champ,lane)); an empty lane cell falls back to champ.
+fn prod_lane_delta(
+    a: &Ath,
+    cur_c: &HashMap<&str, WL>,
+    prev_c: &HashMap<&str, WL>,
+    cur_cp: &HashMap<(&str, usize), WL>,
+    prev_cp: &HashMap<(&str, usize), WL>,
+    changed: &HashSet<String>,
+) -> f64 {
+    let cmean = prod_champ_post(&a.champ, cur_c, prev_c, changed);
+    if a.lane < 5 {
+        let cu = cur_cp.get(&(a.champ.as_str(), a.lane)).copied().unwrap_or_default();
+        let pv = if changed.contains(&a.champ) {
+            WL::default()
+        } else {
+            prev_cp.get(&(a.champ.as_str(), a.lane)).copied().unwrap_or_default()
+        };
+        let champ_cm = cur_c.get(a.champ.as_str()).map_or(0.0, |w| w.g);
+        let pw = PROD_PREV_W * (1.0 - (champ_cm / PROD_CONF_CHAMP).min(1.0));
+        let (w, m) = (cu.w + pw * pv.w, cu.g + pw * pv.g);
+        if m > 0.0 {
+            return beta_mean(w, m, cmean, PROD_KAPPA_LANE) - 0.5;
+        }
+    }
+    cmean - 0.5
+}
+
+/// `=== version V ===` sections + `[champ]` line prefixes from patch_notes_dump.txt
+/// → per-version changed-champ sets (the authored reset rule, same as authored_chg).
+fn parse_patch_notes(text: &str) -> HashMap<String, HashSet<String>> {
+    let mut out: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut cur: Option<String> = None;
+    for line in text.lines() {
+        let lt = line.trim();
+        if let Some(rest) = lt.strip_prefix("=== version ") {
+            let v = rest.split_whitespace().next().unwrap_or("").to_string();
+            out.entry(v.clone()).or_default();
+            cur = Some(v);
+        } else if let (Some(v), Some(rest)) = (cur.as_ref(), lt.strip_prefix('[')) {
+            if let Some(end) = rest.find(']') {
+                out.get_mut(v).unwrap().insert(rest[..end].to_string());
+            }
+        }
+    }
+    out
+}
+
 /// per-match term values (blue minus red), computed under that match's CV fold.
 #[derive(Default, Clone, Copy)]
 struct Terms {
     base: f64,      // champ winrate (lane-agnostic), κ8
     base_lane: f64, // per-(champ,lane) winrate, κ20 prior=champ mean, fallback base
+    base40: f64,      // pooled-history champ at κ40 (the κ8-vs-κ40 ship report, S0-3)
+    base_lane40: f64, // pooled-history lane on the κ40 champ prior
+    /// production-math champ base (S0-3): patch-local cur + 0.35·fade·prev, κ40 beta.
+    base_prod: f64,
+    /// production-math lane base — the SHIPPED model's true causal anchor.
+    base_lane_prod: f64,
     syn: f64,       // legacy same-team pair
     cnt: f64,       // legacy cross-team pair (all-vs-all)
     mu: f64,        // same-LANE head-to-head, κ12 (the new matchup axis)
@@ -273,9 +363,12 @@ fn main() {
     // the causal rolling-origin split (train on strictly-earlier patches only).
     let raw: Vec<String> = std::env::args().collect();
     let legacy = raw.iter().any(|a| a == "--legacy");
+    // --notes=<patch_notes_dump.txt> → per-version changed-champ sets for the S0-3
+    // production base (stale-blend-drop). Optional: absent = no resets (reported).
+    let notes_path: Option<String> = raw.iter().find_map(|a| a.strip_prefix("--notes=").map(str::to_string));
     let args: Vec<String> = raw.into_iter().filter(|a| !a.starts_with("--")).collect();
     if args.len() < 2 {
-        eprintln!("usage: validate-terms [--legacy] <match_replays.debug.txt> [draft_weights.tsv] [champion_patch_statistics.tsv] [ai_intrinsic.tsv]");
+        eprintln!("usage: validate-terms [--legacy] [--notes=patch_notes_dump.txt] <match_replays.debug.txt> [draft_weights.tsv] [champion_patch_statistics.tsv] [ai_intrinsic.tsv]");
         std::process::exit(2);
     }
     let matches = parse_matches(&std::fs::read_to_string(&args[1]).unwrap_or_default());
@@ -301,6 +394,10 @@ fn main() {
     } else {
         HashMap::new()
     };
+    let notes: HashMap<String, HashSet<String>> = notes_path
+        .as_deref()
+        .map(|p| parse_patch_notes(&std::fs::read_to_string(p).unwrap_or_default()))
+        .unwrap_or_default();
     let n_pos = matches
         .iter()
         .filter(|m| m.blue.iter().all(|a| a.lane < 5) && m.red.iter().all(|a| a.lane < 5))
@@ -405,10 +502,49 @@ fn main() {
             }
             cdelta(&a.champ)
         };
-        for (i, m) in matches.iter().enumerate() {
-            if groups[i] != g {
-                continue; // score only this origin/fold's matches
+        // κ40 pooled variants — the "does κ8 validation speak for the κ40 ship?" report (S0-3/F7/F11)
+        let cdelta40 = |c: &str| champ.get(c).map_or(0.0, |w| w.delta(40.0));
+        let lane_delta40 = |a: &Ath| -> f64 {
+            if a.lane < 5 {
+                if let Some(w) = cp.get(&(a.champ.as_str(), a.lane)) {
+                    return w.delta_p(20.0, cdelta40(&a.champ) + 0.5);
+                }
             }
+            cdelta40(&a.champ)
+        };
+        // production patch-local state (S0-3): memory = current version (expanding in
+        // play order) + previous version at 0.35·(1−cm/40); older versions FORGOTTEN,
+        // changed champs drop their prev blend — mirrors recommender.rs patch_current.
+        let mut prev_c: HashMap<&str, WL> = HashMap::new();
+        let mut prev_cp: HashMap<(&str, usize), WL> = HashMap::new();
+        if !legacy && g >= 1 {
+            for (i, m) in matches.iter().enumerate() {
+                if groups[i] != g - 1 {
+                    continue;
+                }
+                for (team, won) in [(&m.blue, m.blue_win), (&m.red, !m.blue_win)] {
+                    for a in team {
+                        prev_c.entry(&a.champ).or_default().rec(won);
+                        if a.lane < 5 {
+                            prev_cp.entry((&a.champ, a.lane)).or_default().rec(won);
+                        }
+                    }
+                }
+            }
+        }
+        let empty_changed: HashSet<String> = HashSet::new();
+        let changed: &HashSet<String> = if legacy {
+            &empty_changed
+        } else {
+            let label = vsorted[g].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".");
+            notes.get(&label).unwrap_or(&empty_changed)
+        };
+        let mut cur_c: HashMap<&str, WL> = HashMap::new();
+        let mut cur_cp: HashMap<(&str, usize), WL> = HashMap::new();
+        let mut test_idx: Vec<usize> = (0..matches.len()).filter(|&i| groups[i] == g).collect();
+        test_idx.sort_by_key(|&i| matches[i].id); // play order — production tables must expand causally
+        for &i in &test_idx {
+            let m = &matches[i];
             let mut t = Terms { win: m.blue_win, group: g, ..Default::default() };
             let side = |team: &[Ath]| -> (f64, f64, f64, f64, f64, f64, f64) {
                 let b: f64 = team.iter().map(|a| cdelta(&a.champ)).sum();
@@ -470,7 +606,32 @@ fn main() {
                 team.iter().map(|a| ai_intr.get(&a.champ).copied().unwrap_or(0.0)).sum()
             };
             t.aip = aips(&m.blue) - aips(&m.red);
+            t.base40 = m.blue.iter().map(|a| cdelta40(&a.champ)).sum::<f64>()
+                - m.red.iter().map(|a| cdelta40(&a.champ)).sum::<f64>();
+            t.base_lane40 =
+                m.blue.iter().map(lane_delta40).sum::<f64>() - m.red.iter().map(lane_delta40).sum::<f64>();
+            if !legacy {
+                let prod_c = |team: &[Ath]| -> f64 {
+                    team.iter().map(|a| prod_champ_post(&a.champ, &cur_c, &prev_c, changed) - 0.5).sum()
+                };
+                let prod_l = |team: &[Ath]| -> f64 {
+                    team.iter().map(|a| prod_lane_delta(a, &cur_c, &prev_c, &cur_cp, &prev_cp, changed)).sum()
+                };
+                t.base_prod = prod_c(&m.blue) - prod_c(&m.red);
+                t.base_lane_prod = prod_l(&m.blue) - prod_l(&m.red);
+            }
             recs.push(t);
+            if !legacy {
+                // ingest AFTER scoring: the production tables see only strictly-earlier matches
+                for (team, won) in [(&m.blue, m.blue_win), (&m.red, !m.blue_win)] {
+                    for a in team {
+                        cur_c.entry(&a.champ).or_default().rec(won);
+                        if a.lane < 5 {
+                            cur_cp.entry((&a.champ, a.lane)).or_default().rec(won);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -655,6 +816,52 @@ fn main() {
             );
         }
         println!("  → leakage: Δfamg ≈0/negative in BOTH pools · data starvation: negative early, POSITIVE late.");
+    }
+
+    if !legacy {
+        println!(
+            "\nPRODUCTION-MATH BASE (S0-3) — patch-local: current(expanding, play order) + prev·0.35·(1−cm/40), changed-champ prev-drop, κ40/κ20 beta_post [notes: {}]:",
+            if notes.is_empty() { "MISSING — no resets applied".to_string() } else { format!("{} versions", notes.len()) }
+        );
+        println!("  base_prod      (champ, production state)     : {:.1}%", acc(&|t: &Terms| t.base_prod));
+        println!("  base_lane_prod (lane,  production state)     : {:.1}%", acc(&|t: &Terms| t.base_lane_prod));
+        println!(
+            "  pooled-history comparison: base κ8 {:.1}% / κ40 {:.1}%  ·  base_lane κ8 {:.1}% / κ40 {:.1}%",
+            acc(&|t: &Terms| t.base),
+            acc(&|t: &Terms| t.base40),
+            acc(&|t: &Terms| t.base_lane),
+            acc(&|t: &Terms| t.base_lane40)
+        );
+        println!("  INCREMENTAL over base_lane_prod (does each athlete term earn weight on the SHIPPED base?):");
+        let panchor = |t: &Terms| t.base_lane_prod;
+        for (name, term, scales) in [
+            ("famc", (&|t: &Terms| t.fam_c) as &dyn Fn(&Terms) -> f64, [0.25, 0.5, 1.0, 2.0]),
+            ("fam ", &|t: &Terms| t.fam, [0.25, 0.5, 1.0, 2.0]),
+            ("famg", &|t: &Terms| t.fam_g, [0.02, 0.04, 0.08, 0.16]),
+            ("fit ", &|t: &Terms| t.fit, [0.02, 0.05, 0.1, 0.2]),
+        ] {
+            let mut line = format!("    base_lane_prod + s*{}", name);
+            for s in scales {
+                line.push_str(&format!("  s={:<5}: {:.1}%", s, acc(&|t: &Terms| panchor(t) + s * term(t))));
+            }
+            println!("{}", line);
+        }
+        println!("  PER-ORIGIN (Δ over base_lane_prod; chg = champs reset by that version's note):");
+        println!("    {:<9} {:>4} | {:>8} {:>8} {:>8} {:>8}", "origin", "chg", "bl_prod", "Δ.25*fc", "Δ.5*fc", "Δ.08*fg");
+        for &g in &scored_groups {
+            let label = vsorted[g].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".");
+            let set = [g];
+            let bl = acc_in(&set, &|t: &Terms| t.base_lane_prod);
+            println!(
+                "    {:<9} {:>4} | {:>7.1}% {:>+8.1} {:>+8.1} {:>+8.1}",
+                label,
+                notes.get(&label).map_or(0, |s| s.len()),
+                bl,
+                acc_in(&set, &|t: &Terms| t.base_lane_prod + 0.25 * t.fam_c) - bl,
+                acc_in(&set, &|t: &Terms| t.base_lane_prod + 0.5 * t.fam_c) - bl,
+                acc_in(&set, &|t: &Terms| t.base_lane_prod + 0.08 * t.fam_g) - bl,
+            );
+        }
     }
     println!("\n>> A term EARNS engine weight only if it lifts base_lane beyond ~±{:.1}%p noise.", 50.0 / n.sqrt());
 }

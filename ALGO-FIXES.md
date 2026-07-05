@@ -62,8 +62,10 @@ New-Item "$env:LOCALAPPDATA\tfm2-overlay\probe\DEBUG_DUMPS" -ItemType File
 # 게임 1세션(커리어 로드 + 경기 1회) → match_replays.debug.txt 갱신(≈5,000판, 9버전) → 마커 삭제
 ```
 
-### S0-3. 프로덕션 수학 이식
+### S0-3. 프로덕션 수학 이식 — ✅ 완료 (2026-07-05)
 하네스의 base 계산을 출하 수학으로: `beta_post` κ40(champ, prior 0.5)/κ20(lane, prior champ-mean), prev 블렌드 `0.35·(1−cm/40)` power-prior, 변경 챔프 리셋(버전별 changed-set은 `patch_notes_dump.txt`의 7개 노트에서 재구성 — authored_chg와 동일 규칙). 현행 하네스 κ8과의 차이를 한 번 리포트(κ8 검증이 κ40 출하를 대변하는지가 F7/F11의 미해결점).
+
+**결과** (validate-terms v3.2, `--notes=` 플래그, 현패치 id-순 확장 — id↔version 단조 0위반 검증): base_prod **60.0%** / base_lane_prod **59.5%** vs pooled κ8 58.8/59.0·κ40 58.6/58.9 → **출하 패치-로컬 메모리(현패치 확장+0.35·prev+변경챔프 리셋)가 풀드 히스토리보다 우수(+0.6~+1.4%p) — 설계 검증**. κ8-vs-κ40 풀드 차이 무시 가능(**F7/F11 해소** — κ8 하네스가 결론을 왜곡하지 않았음). famg는 출하 앵커에서도 단조 악화(F15 3중 확인); **famc는 출하 앵커 +1.6%p(s=0.25 최적)이나 여전히 early-집중(late −0.8~−2.2)** — fam 테이블엔 리셋 개념이 없으므로 신호의 국면 의존성(커리어 초반 강함) 가능성, **상향은 S0-4 CI 후**. 상세: `analysis/harness-causal-findings.md` §S0-3.
 
 ### S0-4. 사전등록 6모델 + CI
 비교군(사전 고정, 추가 금지): ① always-first-side ② base_lane ③ base_lane+출하fam ④ 출하 픽스코어 전체(보드 무관 항만) ⑤ ④−comp ⑥ ④−LP. 매치 리샘플 부트스트랩 1000× 페어드 CI. **채택 기준: 풀드 CI 하한 > 0.** ±0.5–1%p급 효과는 이 규모에서 측정 불가 — "미입증/코스메틱 예산"으로 문서화(키우기 금지).
