@@ -104,6 +104,9 @@
 ## 백테스트 기준선 기록
 
 ### 2026-06-13 — validate-terms v2 (5-fold CV, 2837판, 노이즈 ±0.9%p)
+
+> ⚠️ **2026-07-05 소급 정정 — 아래 표의 수치는 비인과(i%5 인터리브)로 부풀려진 것으로 판명** (`analysis/harness-causal-findings.md`): 인과 rolling-origin에서 **fam_g의 +7.9%p는 미래-부피 누출 아티팩트**(단독 52.4%, 후기 origin <50%, 증분은 해악) — "★★★ 최강" 판정과 67.4%/68.8% 목표 모델은 **폐기**. fam_c만 소폭 생존(+1.0~1.6%p 포인트, CI 미입증 → af는 famc-only로 출하, 커밋 `3648700`). syn/cnt/lp의 소폭 증분도 인과에서 소멸(lp는 W_MU_LP=0으로 반영, `0b3ae2a`). base/base_lane 판정만 유효. 현행 판정은 harness-causal-findings.md + ALGO-FIXES.md Step 0/2가 기준.
+
 정확도 = "점수합 큰 팀이 이긴다" 예측. 단독/증분:
 
 | 항 | 단독 | base_lane 증분(최적 스케일) | 판정 |

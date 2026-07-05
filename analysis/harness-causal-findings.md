@@ -105,13 +105,19 @@
 - **살아남는 그림**: `base_lane`가 신호, `fam_c`가 소폭 실재 리프트(+1.0%p), 나머지(famg/syn/cnt/mu/lp/comp/aip/fit) 전부 무증분. 훨씬 겸손하고 정직한 모델.
 - **Step 0가 게이트인 이유를 증명**: 하네스가 거짓말하고 있었고, 가장 중요한 것에 대해 거짓말했다. 이 수치 없이 가중치를 만졌으면 famg를 더 키웠을 것.
 
-## 새 백로그 항목 → **F15: fam 재가중** (ALGO-FIXES Step 2로)
-`af()` 프로듀서(tfm2_db_export/src/lib.rs:102-146)를 인과 증거에 맞춰 재가중:
-- **famg 성분(0.020·ln games)을 ~0으로** — 인과적으로 리프트 없음/해악. → ✅ S0-1b·S0-3·S0-4 3중 확인 + 캡 포화 구조 결함(§S0-4)까지 — **실행 가능 상태**(사망 성분 제거 = 게이트 허용).
-- **famc 성분(0.15·centered-wr) 유지/소폭 상향** — 유일한 인과 생존 fam 신호(base_lane+0.25famc = +1.0%p 인과). ⚠️ S0-1b: 이 +1.0%p는 early-origin 집중(late 풀 −1.0)이라 **잠정** — 상향은 S0-3 이식 + late-origin 재검 통과 후에만.
-- 캡·정확 계수는 S0-4(사전등록 6모델 + 부트스트랩 CI) + rolling-origin sweep으로 확정. ~~famc 스윕을 rolling-origin에서 재실행~~ → ✅ S0-3에서 완료: 출하 앵커 스윕 s=0.25 최적(+1.6%p), 단 early-집중(§S0-3) — 상향은 S0-4 CI 후.
-- engine.rs af() doc + score_pick_in "validated strongest signal" 주석을 다시 정정(현재 S1-6이 "SIGNAL은 검증"이라 했으나, 그 검증도 누출 → "games 성분은 누출 아티팩트, 인과 생존은 centered-wr만").
-- PLAN.md의 fam 판정(66% 콤보, "familiarity 최강")을 인과 결과로 갱신.
+## 새 백로그 항목 → **F15: fam 재가중 — ✅ 출하 완료 (2026-07-05, 커밋 `3648700`)**
+`af()` 프로듀서(tfm2_db_export/src/lib.rs)를 인과 증거에 맞춰 재가중:
+- ✅ **famg 성분(0.020·ln games) 제거됨** — S0-1b·S0-3·S0-4 3중 확인(무가치/해악) + 캡 포화 구조 결함(§S0-4: g≈11에서 famg 단독으로 0.05 캡 도달 → famc 질식). 출하형: `af = min(0.05, 0.15·famc)`.
+- ✅ **famc 0.15 유지 확정, 상향(0.25) 기각** — 출하 앵커 +1.6%p 포인트는 S0-4 CI 미입증 + early-집중(late 풀 −1.0) → 예산 항목(키우기 금지).
+- ✅ 주석 정정 완료: lib.rs 프로듀서 doc + engine.rs athlete_bonus/af()/score_pick_in fam 단락 (`3648700`).
+- ✅ PLAN.md 2026-06-13 표에 소급 정정 배너(비인과 수치·famg 판정 폐기).
+- 검증(af_new, v3.4 진단): base_lane 대비 +0.3 [−0.5,+1.1] / prod 앵커 +0.1 [−0.7,+0.8] — 구 af(−0.1)보다 포인트 개선, CI 미입증(예상 크기).
+
+## Step 2 집행 (2026-07-05) — 하네스 판정과 출하
+S0 하네스(v3.4 POST-HOC 진단 + T-nudge/T-amnesia)로 Step 2 전 항목을 판정했다. 상세 수치: `harness-rolling-origin.txt` POST-HOC 섹션 + `ALGO-FIXES.md` Step 2 집행 결과.
+- **출하 3건**: F15(af famg 제거, `3648700`) · S2-4(W_MU_LP=0 + power_ramp 1.0 복원 — matchup 축 전체 weight-0, `0b3ae2a`) · S2-2(카운트-스케일 chg_nudge — T-nudge slope +0.0125/chg, r +0.66, n=46; CHG 행 5필드 하위호환, `641f7dd`). DLL 재배포 완료(백업 유지).
+- **기각/종결 4건**: S2-7 스택(Δ−0.1 [−0.5,+0.3]) · S2-8 comp 전 성분 가산 미입증(heal −0.2 포함 — W_COMP는 UX 가드레일로만 유지) · S2-3 κ 스윕 평탄(40 확정, EB 불채택) · S2-1 이월(n≤2 모집단 1개 — 전량 리셋 유지).
+- **잔여 2건**: S2-5(솔로랭크 power prior) · S2-6(BT θ) — 표본 민감 실험, S0-2 재캡처(9버전·~5,000판) 후 실행.
 
 ## 남은 Step 0
 - **S0-2 재캡처**(게임 세션 필요 — 사용자): 07-04 이후 debug 덤프 게이트로 최신 2패치 누락. `probe\DEBUG_DUMPS` 마커 후 1세션 → ~5,000판/9버전. rolling-origin은 origin이 많을수록·초기 훈련량이 클수록 정확해짐(현재 첫 origin은 훈련량 적어 노이즈↑).
