@@ -341,6 +341,10 @@ pub struct ChgInfo {
     pub anchor: Option<String>,
     /// (champ, dir): '+' buff '-' nerf '~' mixed 'R' rework
     pub dirs: Vec<(String, char)>,
+    /// (champ, buffs, nerfs) authored change counts — S2-2 count-scaled nudge.
+    /// Empty on the defs-diff fallback (engine treats missing counts as n=2,
+    /// which reproduces the legacy uniform ±0.02).
+    pub counts: Vec<(String, u32, u32)>,
 }
 
 /// Build the engine Tables from the in-memory stats TSV + live pool + patch
@@ -383,7 +387,14 @@ pub fn build_tables(patch_tsv: &str, pool: &[String], chg: &ChgInfo, replay_rows
     out.extend(compute_roles(patch_tsv, &reworked, anchor));
     out.extend(compute_banrate(patch_tsv, &changed, anchor));
     out.extend(compute_lane_dom(patch_tsv, &changed, anchor));
-    out.extend(chg.dirs.iter().map(|(c, d)| format!("CHG\t{}\t{}", c, d)));
+    // CHG rows: 5-field when authored counts exist (S2-2 count-scaled nudge);
+    // 3-field otherwise (engine falls back to the legacy uniform ±0.02 size).
+    let cnt_of: HashMap<&str, (u32, u32)> =
+        chg.counts.iter().map(|(c, b, n)| (c.as_str(), (*b, *n))).collect();
+    out.extend(chg.dirs.iter().map(|(c, d)| match cnt_of.get(c.as_str()) {
+        Some((b, n)) => format!("CHG\t{}\t{}\t{}\t{}", c, d, b, n),
+        None => format!("CHG\t{}\t{}", c, d),
+    }));
     if !replay_rows.is_empty() {
         out.push(replay_rows.trim_end().to_string());
     }

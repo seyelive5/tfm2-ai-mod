@@ -517,7 +517,11 @@ fn authored_chg(db: &ClientDatabase) -> Option<ChgInfo> {
         })
         .collect();
     dirs.sort(); // stable order for the chg_authored.txt verification artifact
-    Some(ChgInfo { anchor, dirs })
+    // S2-2: authored per-champ change counts (buffs, nerfs) → count-scaled nudge.
+    let mut counts: Vec<(String, u32, u32)> =
+        latest.iter().map(|(champ, (b, n))| (champ.clone(), *b as u32, *n as u32)).collect();
+    counts.sort();
+    Some(ChgInfo { anchor, dirs, counts })
 }
 
 // ───────────────────── live banpick reader (merged from tfm2_bp_reader) ─────────────────────
