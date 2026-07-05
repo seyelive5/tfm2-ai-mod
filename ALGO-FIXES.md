@@ -213,6 +213,8 @@ if let Some(cof) = &lane.counter_of {
 - **T2 선후공 신호**: ~10경기에서 밴 리스트 성장 순서·`team1_order/team2_order`·픽 선후 기록 — "선밴측==선픽측" 또는 order 필드 인코딩 가설 확정
 - **T3 호버 semantics**: 내 픽 턴에 확정 없이 호버 → `team*_pick` 선반영 여부. 반영되면 confirmed-only 필터/디바운스 추가
 
+→ **패시브 수집으로 전환 (2026-07-05 17:45 배포)**: bp_live의 승인된 보드 변화마다 `%LOCALAPPDATA%/tfm2-overlay/bp_history.log`에 1줄 append(ts + 전 필드, '|' 구분, 5MB→.old 로테이션). T1은 `set=` 필드로 세트간 밴/fearless 지속 추적, T2는 밴 리스트 성장 순서, T3는 타임스탬프 간 픽 리스트 진동으로 판독 — **수동 관찰 세션 불필요, 몇 시리즈 플레이 후 로그 분석으로 판정.**
+
 ### 구현 (T 결과 조건부)
 | # | 변경 | 스펙 |
 |---|---|---|

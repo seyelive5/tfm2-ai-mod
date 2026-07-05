@@ -964,6 +964,23 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
         .unwrap_or(0);
     let _ = std::fs::create_dir_all(base());
     if atomic_write(&format!("{}/bp_live.txt", base()), &format!("ts={}\n{}", ms, key)) {
+        // T1–T3 passive collector (2026-07-05, ALGO-FIXES Step 3): every ACCEPTED
+        // board change is ALSO appended as one line ('|' for '\n') to
+        // bp_history.log — so ban-growth order (T2 first-pick signal), hover
+        // pre-reflection (T3, visible as rapid pick-list oscillation between
+        // timestamped lines), and cross-set fearless/ban persistence (T1, via the
+        // set= field) fall out of normal play with no manual observation sessions.
+        // Best-effort; ~600 B/change, 5 MB cap → rotate to .old (≈270 drafts).
+        let hist = format!("{}/bp_history.log", base());
+        if std::fs::metadata(&hist).map(|md| md.len() > 5_000_000).unwrap_or(false) {
+            let old = format!("{}/bp_history.old.log", base());
+            let _ = std::fs::remove_file(&old);
+            let _ = std::fs::rename(&hist, &old);
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&hist) {
+            use std::io::Write;
+            let _ = writeln!(f, "ts={}|{}", ms, key.trim_end().replace('\n', "|"));
+        }
         *last = key;
     }
 }
