@@ -402,6 +402,16 @@ impl Tables {
     /// 0.0 (no data → pure theory) .. 1.0 (rich data → pure stats).
     pub fn confidence(&self) -> f32 { (self.matches as f32 / FULL_CONF_MATCHES).min(1.0) }
     fn delta(&self, c: &str) -> f32 { *self.champ_delta.get(c).unwrap_or(&0.0) }
+    /// the single highest-delta champ in the tables (S3-4: the champ I expect to
+    /// TAKE myself when I have first pick — banning it is wasted tempo). O(champs)
+    /// per call; ignores board state (a taken top-1 simply never matches a
+    /// candidate → no discount fires — acceptable at this term's size).
+    fn top_delta_champ(&self) -> Option<&str> {
+        self.champ_delta
+            .iter()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(c, _)| c.as_str())
+    }
     /// games behind a champ's winrate; u32::MAX if unknown (→ never flagged).
     fn games(&self, c: &str) -> u32 { *self.champ_games.get(c).unwrap_or(&u32::MAX) }
     fn low_conf(&self, c: &str) -> bool {
@@ -976,8 +986,22 @@ impl Tables {
         let theory = 1.0 - data;
         // 선픽(first): you can pick a strong champ yourself, so lean bans toward THREATS
         // rather than generically-strong champs — but only MILDLY, so blind early bans
-        // (no enemy picks yet) still rank by strength.
-        let base_mult = if order == 1 { 0.8 } else { 1.0 };
+        // (no enemy picks yet) still rank by strength. S3-4 (2026-07-05, usable now
+        // that S3-1 seeds the order from the T2-confirmed team1-acts-first rule):
+        // with first pick, the ONE top-delta champ is MINE to take — banning it is
+        // wasted tempo (×0.4); with second pick the top champs go to the enemy, so
+        // lean INTO strength bans (×1.1). Kept mild without T4 per spec.
+        let base_mult = match order {
+            1 => {
+                if self.top_delta_champ() == Some(cand) {
+                    0.4
+                } else {
+                    0.8
+                }
+            }
+            2 => 1.1,
+            _ => 1.0,
+        };
         let base = base_mult * self.delta(cand) + self.chg_nudge(cand) + self.ai_prior_term(cand);
         let mut cnt = 0.0;
         for a in allies {
