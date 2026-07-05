@@ -715,6 +715,29 @@ impl Tables {
     }
     /// number of lanes this champ plays (1 if unknown → no flex bonus).
     fn flex(&self, c: &str) -> u8 { self.pos_play.get(c).map(|v| v.len() as u8).unwrap_or(1) }
+    /// S3-7 (F14) soft POS eligibility: a lane is a legitimate candidate when the
+    /// POS playable set includes it OR the lane has real evidence (≥LANE_MIN_GAMES
+    /// CP games) — the old hard cliff dropped genuinely-played off-meta lanes.
+    /// No POS row at all (fresh release) keeps every lane eligible (unchanged).
+    fn lane_eligible(&self, c: &str, lane: u8) -> bool {
+        match self.pos_play.get(c) {
+            None => true,
+            Some(v) => {
+                v.contains(&lane)
+                    || self
+                        .champ_pos_delta
+                        .get(&(c.to_string(), lane))
+                        .map_or(false, |&(_, g)| g >= LANE_MIN_GAMES)
+            }
+        }
+    }
+    /// small penalty when the lane is data-eligible but off the POS playable set.
+    fn off_meta_penalty(&self, c: &str, lane: u8) -> f32 {
+        match self.pos_play.get(c) {
+            Some(v) if !v.contains(&lane) => -0.01,
+            _ => 0.0,
+        }
+    }
     /// counter advantage of `cand` over `enemy`: real lane-matchup data (laning
     /// dominance + head-to-head) at the enemy's expected lane, plus a faded,
     /// halved tag term (cold-start only).
@@ -1275,13 +1298,13 @@ fn assign_core<'a>(
     // else OFF_LANE_PENALTY. No POS data → every lane playable at its overall winrate.
     let mut val = [[0f32; 5]; 5];
     for (i, p) in picks.iter().take(5).enumerate() {
-        let pl = tables.pos_play.get(*p);
         for l in 0u8..5 {
-            let playable = pl.map(|v| v.contains(&l)).unwrap_or(true);
-            val[i][l as usize] = if playable {
+            // S3-7 soft eligibility: a lane with ≥10 real games is assignable even
+            // when the POS playable set omits it (−0.01 off-meta), not a hard cliff.
+            val[i][l as usize] = if tables.lane_eligible(p, l) {
                 let mu = enemy_at[l as usize].map(|e| tables.matchup(p, e, Some(l))).unwrap_or(0.0);
                 let fam = if use_af { tables.af(p, Some(l)) } else { 0.0 };
-                tables.delta_for(p, Some(l)) + mu + fam
+                tables.delta_for(p, Some(l)) + mu + fam + tables.off_meta_penalty(p, l)
             } else {
                 OFF_LANE_PENALTY
             };
@@ -1412,14 +1435,17 @@ pub fn recommend_lanes(
                     continue;
                 }
             }
-            // skip only when we HAVE position data excluding this lane; a champ
+            // skip only when position data excludes this lane AND the lane has no
+            // real evidence — S3-7 soft eligibility: ≥10 CP games keeps it in as an
+            // off-meta candidate at −0.01 instead of the old hard cliff. A champ
             // with NO position data at all (just released, zero games anywhere,
             // no baked row) stays a candidate in EVERY lane — its rank then
             // comes from the AI prior / theory terms instead of vanishing.
-            if tables.pos_play.contains_key(*id) && !tables.plays(id, lane) {
+            if !tables.lane_eligible(id, lane) {
                 continue;
             }
             let (mut score, label) = tables.score_pick_in(id, &allies, &enemies, Some(lane), s.pick_order);
+            score += tables.off_meta_penalty(id, lane);
             if early {
                 score += W_FLEX * (tables.flex(id).saturating_sub(1).min(2) as f32);
             }
