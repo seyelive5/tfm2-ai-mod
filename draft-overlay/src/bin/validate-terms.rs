@@ -116,6 +116,13 @@ struct Match {
     /// chronological match id (top-level MatchReplayData.id; verified: sorting by
     /// id makes version monotone, 0 violations) — play order for expanding tables.
     id: u64,
+    /// both teams' bans (pool exclusion for the T4 advice bench).
+    bans: Vec<String>,
+}
+
+/// plain string array (`["a", "b"]`) → items (quote-delimited).
+fn parse_str_array(arr: Option<&str>) -> Vec<String> {
+    arr.map(|a| a.split('"').skip(1).step_by(2).map(str::to_string).collect()).unwrap_or_default()
 }
 
 fn parse_team(arr: &str) -> Vec<Ath> {
@@ -169,7 +176,9 @@ fn parse_matches(text: &str) -> Vec<Match> {
         // top-level `id:` is the block's first field, so find() hits it before any
         // athlete_id (which contains "id: " as a substring but appears later).
         let id = num_field(block, "id").unwrap_or(0.0) as u64;
-        out.push(Match { blue, red, blue_win, version, id });
+        let mut bans = parse_str_array(extract_array(block, "blue_ban"));
+        bans.extend(parse_str_array(extract_array(block, "red_ban")));
+        out.push(Match { blue, red, blue_win, version, id, bans });
     }
     out
 }
@@ -387,22 +396,23 @@ fn prod_lane_delta(
 /// main-lane-inflated overall delta). Differs from `prod_lane_delta` (S0-3 anchor)
 /// only in that fallback; this is the one the shipped score actually uses.
 fn prod_delta_for(
-    a: &Ath,
+    c: &str,
+    lane: usize,
     cur_c: &HashMap<&str, WL>,
     prev_c: &HashMap<&str, WL>,
     cur_cp: &HashMap<(&str, usize), WL>,
     prev_cp: &HashMap<(&str, usize), WL>,
     changed: &Changed,
 ) -> f64 {
-    let cd = prod_champ_post(&a.champ, cur_c, prev_c, changed) - 0.5;
-    if a.lane < 5 {
-        let cu = cur_cp.get(&(a.champ.as_str(), a.lane)).copied().unwrap_or_default();
-        let pv = if changed.contains_key(a.champ.as_str()) {
+    let cd = prod_champ_post(c, cur_c, prev_c, changed) - 0.5;
+    if lane < 5 {
+        let cu = cur_cp.get(&(c, lane)).copied().unwrap_or_default();
+        let pv = if changed.contains_key(c) {
             WL::default()
         } else {
-            prev_cp.get(&(a.champ.as_str(), a.lane)).copied().unwrap_or_default()
+            prev_cp.get(&(c, lane)).copied().unwrap_or_default()
         };
-        let champ_cm = cur_c.get(a.champ.as_str()).map_or(0.0, |w| w.g);
+        let champ_cm = cur_c.get(c).map_or(0.0, |w| w.g);
         let pw = PROD_PREV_W * (1.0 - (champ_cm / PROD_CONF_CHAMP).min(1.0));
         let (w, m) = (cu.w + pw * pv.w, cu.g + pw * pv.g);
         if m > 0.0 {
@@ -598,6 +608,19 @@ fn main() {
     let mut solo_v: Vec<[f64; 2]> = Vec::new();
     let mut bt_v: Vec<f64> = Vec::new();
     let mut mgames_v: Vec<f64> = Vec::new();
+    // T4 advice bench: per match, (winner-team, loser-team) mean percentile of the
+    // ACTUAL picks among their available pools under the shipped score.
+    let mut t4_v: Vec<(f64, f64)> = Vec::new();
+    // champ universe for the T4 pool (sorted — deterministic iteration).
+    let universe: Vec<&str> = {
+        let mut s: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for m in &matches {
+            for a in m.blue.iter().chain(m.red.iter()) {
+                s.insert(a.champ.as_str());
+            }
+        }
+        s.into_iter().collect()
+    };
     for g in 0..n_groups {
         // rolling-origin's earliest version has no earlier data → nothing to train on.
         if !(0..matches.len()).any(|i| is_train(i, g)) {
@@ -861,14 +884,15 @@ fn main() {
                     let fresh = if gm <= 0.0 { 1.0 } else { (1.0 - gm / 15.0).max(0.0) };
                     (0.4 * p * fresh).clamp(-0.024, 0.024)
                 };
-                let af_of = |a: &Ath| -> f64 {
-                    let cw = fam_x.get(&(a.aid, a.champ.as_str())).copied().unwrap_or_default();
-                    let tot = ath_x.get(&a.aid).copied().unwrap_or_default();
+                let af_c = |aid: u64, c: &str| -> f64 {
+                    let cw = fam_x.get(&(aid, c)).copied().unwrap_or_default();
+                    let tot = ath_x.get(&aid).copied().unwrap_or_default();
                     let wr_a = (tot.w + 4.0) / (tot.g + 8.0);
                     let famg = 0.020 * (1.0 + cw.g.min(20.0)).ln();
                     let famc = 0.15 * ((cw.w + 4.0 * wr_a) / (cw.g + 4.0) - wr_a);
                     (famg + famc).min(0.05)
                 };
+                let af_of = |a: &Ath| -> f64 { af_c(a.aid, &a.champ) };
                 let lp_of = |a: &Ath, opp: &[Ath]| -> f64 {
                     if a.lane >= 5 {
                         return 0.0;
@@ -924,8 +948,9 @@ fn main() {
                 let sum_d = |f: &dyn Fn(&Ath) -> f64| -> f64 {
                     m.blue.iter().map(|a| f(a)).sum::<f64>() - m.red.iter().map(|a| f(a)).sum::<f64>()
                 };
-                t.dfor_prod =
-                    sum_d(&|a| prod_delta_for(a, &cur_c, &prev_c, &cur_cp, &prev_cp, changed));
+                t.dfor_prod = sum_d(&|a| {
+                    prod_delta_for(&a.champ, a.lane, &cur_c, &prev_c, &cur_cp, &prev_cp, changed)
+                });
                 t.chg_n = sum_d(&|a| chg_nudge(&a.champ));
                 t.aip_prod = sum_d(&|a| ai_term(&a.champ));
                 t.af = sum_d(&af_of);
@@ -1001,6 +1026,46 @@ fn main() {
                     .map(|a| prod_games(&a.champ, &cur_c, &prev_c, changed))
                     .sum();
                 mgames_v.push(gsum / (m.blue.len() + m.red.len()) as f64);
+                // T4 advice bench: percentile of each ACTUAL pick among its available
+                // pool under the shipped board-independent score (comp/LP omitted —
+                // board-context terms, ≤~0.02). Pool = champs − both bans − the other
+                // 9 picks (the pick itself stays in).
+                let taken4: Vec<&str> =
+                    m.blue.iter().chain(m.red.iter()).map(|a| a.champ.as_str()).collect();
+                let team_pct = |team: &[Ath]| -> f64 {
+                    let mut sum_p = 0.0;
+                    for a in team {
+                        let sc = |c: &str| -> f64 {
+                            0.85 * prod_delta_for(c, a.lane, &cur_c, &prev_c, &cur_cp, &prev_cp, changed)
+                                + chg_nudge(c)
+                                + ai_term(c)
+                                + af_c(a.aid, c)
+                        };
+                        let s_act = sc(&a.champ);
+                        let (mut below, mut ties, mut n) = (0u32, 0u32, 0u32);
+                        for c in &universe {
+                            let c: &str = c;
+                            if c != a.champ.as_str()
+                                && (taken4.iter().any(|t| *t == c) || m.bans.iter().any(|b| b == c))
+                            {
+                                continue;
+                            }
+                            n += 1;
+                            let s = sc(c);
+                            if s < s_act {
+                                below += 1;
+                            } else if s == s_act {
+                                ties += 1;
+                            }
+                        }
+                        if n > 0 {
+                            sum_p += (below as f64 + 0.5 * ties as f64) / n as f64;
+                        }
+                    }
+                    sum_p / team.len().max(1) as f64
+                };
+                let (bp4, rp4) = (team_pct(&m.blue), team_pct(&m.red));
+                t4_v.push(if m.blue_win { (bp4, rp4) } else { (rp4, bp4) });
             }
             recs.push(t);
             if !legacy {
@@ -1517,6 +1582,56 @@ fn main() {
                 acc(&|t: &Terms| t.base),
                 acc(&|t: &Terms| t.base_lane)
             );
+        }
+
+        // ---- T4 advice bench (PLAN Phase 0b — offline grader of the PICK RANKING) ----
+        if t4_v.len() == recs.len() && !t4_v.is_empty() {
+            let n4 = t4_v.len() as f64;
+            let wm = t4_v.iter().map(|p| p.0).sum::<f64>() / n4;
+            let lm = t4_v.iter().map(|p| p.1).sum::<f64>() / n4;
+            let dvec: Vec<f64> = t4_v.iter().map(|p| p.0 - p.1).collect();
+            let rate = t4_v
+                .iter()
+                .map(|p| {
+                    if p.0 > p.1 {
+                        1.0
+                    } else if p.0 == p.1 {
+                        0.5
+                    } else {
+                        0.0
+                    }
+                })
+                .sum::<f64>()
+                / n4
+                * 100.0;
+            let mut rng4: u64 = 20260705;
+            let mut next4 = move || {
+                rng4 ^= rng4 << 13;
+                rng4 ^= rng4 >> 7;
+                rng4 ^= rng4 << 17;
+                rng4
+            };
+            let mut b4: Vec<f64> = Vec::with_capacity(B);
+            for _ in 0..B {
+                let mut s = 0.0;
+                for _ in 0..t4_v.len() {
+                    let i = (next4() % t4_v.len() as u64) as usize;
+                    s += dvec[i];
+                }
+                b4.push(s / n4);
+            }
+            let (lo, hi) = ci(&mut b4);
+            println!("\nT4 ADVICE BENCH (post-hoc; shipped board-independent score, comp/LP omitted; pool = champs − bans − other picks):");
+            println!(
+                "  winner-team mean pick percentile {:.3} vs loser {:.3} · Δ{:+.3} [{:+.3}, {:+.3}] · winner-higher {:.1}%",
+                wm,
+                lm,
+                wm - lm,
+                lo,
+                hi,
+                rate
+            );
+            println!("  (Δ>0 = 승팀의 실픽이 우리 랭킹에서 더 상위 — 픽 랭킹 축이 승리와 정합. 가중 변경 시의 회귀 기준선.)");
         }
 
         if !notes.is_empty() {
