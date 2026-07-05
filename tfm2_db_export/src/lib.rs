@@ -1503,6 +1503,45 @@ impl ModExtension for E {
         if std::path::Path::new(&format!("{}/DEBUG_DUMPS", out)).exists() {
             atomic_write(&format!("{}/solo_rank_matches.debug.txt", out), &format!("{:#?}", db.solo_rank_matches));
             atomic_write(&format!("{}/match_replays.debug.txt", out), &format!("{:#?}", db.match_replays));
+            // ALL authored patch notes with REAL per-change signs (one signed token
+            // per change) — the harness's --notes source. Added 2026-07-05: the old
+            // one-off C:\tmp dump froze at 2026.3.1, forcing synthesized n=1 sections
+            // for newer patches, which contaminated the T-amnesia n≤2 stratum.
+            // Format matches validate-terms::parse_patch_notes.
+            {
+                use std::collections::BTreeMap;
+                let mut by_ver: BTreeMap<Vec<u32>, (String, BTreeMap<String, String>)> = BTreeMap::new();
+                for (_id, team) in db.teams.iter() {
+                    for news in &team.news {
+                        if let game_core::NewsType::PatchNote { version, champion_patch_data, .. } = &news.ty {
+                            let entry = by_ver
+                                .entry(vkey(version))
+                                .or_insert_with(|| (version.clone(), BTreeMap::new()));
+                            if entry.1.is_empty() {
+                                for (champ, changes) in champion_patch_data {
+                                    if changes.is_empty() {
+                                        continue;
+                                    }
+                                    let toks: Vec<String> = changes
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, c)| format!("#{}{}", i, if c.is_buff { '+' } else { '-' }))
+                                        .collect();
+                                    entry.1.insert(champ.clone(), toks.join(" "));
+                                }
+                            }
+                        }
+                    }
+                }
+                let mut txt = format!("# patch_notes dump (live, {} versions)\n", by_ver.len());
+                for (_, (v, champs)) in by_ver.iter().rev() {
+                    txt.push_str(&format!("=== version {} ===\n", v));
+                    for (c, toks) in champs {
+                        txt.push_str(&format!("  [{}] {}\n", c, toks));
+                    }
+                }
+                atomic_write(&format!("{}/patch_notes_dump.txt", out), &txt);
+            }
         }
         let mut pool: Vec<String> = db.available_champions.iter().cloned().collect();
         pool.sort_unstable();
