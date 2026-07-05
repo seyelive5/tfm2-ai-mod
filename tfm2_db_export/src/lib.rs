@@ -879,6 +879,7 @@ fn bp_export(scene: &mut Scene, ui: &mut GameUI) {
                 enemy_locked: fl_enemy,
                 attributed,
                 enemy_team: (if mine_is_t1 { m.team2 } else { m.team1 }) as u32,
+                i_am_team1: Some(mine_is_t1),
                 enemy_intent,
             };
             // Phase 2: athlete familiarity for this match's starting lineups —

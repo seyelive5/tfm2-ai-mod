@@ -428,6 +428,10 @@ pub struct Board {
     pub attributed: bool,
     /// enemy team id — keys the opponent-aware ban model (OPP rows).
     pub enemy_team: u32,
+    /// am I the board's team1 slot? T2-CONFIRMED rule (2026-07-05 bp_history,
+    /// 4/4 drafts, sides alternating per set): team1 always acts FIRST — first
+    /// ban AND first pick — so this seeds 선픽/후픽 before any pick exists.
+    pub i_am_team1: Option<bool>,
     /// the enemy AI's top remaining candidates from its latest deliberation
     /// (observed via ModDraftScoreHook) — its likely next picks/bans.
     pub enemy_intent: Vec<String>,
@@ -505,7 +509,15 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         s.saw_full = true;
         s.pending_my = board.my_pick.clone();
     }
-    if board.my_pick.len() + board.enemy_pick.len() == 1 && s.first_pick.is_none() {
+    // S3-1 (2026-07-05, T2 CONFIRMED via bp_history): the team1 slot always acts
+    // first, so the side mapping seeds first_pick BEFORE any pick exists — the
+    // whole BAN phase now runs with the right 선픽/후픽 lean instead of order=0.
+    // The first-pick observation below stays as ground truth (overrides the seed
+    // if they ever disagree — auto-fallback per spec).
+    if s.first_pick.is_none() {
+        s.first_pick = board.i_am_team1;
+    }
+    if board.my_pick.len() + board.enemy_pick.len() == 1 {
         s.first_pick = Some(board.my_pick.len() == 1);
     }
 
