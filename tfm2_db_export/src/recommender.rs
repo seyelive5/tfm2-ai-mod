@@ -22,6 +22,8 @@ use std::sync::{Arc, Mutex};
 // research notes): current ×1 + previous ×(0.35·(1−min(1, cur_matches/200))).
 const PREV_PATCH_WEIGHT: f64 = 0.35;
 const CONF_FULL: f64 = 200.0;
+// S2-3 (2026-07-05): causal κ sweep on the production champ state — κ20/40/80/150
+// → 60.1/60.0/60.1/59.9%: flat. 40 confirmed; adaptive EB κ̂ dropped (nothing to buy).
 const KAPPA_CHAMP: f64 = 40.0;
 const KAPPA_LANE: f64 = 20.0;
 /// per-CHAMP current-patch matches at which its previous-patch blend fades out

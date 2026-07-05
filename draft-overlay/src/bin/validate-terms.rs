@@ -268,21 +268,27 @@ fn beta_mean(w: f64, m: f64, prior_mean: f64, kappa: f64) -> f64 {
 /// champ posterior MEAN under the shipped patch-local state: current-version WL
 /// + previous-version WL at 0.35·(1−cm/40) (cm = champ's current games so far);
 /// champs in this version's patch note drop the prev blend (stale — restart).
-fn prod_champ_post(c: &str, cur: &HashMap<&str, WL>, prev: &HashMap<&str, WL>, changed: &HashMap<String, char>) -> f64 {
+type Changed = HashMap<String, (char, u32, u32)>;
+
+/// blended (current ×1 + prev ×0.35·fade) pseudo-counts for a champ under the
+/// shipped patch-local state; changed champs drop the prev blend entirely.
+fn prod_blend(c: &str, cur: &HashMap<&str, WL>, prev: &HashMap<&str, WL>, changed: &Changed) -> (f64, f64) {
     let cu = cur.get(c).copied().unwrap_or_default();
     let pv = if changed.contains_key(c) { WL::default() } else { prev.get(c).copied().unwrap_or_default() };
     let pw = PROD_PREV_W * (1.0 - (cu.g / PROD_CONF_CHAMP).min(1.0));
-    beta_mean(cu.w + pw * pv.w, cu.g + pw * pv.g, 0.5, PROD_KAPPA_CHAMP)
+    (cu.w + pw * pv.w, cu.g + pw * pv.g)
+}
+
+fn prod_champ_post(c: &str, cur: &HashMap<&str, WL>, prev: &HashMap<&str, WL>, changed: &Changed) -> f64 {
+    let (w, m) = prod_blend(c, cur, prev, changed);
+    beta_mean(w, m, 0.5, PROD_KAPPA_CHAMP)
 }
 
 /// blended (current + faded prev) match count for a champ — the harness twin of
 /// engine `games()` (drives the chg-nudge 30-game and ai-prior 15-game fades).
 /// 0.0 = no table row at all (engine's u32::MAX regime → full nudge/prior).
-fn prod_games(c: &str, cur: &HashMap<&str, WL>, prev: &HashMap<&str, WL>, changed: &HashMap<String, char>) -> f64 {
-    let cu = cur.get(c).copied().unwrap_or_default();
-    let pv = if changed.contains_key(c) { WL::default() } else { prev.get(c).copied().unwrap_or_default() };
-    let pw = PROD_PREV_W * (1.0 - (cu.g / PROD_CONF_CHAMP).min(1.0));
-    cu.g + pw * pv.g
+fn prod_games(c: &str, cur: &HashMap<&str, WL>, prev: &HashMap<&str, WL>, changed: &Changed) -> f64 {
+    prod_blend(c, cur, prev, changed).1
 }
 
 /// lane delta under the shipped state: κ20 beta with the champ's own posterior
@@ -294,7 +300,7 @@ fn prod_lane_delta(
     prev_c: &HashMap<&str, WL>,
     cur_cp: &HashMap<(&str, usize), WL>,
     prev_cp: &HashMap<(&str, usize), WL>,
-    changed: &HashMap<String, char>,
+    changed: &Changed,
 ) -> f64 {
     let cmean = prod_champ_post(&a.champ, cur_c, prev_c, changed);
     if a.lane < 5 {
@@ -325,7 +331,7 @@ fn prod_delta_for(
     prev_c: &HashMap<&str, WL>,
     cur_cp: &HashMap<(&str, usize), WL>,
     prev_cp: &HashMap<(&str, usize), WL>,
-    changed: &HashMap<String, char>,
+    changed: &Changed,
 ) -> f64 {
     let cd = prod_champ_post(&a.champ, cur_c, prev_c, changed) - 0.5;
     if a.lane < 5 {
@@ -347,12 +353,13 @@ fn prod_delta_for(
 }
 
 /// `=== version V ===` sections + `[champ] #…±` lines from patch_notes_dump.txt
-/// → per-version changed champs WITH direction. Each `#…` token's trailing +/− is
-/// that change's authored is_buff; the champ direction uses the PRODUCTION reduce
-/// (lib.rs:514): all-buff '+', all-nerf '-', mixed '~' (no nudge). Key presence
-/// alone = "changed" (stale prev-blend drop applies regardless of direction).
-fn parse_patch_notes(text: &str) -> HashMap<String, HashMap<String, char>> {
-    let mut out: HashMap<String, HashMap<String, char>> = HashMap::new();
+/// → per-version changed champs WITH direction AND change counts. Each `#…`
+/// token's trailing +/− is that change's authored is_buff; the champ direction
+/// uses the PRODUCTION reduce (lib.rs:514): all-buff '+', all-nerf '-', mixed
+/// '~' (no nudge). Value = (dir, buff_count, nerf_count); key presence alone =
+/// "changed" (stale prev-blend drop applies regardless of direction).
+fn parse_patch_notes(text: &str) -> HashMap<String, HashMap<String, (char, u32, u32)>> {
+    let mut out: HashMap<String, HashMap<String, (char, u32, u32)>> = HashMap::new();
     let mut cur: Option<String> = None;
     for line in text.lines() {
         let lt = line.trim();
@@ -377,7 +384,7 @@ fn parse_patch_notes(text: &str) -> HashMap<String, HashMap<String, char>> {
                 } else {
                     '~'
                 };
-                out.get_mut(v).unwrap().insert(rest[..end].to_string(), dir);
+                out.get_mut(v).unwrap().insert(rest[..end].to_string(), (dir, b, nrf));
             }
         }
     }
@@ -402,6 +409,13 @@ struct Terms {
     lp_prod: f64,   // Σ matchup LP (0.008·zdiff, clamp ±0.05, actual same-lane opp) diff
     comp_prod: f64, // Σ W_COMP·comp_need (tags-only; retrospective last-pick) diff
     af: f64,        // Σ shipped af (0.020·ln(1+min(g,20)) + 0.15·cwr, cap 0.05) diff
+    // ---- post-hoc S2 diagnostics (not in the pre-registered 6-model list) ----
+    af_new: f64,  // F15 form: Σ min(0.05, 0.15·cwr) diff (famg removed)
+    stack: f64,   // S2-7: max same-category count, blue − red
+    c_front: f64, // S2-8: team-has (Tank|Frontline tag) indicator diff
+    c_heal: f64,  // S2-8: team-has (Heal|Shield) indicator diff
+    c_cc: f64,    // S2-8: team-has CC indicator diff
+    c_back: f64,  // S2-8: team-has (Backline | cat Range) indicator diff
     syn: f64,       // legacy same-team pair
     cnt: f64,       // legacy cross-team pair (all-vs-all)
     mu: f64,        // same-LANE head-to-head, κ12 (the new matchup axis)
@@ -461,7 +475,7 @@ fn main() {
     } else {
         HashMap::new()
     };
-    let notes: HashMap<String, HashMap<String, char>> = notes_path
+    let notes: HashMap<String, Changed> = notes_path
         .as_deref()
         .map(|p| parse_patch_notes(&std::fs::read_to_string(p).unwrap_or_default()))
         .unwrap_or_default();
@@ -508,6 +522,9 @@ fn main() {
     // train membership: legacy = all OTHER folds; rolling-origin = only EARLIER groups.
     let is_train = |i: usize, g: usize| if legacy { groups[i] != g } else { groups[i] < g };
     let mut recs: Vec<Terms> = Vec::with_capacity(matches.len());
+    // S2-3 κ sweep side-channel: per scored match (rolling only), the production
+    // champ-state diff at κ ∈ {20, 80, 150} (κ40 lives in Terms::base_prod).
+    let mut kprod: Vec<[f64; 3]> = Vec::new();
     for g in 0..n_groups {
         // rolling-origin's earliest version has no earlier data → nothing to train on.
         if !(0..matches.len()).any(|i| is_train(i, g)) {
@@ -599,8 +616,8 @@ fn main() {
                 }
             }
         }
-        let empty_changed: HashMap<String, char> = HashMap::new();
-        let changed: &HashMap<String, char> = if legacy {
+        let empty_changed: Changed = HashMap::new();
+        let changed: &Changed = if legacy {
             &empty_changed
         } else {
             let label = vsorted[g].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".");
@@ -693,8 +710,8 @@ fn main() {
                 // ---- S0-4: shipped pick-score terms (retrospective full-board) ----
                 let chg_nudge = |c: &str| -> f64 {
                     let d = match changed.get(c) {
-                        Some('+') => 0.02,
-                        Some('-') => -0.02,
+                        Some(('+', _, _)) => 0.02,
+                        Some(('-', _, _)) => -0.02,
                         _ => return 0.0,
                     };
                     let gm = prod_games(c, &cur_c, &prev_c, changed);
@@ -783,6 +800,55 @@ fn main() {
                 t.lp_prod = m.blue.iter().map(|a| lp_of(a, &m.red)).sum::<f64>()
                     - m.red.iter().map(|a| lp_of(a, &m.blue)).sum::<f64>();
                 t.comp_prod = comp_of(&m.blue) - comp_of(&m.red);
+                // ---- post-hoc S2 diagnostics ----
+                let af_new_of = |a: &Ath| -> f64 {
+                    let cw = fam_x.get(&(a.aid, a.champ.as_str())).copied().unwrap_or_default();
+                    let tot = ath_x.get(&a.aid).copied().unwrap_or_default();
+                    let wr_a = (tot.w + 4.0) / (tot.g + 8.0);
+                    (0.15 * ((cw.w + 4.0 * wr_a) / (cw.g + 4.0) - wr_a)).min(0.05)
+                };
+                t.af_new = sum_d(&af_new_of);
+                let stack_of = |team: &[Ath]| -> f64 {
+                    let mut cnt: HashMap<&str, u32> = HashMap::new();
+                    for a in team {
+                        if let Some(tx) = taxon.get(&a.champ) {
+                            if !tx.category.is_empty() {
+                                *cnt.entry(tx.category.as_str()).or_insert(0) += 1;
+                            }
+                        }
+                    }
+                    cnt.values().copied().max().unwrap_or(0) as f64
+                };
+                t.stack = stack_of(&m.blue) - stack_of(&m.red);
+                let tag = |a: &Ath, tg: &str| {
+                    taxon.get(&a.champ).map_or(false, |tx| tx.tags.iter().any(|x| x == tg))
+                };
+                let front = |a: &Ath| tag(a, "Tank") || tag(a, "Frontline");
+                let healf = |a: &Ath| tag(a, "Heal") || tag(a, "Shield");
+                let ccf = |a: &Ath| tag(a, "CC");
+                let back = |a: &Ath| {
+                    tag(a, "Backline") || taxon.get(&a.champ).map_or(false, |tx| tx.category == "Range")
+                };
+                let has_team = |team: &[Ath], f: &dyn Fn(&Ath) -> bool| -> f64 {
+                    if team.iter().any(|a| f(a)) { 1.0 } else { 0.0 }
+                };
+                t.c_front = has_team(&m.blue, &front) - has_team(&m.red, &front);
+                t.c_heal = has_team(&m.blue, &healf) - has_team(&m.red, &healf);
+                t.c_cc = has_team(&m.blue, &ccf) - has_team(&m.red, &ccf);
+                t.c_back = has_team(&m.blue, &back) - has_team(&m.red, &back);
+                let kp = |kappa: f64, team: &[Ath]| -> f64 {
+                    team.iter()
+                        .map(|a| {
+                            let (w, mm) = prod_blend(&a.champ, &cur_c, &prev_c, changed);
+                            beta_mean(w, mm, 0.5, kappa) - 0.5
+                        })
+                        .sum()
+                };
+                kprod.push([
+                    kp(20.0, &m.blue) - kp(20.0, &m.red),
+                    kp(80.0, &m.blue) - kp(80.0, &m.red),
+                    kp(150.0, &m.blue) - kp(150.0, &m.red),
+                ]);
             }
             recs.push(t);
             if !legacy {
@@ -1108,6 +1174,205 @@ fn main() {
             let (lo, hi) = ci(&mut v);
             let gate = if lo > 0.0 { "PASS" } else { "FAIL (미입증 — 예산 항목, 키우기 금지)" };
             println!("    {:<34}: {:>+5.1}  [{:>+5.1}, {:>+5.1}]  {}", name, point[a] - point[b], lo, hi, gate);
+        }
+
+        // ---- POST-HOC S2 DIAGNOSTICS (NOT pre-registered — S2 decision tests) ----
+        let diag: [(&str, &dyn Fn(&Terms) -> f64); 9] = [
+            ("base_lane (anchor A)", &|t: &Terms| t.base_lane),
+            ("A + af_new", &|t: &Terms| t.base_lane + t.af_new),
+            ("base_lane_prod (anchor B)", &|t: &Terms| t.base_lane_prod),
+            ("B + af_new", &|t: &Terms| t.base_lane_prod + t.af_new),
+            ("B + 0.01·stack", &|t: &Terms| t.base_lane_prod + 0.01 * t.stack),
+            ("B + 0.02·heal_gap", &|t: &Terms| t.base_lane_prod + 0.02 * t.c_heal),
+            ("B + 0.02·cc_gap", &|t: &Terms| t.base_lane_prod + 0.02 * t.c_cc),
+            ("B + 0.02·front_gap", &|t: &Terms| t.base_lane_prod + 0.02 * t.c_front),
+            ("B + 0.02·backline_gap", &|t: &Terms| t.base_lane_prod + 0.02 * t.c_back),
+        ];
+        let dcorr: Vec<Vec<f64>> = diag
+            .iter()
+            .map(|(_, f)| {
+                recs.iter()
+                    .map(|t| {
+                        let s = f(t);
+                        if s.abs() < 1e-12 {
+                            0.5
+                        } else if (s > 0.0) == t.win {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        let dpoint: Vec<f64> = dcorr.iter().map(|c| c.iter().sum::<f64>() / nrec as f64 * 100.0).collect();
+        let mut rng2: u64 = 20260705; // same seed → same index draws → paired
+        let mut next2 = move || {
+            rng2 ^= rng2 << 13;
+            rng2 ^= rng2 >> 7;
+            rng2 ^= rng2 << 17;
+            rng2
+        };
+        let mut dboot: Vec<[f64; 9]> = Vec::with_capacity(B);
+        for _ in 0..B {
+            let mut s = [0.0f64; 9];
+            for _ in 0..nrec {
+                let i = (next2() % nrec as u64) as usize;
+                for (k, sk) in s.iter_mut().enumerate() {
+                    *sk += dcorr[k][i];
+                }
+            }
+            for sk in s.iter_mut() {
+                *sk = *sk / nrec as f64 * 100.0;
+            }
+            dboot.push(s);
+        }
+        println!("\nPOST-HOC S2 DIAGNOSTICS (not pre-registered; paired bootstrap, same seed):");
+        for (a, b, name, is_gate) in [
+            (1usize, 0usize, "af_new over base_lane (F15 verify)", false),
+            (3, 2, "af_new over prod anchor (F15 verify)", false),
+            (4, 2, "0.01·stack (S2-7)", true),
+            (5, 2, "0.02·heal_gap (S2-8)", true),
+            (6, 2, "0.02·cc_gap (S2-8)", true),
+            (7, 2, "0.02·front_gap (S2-8)", true),
+            (8, 2, "0.02·backline_gap (S2-8)", true),
+        ] {
+            let mut v: Vec<f64> = dboot.iter().map(|r| r[a] - r[b]).collect();
+            let (lo, hi) = ci(&mut v);
+            let verdict = if is_gate {
+                if lo > 0.0 { "ADOPT" } else { "REJECT (미입증)" }
+            } else {
+                ""
+            };
+            println!(
+                "  {:<36}: {:>4.1}% → {:>4.1}%  Δ{:>+5.1} [{:>+5.1}, {:>+5.1}]  {}",
+                name, dpoint[b], dpoint[a], dpoint[a] - dpoint[b], lo, hi, verdict
+            );
+        }
+        // S2-3: κ sweep on the production champ state (side-channel aligned with recs)
+        if kprod.len() == recs.len() {
+            let kacc = |j: usize| -> f64 {
+                let mut c = 0.0;
+                for (t, k) in recs.iter().zip(kprod.iter()) {
+                    let s = k[j];
+                    if s.abs() < 1e-12 {
+                        c += 0.5;
+                    } else if (s > 0.0) == t.win {
+                        c += 1.0;
+                    }
+                }
+                c / nrec as f64 * 100.0
+            };
+            println!(
+                "  S2-3 κ sweep (champ prod state): κ20 {:.1}% · κ40 {:.1}% (ship) · κ80 {:.1}% · κ150 {:.1}%",
+                kacc(0),
+                acc(&|t: &Terms| t.base_prod),
+                kacc(1),
+                kacc(2)
+            );
+        }
+
+        if !notes.is_empty() {
+            // per-version champ tables for S2-1/S2-2 (early window needs id order)
+            let mut order: Vec<usize> = (0..matches.len()).collect();
+            order.sort_by_key(|&i| matches[i].id);
+            let mut vwl: HashMap<(usize, String), WL> = HashMap::new();
+            let mut early20: HashMap<(usize, String), WL> = HashMap::new();
+            for &i in &order {
+                let m = &matches[i];
+                let gv = groups[i];
+                for (team, won) in [(&m.blue, m.blue_win), (&m.red, !m.blue_win)] {
+                    for a in team {
+                        vwl.entry((gv, a.champ.clone())).or_default().rec(won);
+                        let e = early20.entry((gv, a.champ.clone())).or_default();
+                        if e.g < 20.0 {
+                            e.rec(won);
+                        }
+                    }
+                }
+            }
+            // S2-2 T-nudge: does the SIGNED change count predict the realized delta
+            // shift across the boundary? (κ8-shrunk per-version deltas, ≥10 games both)
+            let (mut xs, mut ys) = (Vec::new(), Vec::new());
+            for g in 1..n_groups {
+                let label = vsorted[g].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".");
+                if let Some(note) = notes.get(&label) {
+                    for (c, (_, b, nrf)) in note {
+                        let cur = vwl.get(&(g, c.clone())).copied().unwrap_or_default();
+                        let prev = vwl.get(&(g - 1, c.clone())).copied().unwrap_or_default();
+                        if cur.g >= 10.0 && prev.g >= 10.0 {
+                            xs.push(*b as f64 - *nrf as f64);
+                            ys.push(cur.delta(8.0) - prev.delta(8.0));
+                        }
+                    }
+                }
+            }
+            if xs.len() >= 8 {
+                let nn = xs.len() as f64;
+                let (mx, my) = (xs.iter().sum::<f64>() / nn, ys.iter().sum::<f64>() / nn);
+                let sxy: f64 = xs.iter().zip(&ys).map(|(x, y)| (x - mx) * (y - my)).sum();
+                let sxx: f64 = xs.iter().map(|x| (x - mx) * (x - mx)).sum();
+                let syy: f64 = ys.iter().map(|y| (y - my) * (y - my)).sum();
+                let slope = if sxx > 0.0 { sxy / sxx } else { 0.0 };
+                let r = if sxx > 0.0 && syy > 0.0 { sxy / (sxx.sqrt() * syy.sqrt()) } else { 0.0 };
+                println!(
+                    "  S2-2 T-nudge: realized Δdelta vs signed change-count — slope {:+.4}/chg, r {:+.2}, n {}  → {}",
+                    slope,
+                    r,
+                    xs.len(),
+                    if slope > 0.0 && r > 0.15 {
+                        "count-scaling has signal → adopt S2-2 sizes"
+                    } else {
+                        "flat → keep uniform ±0.02"
+                    }
+                );
+            }
+            // S2-1 T-amnesia: predict a changed champ's FIRST-20-games winrate in the
+            // new patch: (reset 0.5) vs (full 0.35·prev carry) vs (count-scaled carry).
+            let (mut cnt2, mut mae2) = ([0u32; 2], [[0.0f64; 3]; 2]);
+            for g in 1..n_groups {
+                let label = vsorted[g].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".");
+                if let Some(note) = notes.get(&label) {
+                    for (c, (_, b, nrf)) in note {
+                        let nch = (b + nrf) as f64;
+                        let act = early20.get(&(g, c.clone())).copied().unwrap_or_default();
+                        let prev = vwl.get(&(g - 1, c.clone())).copied().unwrap_or_default();
+                        if act.g < 5.0 || prev.g < 5.0 {
+                            continue;
+                        }
+                        let p_act = act.w / act.g;
+                        let stratum = if nch <= 2.0 { 0 } else { 1 };
+                        let wsc = PROD_PREV_W * (1.0 - nch / 4.0).max(0.0);
+                        let preds = [
+                            0.5,
+                            beta_mean(PROD_PREV_W * prev.w, PROD_PREV_W * prev.g, 0.5, PROD_KAPPA_CHAMP),
+                            beta_mean(wsc * prev.w, wsc * prev.g, 0.5, PROD_KAPPA_CHAMP),
+                        ];
+                        cnt2[stratum] += 1;
+                        for (j, p) in preds.iter().enumerate() {
+                            mae2[stratum][j] += (p - p_act).abs();
+                        }
+                    }
+                }
+            }
+            for (si, sname) in ["n≤2 (small tweaks)", "n≥3 (big changes)"].iter().enumerate() {
+                if cnt2[si] > 0 {
+                    let k = cnt2[si] as f64;
+                    println!(
+                        "  S2-1 T-amnesia {:<18}: n={:<3} MAE reset {:.3} · full-0.35prev {:.3} · count-scaled {:.3}  → {}",
+                        sname,
+                        cnt2[si],
+                        mae2[si][0] / k,
+                        mae2[si][1] / k,
+                        mae2[si][2] / k,
+                        if si == 0 && mae2[si][2] / k < mae2[si][0] / k {
+                            "scaled beats reset → S2-1 adopt candidate"
+                        } else {
+                            "reset fine"
+                        }
+                    );
+                }
+            }
         }
     }
     println!("\n>> A term EARNS engine weight only if it lifts base_lane beyond ~±{:.1}%p noise.", 50.0 / n.sqrt());

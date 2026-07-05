@@ -69,8 +69,10 @@ const W_DUP: f32 = 0.0; // was 0.4 — NEVER validated, and measurement says the
 // ~+2%p strength-stratified residual in BOTH strata (4,488 replays, 2026-07-05 review
 // F4; 4-stacks 58.1%, 5-stacks 64.1%). Lane overlap is already handled structurally by
 // recommend_lanes/assign_lanes, so this term's only unique job was anti-stacking — in
-// the wrong direction. overlap() is kept (weight 0); if a controlled harness test
-// confirms the +2%p, add a small POSITIVE stack term instead (Step 2 S2-7).
+// the wrong direction. overlap() is kept (weight 0). S2-7 (2026-07-05): the
+// controlled harness test RAN — 0.01·stack over the production base Δ−0.1
+// [−0.5,+0.3] REJECT; the raw +2%p stack association is champ strength the base
+// already prices in. No stack term in either direction.
 const W_BAN_CNT: f32 = 0.4; // was 1.0 — same noise tables, trimmed
 const W_BAN_SYN: f32 = 0.3; // was 0.8 — "
 // was 0.5 → 0.2 → 0.05: banrate is a RAW 0..1 fraction (top champs hit ~0.64),
@@ -710,8 +712,11 @@ impl Tables {
         // weights recalibrated to measured effects (2026-07-05 review F3): only the
         // healer gap predicts wins (+2.3%p, 2.1σ); the frontline/tank residual ≈ 0 and
         // CC/backline are unmeasured — so heal is weighted UP and the rest is dropped to
-        // tiebreaker scale. (Full component validation is Step 2 S2-8; this is the
-        // evidence-consistent interim.)
+        // tiebreaker scale. S2-8 VERDICT (same day, causal harness v3.4): NO component
+        // — heal included — adds value over the production base (heal −0.2 [−0.4,+0.1],
+        // cc no-variance, front ±0.0, backline −0.1); the raw +2.3%p was association the
+        // base already prices in. comp stays ONLY as a small UX guardrail (budget item,
+        // growth forbidden); multipliers unchanged.
         let mut s = 0.0;
         if !allies.iter().any(|a| is_tank(a)) && is_tank(cand) {
             s += COMP_UNIT * 0.2;

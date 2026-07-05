@@ -95,4 +95,17 @@ PRE-REGISTERED 6-MODEL COMPARISON + BOOTSTRAP CI (S0-4; 1000× match resample, x
     ④−⑤ comp contribution             :  +0.1  [ -0.4,  +0.5]  FAIL (미입증 — 예산 항목, 키우기 금지)
     ④−⑥ LP contribution               :  -0.1  [ -0.8,  +0.7]  FAIL (미입증 — 예산 항목, 키우기 금지)
 
+POST-HOC S2 DIAGNOSTICS (not pre-registered; paired bootstrap, same seed):
+  af_new over base_lane (F15 verify)  : 59.0% → 59.3%  Δ +0.3 [ -0.5,  +1.1]  
+  af_new over prod anchor (F15 verify): 59.5% → 59.6%  Δ +0.1 [ -0.7,  +0.8]  
+  0.01·stack (S2-7)                   : 59.5% → 59.4%  Δ -0.1 [ -0.5,  +0.3]  REJECT (미입증)
+  0.02·heal_gap (S2-8)                : 59.5% → 59.3%  Δ -0.2 [ -0.4,  +0.1]  REJECT (미입증)
+  0.02·cc_gap (S2-8)                  : 59.5% → 59.5%  Δ +0.0 [ +0.0,  +0.0]  REJECT (미입증)
+  0.02·front_gap (S2-8)               : 59.5% → 59.5%  Δ +0.0 [ -0.1,  +0.1]  REJECT (미입증)
+  0.02·backline_gap (S2-8)            : 59.5% → 59.4%  Δ -0.1 [ -0.4,  +0.3]  REJECT (미입증)
+  S2-3 κ sweep (champ prod state): κ20 60.1% · κ40 60.0% (ship) · κ80 60.1% · κ150 59.9%
+  S2-2 T-nudge: realized Δdelta vs signed change-count — slope +0.0125/chg, r +0.66, n 46  → count-scaling has signal → adopt S2-2 sizes
+  S2-1 T-amnesia n≤2 (small tweaks): n=1   MAE reset 0.250 · full-0.35prev 0.234 · count-scaled 0.242  → scaled beats reset → S2-1 adopt candidate
+  S2-1 T-amnesia n≥3 (big changes) : n=51  MAE reset 0.112 · full-0.35prev 0.115 · count-scaled 0.111  → reset fine
+
 >> A term EARNS engine weight only if it lifts base_lane beyond ~±0.8%p noise.
