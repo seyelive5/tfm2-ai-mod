@@ -101,16 +101,21 @@ const FULL_CONF_MATCHES: f32 = 200.0;
 // Lower toward 0.04 for full honesty, raise to hide more. One knob.
 const TIER_UNSTABLE: f32 = 0.10;
 // ---- lane-matchup axis (2026-06-12; the "respond to enemy picks" rebuild) ----
-// laning-dominance differential: LP rows carry a per-(champ,lane) z-score of
-// gold_line_phase/game within the lane; 0.008/z ⇒ a full z-spread (±2.5 vs ∓2.5)
-// = ±0.04 ≈ one tier step. Dense (every champ-lane with ≥5 games has one).
-const W_MU_LP: f32 = 0.008;
+// laning-dominance differential — ZEROED (S2-4, 2026-07-05): the 0.008 "sweep
+// optimum (59.9%)" evidence came from the non-causal i%5 harness. Under causal
+// rolling-origin LP is flat (standalone 50.4%, incremental ≈0 at every scale)
+// and the S0-4 bootstrap puts its in-bundle contribution at −0.1 [−0.8, +0.7]
+// — measured on a leak-ADVANTAGED (career-cumulative) source, so the true
+// value is at most that. Same precedent as W_MU_DIRECT below. LP rows stay
+// parsed for display/diagnostics.
+const W_MU_LP: f32 = 0.0; // was 0.008
 // direct head-to-head record (MU rows). VALIDATED 2026-06-13 (validate-terms v2,
 // 5-fold CV on 2837 matches): NO incremental value over per-lane winrate
 // (base_lane 59.4% → +0.25×mu 59.6%, within ±0.9%p noise; standalone 58.1% is
 // just champ strength re-expressed). Weight ZEROED — rows stay parsed for
-// display/diagnostics. LP kept at the sweep optimum (59.9% at 0.008; marginal,
-// cumulative-source caveat).
+// display/diagnostics. (LP followed on 2026-07-05 — see W_MU_LP above — so the
+// whole matchup() axis is now weight-0: BT residual τ≈0 said pair effects don't
+// exist here once champ strength is removed.)
 const MU_KAPPA: f32 = 12.0;
 const W_MU_DIRECT: f32 = 0.0;
 // opponent-aware ban: usage-share × winrate-excess of the SPECIFIC enemy team.
@@ -816,9 +821,11 @@ impl Tables {
         };
         let cnt_ramp = 0.5 + 0.5 * late;
         // power de-emphasis on late picks is only justified when a real counter
-        // term exists to replace it — and even then mildly (0.4 was shrinking the
-        // proven signal by 40% while the counter tables sat empty).
-        let power_ramp = if self.has_matchup() { 1.0 - 0.15 * late } else { 1.0 };
+        // term exists to replace it. With BOTH matchup weights now zero
+        // (W_MU_DIRECT 2026-06-13, W_MU_LP 2026-07-05 S2-4) matchup() ≡ 0 — there
+        // is nothing to replace power with, so power stays full on every pick.
+        // (has_matchup() still gates UI honesty wording; it must not gate this.)
+        let power_ramp = 1.0;
         let data = self.confidence(); // trust pairwise DATA proportional to match volume
         // theory = tag-based cold-start terms; confidence() is GLOBAL (matches/200), so
         // in a mature career (≥200 matches) theory == 0 and the tag_synergy/tag_counter
