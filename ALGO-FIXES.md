@@ -223,6 +223,15 @@ if let Some(cof) = &lane.counter_of {
 | S3-7 (F14) | POS soft eligibility | :1267-1269 하드 절벽 → `≥10게임이면 후보 인정 + 오프메타 −0.01` or 절벽 10%로 인하 |
 | S3-8 (F9 low) | banrate→objective proxy / OPP usage 수축 | `B` 대체: `pickrate·max(0,shrunk_delta)` 같은 0.05 가중; OPP `usage=(g+1)/(tg+3)` |
 
+**집행 결과 (2026-07-05, 커밋 `8fdf9d9`/`c9e87b3`/`d440f96`/`bb2aac5` — T1–T3 없이 집행 가능분, DLL 배포됨):**
+- **S3-2 ✅ 출하** (`8fdf9d9`): 스나이프 게이트 해제 — 락이 없으면 적 풀 = pool−taken으로 그대로 계산(필터가 자연 축퇴; ≤2-strong 임계가 오발 억제). 1세트 밴 목록 눈검사 대기.
+- **S3-3 ✅ 출하(기본형)** (`d440f96`): `steal = 0.35·enemy_pocket[cand]` (실효 ≤0.016, ~0.4티어) + dominant "저격픽". enemy_pocket은 Tables 필드라 픽 경로 접근 문제 없음(스펙 주의사항 해소). **피어리스 ×1.5는 T1 확인 후.**
+- **S3-7 ✅ 출하** (`bb2aac5`): `lane_eligible`(POS 셋 ∨ CP≥10게임) + `off_meta_penalty` −0.01 — 라인 그리드 후보 필터·assign_core 절벽 양쪽 소프트화. flex()/strong_per_lane은 POS 셋 유지(플렉스 보너스·저격 깊이 인플레 방지).
+- **S3-8 ✅ 부분 출하** (`c9e87b3`): OPP `usage=(g+1)/(tg+3)` 수축. banrate 대체 프록시는 **보류** — 스펙이 크기를 열어둠('같은') + W_BAN_META=0.05가 이미 순환 신호를 1티어 미만으로 캡 + 정직한 채점기는 T-ban(재캡처 후).
+- **S3-5 무의미화(S2-4 여파)**: 단일화 대상 소비처(mu 항·counters 데이터부·밴 threat의 matchup)가 전부 weight-0이 됨 — enemy-lane 통일은 죽은 경로 리팩터. matchup 축이 부활하지 않는 한 착수하지 않음.
+- **잔여**: T1–T3(사용자, bp_live.txt 관찰 각 5–30분) → S3-1(T2 조건부)·S3-3 피어리스 배율(T1)·S3-4(S3-1 후)·S3-6(S3-2/4 효과 확인 후). **T-ban·T4**(밴/픽 행동 채점기, 유일한 정직한 밴 레이어 검증)는 S0-2 재캡처 후 구축.
+- ⏳ 스모크: 1세트 밴에 "저격" 등장, 픽 추천 "저격픽" 라벨, 오프메타 라인 후보 등장(−0.01 확인), 넛지 크기 분화(S2-2).
+
 ### 밴 레이어 검증 (결과 하네스 구조적 불가 — 별도 목적함수)
 - **T-ban 행동예측**: 팀별 rolling-origin — t 이전 매치로 OPP/pocket 구축, t 매치의 적 챔프셋 top-k 적중률 vs 글로벌 픽률 베이스라인. `W_BAN_OPP`/pocket/snipe의 유일한 정직한 채점.
 - **T4 드래프트-리플레이 어드바이스 벤치**(PLAN Phase 0b): 실픽의 우리-랭킹 백분위(승팀 실픽이 패팀보다 상위 백분위인가) — 픽 랭킹 자체의 오프라인 검증(~150줄 신규 bin).
