@@ -15,7 +15,7 @@ STANDALONE:
   fam_g     (games-only familiarity)    : 52.4%
   fam_gc    (career-centered comfort)   : 51.6%
   fit       (athlete lane stat) ★ph2    : 54.3%
-  aip       (game-AI intrinsic) ★caveat : 50.0%
+  aip       (game-AI intrinsic) ★caveat : 48.4%
 
 INCREMENTAL over base_lane (scale sweep; >noise lift = earns weight):
   base_lane alone                  : 59.0%
@@ -29,7 +29,7 @@ INCREMENTAL over base_lane (scale sweep; >noise lift = earns weight):
   base_lane + s*famg  s=0.02 : 59.1%  s=0.04 : 58.6%  s=0.08 : 57.8%  s=0.16 : 56.6%
   base_lane + s*famgc  s=0.02 : 59.0%  s=0.04 : 58.1%  s=0.08 : 57.2%  s=0.16 : 55.6%
   base_lane + s*fit   s=0.02 : 59.0%  s=0.05 : 59.3%  s=0.1  : 59.3%  s=0.2  : 59.9%
-  base_lane + s*aip   s=0.25 : 59.0%  s=0.5  : 59.0%  s=1    : 59.0%  s=2    : 59.0%
+  base_lane + s*aip   s=0.25 : 58.8%  s=0.5  : 59.2%  s=1    : 59.1%  s=2    : 59.0%
 
 COMBOS (base anchor too — base beat base_lane standalone):
   base_lane + 0.5*mu                              : 58.8%
@@ -44,9 +44,9 @@ COMBOS (base anchor too — base beat base_lane standalone):
   base_lane + 0.08*famgc                          : 57.2%
   base_lane + 0.08*famg + 0.25*fam_c              : 58.7%
   base_lane + 0.08*famg + 0.25*famc + 0.05*fit    : 59.0%
-  base_lane + 0.5*aip                             : 59.0%
-  base_lane + 0.08*famg + 0.5*aip                 : 57.8%
-  aip + 0.08*famg (AI + athlete only)             : 52.4%
+  base_lane + 0.5*aip                             : 59.2%
+  base_lane + 0.08*famg + 0.5*aip                 : 57.6%
+  aip + 0.08*famg (AI + athlete only)             : 52.7%
   kitchen sink (yesterday's engine shape)         : 59.9%
 
 PER-ORIGIN (Δ = accuracy minus base_lane, within that origin's test set):
@@ -80,5 +80,19 @@ PRODUCTION-MATH BASE (S0-3) — patch-local: current(expanding, play order) + pr
     2026.2.0    11 |    58.9%     -2.2     -2.2     -5.2
     2026.3.0    11 |    58.6%     -1.3     -1.1     -2.0
     2026.3.1     9 |    61.0%     -0.8     +0.3     -4.6
+
+PRE-REGISTERED 6-MODEL COMPARISON + BOOTSTRAP CI (S0-4; 1000× match resample, xorshift64 seed 20260705):
+  ① always-first-side                           :  51.4%  [ 49.8,  52.9]
+  ② base_lane (pooled κ8 harness anchor)        :  59.0%  [ 57.5,  60.5]
+  ③ ② + shipped af (.020·lng+.15·cwr cap .05)   :  58.9%  [ 57.5,  60.4]
+  ④ shipped pick score (board-independent)      :  59.7%  [ 58.2,  61.3]
+  ⑤ ④ − comp                                    :  59.7%  [ 58.2,  61.2]
+  ⑥ ④ − LP                                      :  59.8%  [ 58.2,  61.3]
+  PAIRED DELTAS (adoption gate: bootstrap CI lower bound > 0):
+    ②−① base_lane vs coin (sanity)    :  +7.6  [ +5.3,  +9.7]  PASS
+    ③−② shipped af contribution       :  -0.1  [ -1.0,  +0.8]  FAIL (미입증 — 예산 항목, 키우기 금지)
+    ④−② shipped bundle vs base_lane   :  +0.7  [ -1.2,  +2.5]  FAIL (미입증 — 예산 항목, 키우기 금지)
+    ④−⑤ comp contribution             :  +0.1  [ -0.4,  +0.5]  FAIL (미입증 — 예산 항목, 키우기 금지)
+    ④−⑥ LP contribution               :  -0.1  [ -0.8,  +0.7]  FAIL (미입증 — 예산 항목, 키우기 금지)
 
 >> A term EARNS engine weight only if it lifts base_lane beyond ~±0.8%p noise.

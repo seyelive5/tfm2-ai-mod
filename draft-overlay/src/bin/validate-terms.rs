@@ -24,7 +24,7 @@
 //!                                     learned from these same matches → treat as
 //!                                     an upper bound like LP.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 // ---------- balanced-scan parse ----------
 fn read_balanced(b: &[u8], open_idx: usize, open: u8, close: u8) -> Option<(usize, usize)> {
@@ -268,11 +268,21 @@ fn beta_mean(w: f64, m: f64, prior_mean: f64, kappa: f64) -> f64 {
 /// champ posterior MEAN under the shipped patch-local state: current-version WL
 /// + previous-version WL at 0.35·(1−cm/40) (cm = champ's current games so far);
 /// champs in this version's patch note drop the prev blend (stale — restart).
-fn prod_champ_post(c: &str, cur: &HashMap<&str, WL>, prev: &HashMap<&str, WL>, changed: &HashSet<String>) -> f64 {
+fn prod_champ_post(c: &str, cur: &HashMap<&str, WL>, prev: &HashMap<&str, WL>, changed: &HashMap<String, char>) -> f64 {
     let cu = cur.get(c).copied().unwrap_or_default();
-    let pv = if changed.contains(c) { WL::default() } else { prev.get(c).copied().unwrap_or_default() };
+    let pv = if changed.contains_key(c) { WL::default() } else { prev.get(c).copied().unwrap_or_default() };
     let pw = PROD_PREV_W * (1.0 - (cu.g / PROD_CONF_CHAMP).min(1.0));
     beta_mean(cu.w + pw * pv.w, cu.g + pw * pv.g, 0.5, PROD_KAPPA_CHAMP)
+}
+
+/// blended (current + faded prev) match count for a champ — the harness twin of
+/// engine `games()` (drives the chg-nudge 30-game and ai-prior 15-game fades).
+/// 0.0 = no table row at all (engine's u32::MAX regime → full nudge/prior).
+fn prod_games(c: &str, cur: &HashMap<&str, WL>, prev: &HashMap<&str, WL>, changed: &HashMap<String, char>) -> f64 {
+    let cu = cur.get(c).copied().unwrap_or_default();
+    let pv = if changed.contains_key(c) { WL::default() } else { prev.get(c).copied().unwrap_or_default() };
+    let pw = PROD_PREV_W * (1.0 - (cu.g / PROD_CONF_CHAMP).min(1.0));
+    cu.g + pw * pv.g
 }
 
 /// lane delta under the shipped state: κ20 beta with the champ's own posterior
@@ -284,12 +294,12 @@ fn prod_lane_delta(
     prev_c: &HashMap<&str, WL>,
     cur_cp: &HashMap<(&str, usize), WL>,
     prev_cp: &HashMap<(&str, usize), WL>,
-    changed: &HashSet<String>,
+    changed: &HashMap<String, char>,
 ) -> f64 {
     let cmean = prod_champ_post(&a.champ, cur_c, prev_c, changed);
     if a.lane < 5 {
         let cu = cur_cp.get(&(a.champ.as_str(), a.lane)).copied().unwrap_or_default();
-        let pv = if changed.contains(&a.champ) {
+        let pv = if changed.contains_key(a.champ.as_str()) {
             WL::default()
         } else {
             prev_cp.get(&(a.champ.as_str(), a.lane)).copied().unwrap_or_default()
@@ -304,10 +314,45 @@ fn prod_lane_delta(
     cmean - 0.5
 }
 
-/// `=== version V ===` sections + `[champ]` line prefixes from patch_notes_dump.txt
-/// → per-version changed-champ sets (the authored reset rule, same as authored_chg).
-fn parse_patch_notes(text: &str) -> HashMap<String, HashSet<String>> {
-    let mut out: HashMap<String, HashSet<String>> = HashMap::new();
+/// EXACT `delta_for` replica (engine.rs:424-432) on the production state: the
+/// lane cell posterior when the cell exists (m_eff > 0), else the champ delta
+/// SHRUNK HARD (×0.25 — a POS-playable lane with zero games must not inherit the
+/// main-lane-inflated overall delta). Differs from `prod_lane_delta` (S0-3 anchor)
+/// only in that fallback; this is the one the shipped score actually uses.
+fn prod_delta_for(
+    a: &Ath,
+    cur_c: &HashMap<&str, WL>,
+    prev_c: &HashMap<&str, WL>,
+    cur_cp: &HashMap<(&str, usize), WL>,
+    prev_cp: &HashMap<(&str, usize), WL>,
+    changed: &HashMap<String, char>,
+) -> f64 {
+    let cd = prod_champ_post(&a.champ, cur_c, prev_c, changed) - 0.5;
+    if a.lane < 5 {
+        let cu = cur_cp.get(&(a.champ.as_str(), a.lane)).copied().unwrap_or_default();
+        let pv = if changed.contains_key(a.champ.as_str()) {
+            WL::default()
+        } else {
+            prev_cp.get(&(a.champ.as_str(), a.lane)).copied().unwrap_or_default()
+        };
+        let champ_cm = cur_c.get(a.champ.as_str()).map_or(0.0, |w| w.g);
+        let pw = PROD_PREV_W * (1.0 - (champ_cm / PROD_CONF_CHAMP).min(1.0));
+        let (w, m) = (cu.w + pw * pv.w, cu.g + pw * pv.g);
+        if m > 0.0 {
+            return beta_mean(w, m, cd + 0.5, PROD_KAPPA_LANE) - 0.5;
+        }
+        return 0.25 * cd;
+    }
+    cd
+}
+
+/// `=== version V ===` sections + `[champ] #…±` lines from patch_notes_dump.txt
+/// → per-version changed champs WITH direction. Each `#…` token's trailing +/− is
+/// that change's authored is_buff; the champ direction uses the PRODUCTION reduce
+/// (lib.rs:514): all-buff '+', all-nerf '-', mixed '~' (no nudge). Key presence
+/// alone = "changed" (stale prev-blend drop applies regardless of direction).
+fn parse_patch_notes(text: &str) -> HashMap<String, HashMap<String, char>> {
+    let mut out: HashMap<String, HashMap<String, char>> = HashMap::new();
     let mut cur: Option<String> = None;
     for line in text.lines() {
         let lt = line.trim();
@@ -317,7 +362,22 @@ fn parse_patch_notes(text: &str) -> HashMap<String, HashSet<String>> {
             cur = Some(v);
         } else if let (Some(v), Some(rest)) = (cur.as_ref(), lt.strip_prefix('[')) {
             if let Some(end) = rest.find(']') {
-                out.get_mut(v).unwrap().insert(rest[..end].to_string());
+                let (mut b, mut nrf) = (0u32, 0u32);
+                for tok in rest[end + 1..].split_whitespace() {
+                    match tok.as_bytes().last() {
+                        Some(b'+') => b += 1,
+                        Some(b'-') => nrf += 1,
+                        _ => {}
+                    }
+                }
+                let dir = if b > 0 && nrf == 0 {
+                    '+'
+                } else if nrf > 0 && b == 0 {
+                    '-'
+                } else {
+                    '~'
+                };
+                out.get_mut(v).unwrap().insert(rest[..end].to_string(), dir);
             }
         }
     }
@@ -335,6 +395,13 @@ struct Terms {
     base_prod: f64,
     /// production-math lane base — the SHIPPED model's true causal anchor.
     base_lane_prod: f64,
+    // ---- S0-4: the shipped pick score's board-independent terms, replicated ----
+    dfor_prod: f64, // Σ delta_for (engine :424 exact: lane cell else 0.25·champ) diff
+    chg_n: f64,     // Σ chg_nudge (±0.02, 30-game fade, authored dir) diff
+    aip_prod: f64,  // Σ ai_prior_term (0.4·p·15-game-fade, clamp ±0.024) diff
+    lp_prod: f64,   // Σ matchup LP (0.008·zdiff, clamp ±0.05, actual same-lane opp) diff
+    comp_prod: f64, // Σ W_COMP·comp_need (tags-only; retrospective last-pick) diff
+    af: f64,        // Σ shipped af (0.020·ln(1+min(g,20)) + 0.15·cwr, cap 0.05) diff
     syn: f64,       // legacy same-team pair
     cnt: f64,       // legacy cross-team pair (all-vs-all)
     mu: f64,        // same-LANE head-to-head, κ12 (the new matchup axis)
@@ -394,7 +461,7 @@ fn main() {
     } else {
         HashMap::new()
     };
-    let notes: HashMap<String, HashSet<String>> = notes_path
+    let notes: HashMap<String, HashMap<String, char>> = notes_path
         .as_deref()
         .map(|p| parse_patch_notes(&std::fs::read_to_string(p).unwrap_or_default()))
         .unwrap_or_default();
@@ -532,8 +599,8 @@ fn main() {
                 }
             }
         }
-        let empty_changed: HashSet<String> = HashSet::new();
-        let changed: &HashSet<String> = if legacy {
+        let empty_changed: HashMap<String, char> = HashMap::new();
+        let changed: &HashMap<String, char> = if legacy {
             &empty_changed
         } else {
             let label = vsorted[g].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".");
@@ -541,6 +608,10 @@ fn main() {
         };
         let mut cur_c: HashMap<&str, WL> = HashMap::new();
         let mut cur_cp: HashMap<(&str, usize), WL> = HashMap::new();
+        // expanding CAREER tables for the shipped af producer (S0-4): athlete history
+        // has no patch reset — all earlier versions + current version up to each match.
+        let mut fam_x = fam.clone();
+        let mut ath_x = ath_all.clone();
         let mut test_idx: Vec<usize> = (0..matches.len()).filter(|&i| groups[i] == g).collect();
         test_idx.sort_by_key(|&i| matches[i].id); // play order — production tables must expand causally
         for &i in &test_idx {
@@ -619,6 +690,99 @@ fn main() {
                 };
                 t.base_prod = prod_c(&m.blue) - prod_c(&m.red);
                 t.base_lane_prod = prod_l(&m.blue) - prod_l(&m.red);
+                // ---- S0-4: shipped pick-score terms (retrospective full-board) ----
+                let chg_nudge = |c: &str| -> f64 {
+                    let d = match changed.get(c) {
+                        Some('+') => 0.02,
+                        Some('-') => -0.02,
+                        _ => return 0.0,
+                    };
+                    let gm = prod_games(c, &cur_c, &prev_c, changed);
+                    if gm <= 0.0 {
+                        return d; // no table row yet → full nudge (engine u32::MAX regime)
+                    }
+                    d * (1.0 - (gm / 30.0).min(1.0)).max(0.0)
+                };
+                let ai_term = |c: &str| -> f64 {
+                    let p = match ai_intr.get(c) {
+                        Some(v) => *v,
+                        None => return 0.0,
+                    };
+                    let gm = prod_games(c, &cur_c, &prev_c, changed);
+                    let fresh = if gm <= 0.0 { 1.0 } else { (1.0 - gm / 15.0).max(0.0) };
+                    (0.4 * p * fresh).clamp(-0.024, 0.024)
+                };
+                let af_of = |a: &Ath| -> f64 {
+                    let cw = fam_x.get(&(a.aid, a.champ.as_str())).copied().unwrap_or_default();
+                    let tot = ath_x.get(&a.aid).copied().unwrap_or_default();
+                    let wr_a = (tot.w + 4.0) / (tot.g + 8.0);
+                    let famg = 0.020 * (1.0 + cw.g.min(20.0)).ln();
+                    let famc = 0.15 * ((cw.w + 4.0 * wr_a) / (cw.g + 4.0) - wr_a);
+                    (famg + famc).min(0.05)
+                };
+                let lp_of = |a: &Ath, opp: &[Ath]| -> f64 {
+                    if a.lane >= 5 {
+                        return 0.0;
+                    }
+                    let opps: Vec<&Ath> = opp.iter().filter(|e| e.lane == a.lane).collect();
+                    if opps.is_empty() {
+                        return 0.0;
+                    }
+                    let sum: f64 = opps
+                        .iter()
+                        .map(|e| {
+                            let z = lane_dom.get(&(a.champ.clone(), a.lane)).copied().unwrap_or(0.0)
+                                - lane_dom.get(&(e.champ.clone(), e.lane)).copied().unwrap_or(0.0);
+                            (0.008 * z).clamp(-0.05, 0.05)
+                        })
+                        .sum();
+                    sum / opps.len() as f64
+                };
+                // comp_need replica (engine :687-728), tags-only (no RP-role data in the
+                // harness), each athlete scored as the LAST pick (allies = the other N-1).
+                let comp_of = |team: &[Ath]| -> f64 {
+                    let has = |x: &Ath, tag: &str| {
+                        taxon.get(&x.champ).map_or(false, |t| t.tags.iter().any(|g| g == tag))
+                    };
+                    let cat_of = |x: &Ath| taxon.get(&x.champ).map_or("", |t| t.category.as_str());
+                    let mut s = 0.0;
+                    for (i, a) in team.iter().enumerate() {
+                        let allies: Vec<&Ath> =
+                            team.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, x)| x).collect();
+                        let any = |f: &dyn Fn(&Ath) -> bool| allies.iter().any(|x| f(x));
+                        let is_heal = |x: &Ath| has(x, "Heal") || has(x, "Shield");
+                        let mut u = 0.0;
+                        if !any(&|x| has(x, "Tank")) && has(a, "Tank") {
+                            u += 0.12 * 0.2;
+                        } else if !any(&|x| has(x, "Frontline")) && has(a, "Frontline") {
+                            u += 0.12 * 0.2;
+                        }
+                        if !any(&|x| has(x, "CC")) && has(a, "CC") {
+                            u += 0.12 * 0.3;
+                        }
+                        if !any(&is_heal) && is_heal(a) {
+                            u += 0.12 * 0.85;
+                        }
+                        if !any(&|x| has(x, "Backline") || cat_of(x) == "Range")
+                            && (has(a, "Backline") || cat_of(a) == "Range")
+                        {
+                            u += 0.12 * 0.3;
+                        }
+                        s += 0.2 * u * (allies.len() as f64 / 4.0).min(1.0);
+                    }
+                    s
+                };
+                let sum_d = |f: &dyn Fn(&Ath) -> f64| -> f64 {
+                    m.blue.iter().map(|a| f(a)).sum::<f64>() - m.red.iter().map(|a| f(a)).sum::<f64>()
+                };
+                t.dfor_prod =
+                    sum_d(&|a| prod_delta_for(a, &cur_c, &prev_c, &cur_cp, &prev_cp, changed));
+                t.chg_n = sum_d(&|a| chg_nudge(&a.champ));
+                t.aip_prod = sum_d(&|a| ai_term(&a.champ));
+                t.af = sum_d(&af_of);
+                t.lp_prod = m.blue.iter().map(|a| lp_of(a, &m.red)).sum::<f64>()
+                    - m.red.iter().map(|a| lp_of(a, &m.blue)).sum::<f64>();
+                t.comp_prod = comp_of(&m.blue) - comp_of(&m.red);
             }
             recs.push(t);
             if !legacy {
@@ -629,6 +793,8 @@ fn main() {
                         if a.lane < 5 {
                             cur_cp.entry((&a.champ, a.lane)).or_default().rec(won);
                         }
+                        fam_x.entry((a.aid, &a.champ)).or_default().rec(won);
+                        ath_x.entry(a.aid).or_default().rec(won);
                     }
                 }
             }
@@ -861,6 +1027,87 @@ fn main() {
                 acc_in(&set, &|t: &Terms| t.base_lane_prod + 0.5 * t.fam_c) - bl,
                 acc_in(&set, &|t: &Terms| t.base_lane_prod + 0.08 * t.fam_g) - bl,
             );
+        }
+
+        // ---- S0-4: pre-registered 6-model comparison + bootstrap CI (fixed list,
+        // no additions — ALGO-FIXES §S0-4). Convention: retrospective full-board
+        // scoring (every champ as the LAST pick: power_ramp 0.85, mu_ramp 1, comp
+        // ramp allies/4; mature career ⇒ data=1/theory=0; in-mod syn/cnt rows
+        // absent ⇒ 0; RP-role OR-branch unavailable ⇒ tags-only comp).
+        let m4 = |t: &Terms| {
+            0.85 * t.dfor_prod + t.chg_n + t.aip_prod + t.lp_prod + t.comp_prod + t.af
+        };
+        let models: [(&str, &dyn Fn(&Terms) -> f64); 6] = [
+            ("① always-first-side", &|_t: &Terms| 1.0),
+            ("② base_lane (pooled κ8 harness anchor)", &|t: &Terms| t.base_lane),
+            ("③ ② + shipped af (.020·lng+.15·cwr cap .05)", &|t: &Terms| t.base_lane + t.af),
+            ("④ shipped pick score (board-independent)", &m4),
+            ("⑤ ④ − comp", &|t: &Terms| 0.85 * t.dfor_prod + t.chg_n + t.aip_prod + t.lp_prod + t.af),
+            ("⑥ ④ − LP", &|t: &Terms| 0.85 * t.dfor_prod + t.chg_n + t.aip_prod + t.comp_prod + t.af),
+        ];
+        let corr: Vec<Vec<f64>> = models
+            .iter()
+            .map(|(_, f)| {
+                recs.iter()
+                    .map(|t| {
+                        let s = f(t);
+                        if s.abs() < 1e-12 {
+                            0.5
+                        } else if (s > 0.0) == t.win {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        let nrec = recs.len();
+        let point: Vec<f64> = corr.iter().map(|c| c.iter().sum::<f64>() / nrec as f64 * 100.0).collect();
+        const B: usize = 1000;
+        let mut rng: u64 = 20260705; // fixed seed — deterministic, pre-registered
+        let mut next = move || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        let mut boot: Vec<[f64; 6]> = Vec::with_capacity(B);
+        for _ in 0..B {
+            let mut s = [0.0f64; 6];
+            for _ in 0..nrec {
+                let i = (next() % nrec as u64) as usize;
+                for (k, sk) in s.iter_mut().enumerate() {
+                    *sk += corr[k][i];
+                }
+            }
+            for sk in s.iter_mut() {
+                *sk = *sk / nrec as f64 * 100.0;
+            }
+            boot.push(s);
+        }
+        let ci = |vals: &mut Vec<f64>| -> (f64, f64) {
+            vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            (vals[(B as f64 * 0.025) as usize], vals[(B as f64 * 0.975) as usize])
+        };
+        println!("\nPRE-REGISTERED 6-MODEL COMPARISON + BOOTSTRAP CI (S0-4; {}× match resample, xorshift64 seed 20260705):", B);
+        for (k, (name, _)) in models.iter().enumerate() {
+            let mut v: Vec<f64> = boot.iter().map(|b| b[k]).collect();
+            let (lo, hi) = ci(&mut v);
+            println!("  {:<46}: {:>5.1}%  [{:>5.1}, {:>5.1}]", name, point[k], lo, hi);
+        }
+        println!("  PAIRED DELTAS (adoption gate: bootstrap CI lower bound > 0):");
+        for (a, b, name) in [
+            (1usize, 0usize, "②−① base_lane vs coin (sanity)"),
+            (2, 1, "③−② shipped af contribution"),
+            (3, 1, "④−② shipped bundle vs base_lane"),
+            (3, 4, "④−⑤ comp contribution"),
+            (3, 5, "④−⑥ LP contribution"),
+        ] {
+            let mut v: Vec<f64> = boot.iter().map(|r| r[a] - r[b]).collect();
+            let (lo, hi) = ci(&mut v);
+            let gate = if lo > 0.0 { "PASS" } else { "FAIL (미입증 — 예산 항목, 키우기 금지)" };
+            println!("    {:<34}: {:>+5.1}  [{:>+5.1}, {:>+5.1}]  {}", name, point[a] - point[b], lo, hi, gate);
         }
     }
     println!("\n>> A term EARNS engine weight only if it lifts base_lane beyond ~±{:.1}%p noise.", 50.0 / n.sqrt());

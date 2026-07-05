@@ -67,10 +67,12 @@ New-Item "$env:LOCALAPPDATA\tfm2-overlay\probe\DEBUG_DUMPS" -ItemType File
 
 **결과** (validate-terms v3.2, `--notes=` 플래그, 현패치 id-순 확장 — id↔version 단조 0위반 검증): base_prod **60.0%** / base_lane_prod **59.5%** vs pooled κ8 58.8/59.0·κ40 58.6/58.9 → **출하 패치-로컬 메모리(현패치 확장+0.35·prev+변경챔프 리셋)가 풀드 히스토리보다 우수(+0.6~+1.4%p) — 설계 검증**. κ8-vs-κ40 풀드 차이 무시 가능(**F7/F11 해소** — κ8 하네스가 결론을 왜곡하지 않았음). famg는 출하 앵커에서도 단조 악화(F15 3중 확인); **famc는 출하 앵커 +1.6%p(s=0.25 최적)이나 여전히 early-집중(late −0.8~−2.2)** — fam 테이블엔 리셋 개념이 없으므로 신호의 국면 의존성(커리어 초반 강함) 가능성, **상향은 S0-4 CI 후**. 상세: `analysis/harness-causal-findings.md` §S0-3.
 
-### S0-4. 사전등록 6모델 + CI
+### S0-4. 사전등록 6모델 + CI — ✅ 완료 (2026-07-05)
 비교군(사전 고정, 추가 금지): ① always-first-side ② base_lane ③ base_lane+출하fam ④ 출하 픽스코어 전체(보드 무관 항만) ⑤ ④−comp ⑥ ④−LP. 매치 리샘플 부트스트랩 1000× 페어드 CI. **채택 기준: 풀드 CI 하한 > 0.** ±0.5–1%p급 효과는 이 규모에서 측정 불가 — "미입증/코스메틱 예산"으로 문서화(키우기 금지).
 
 완료 판정: rolling-origin 표 1장 + ①–⑥ CI 표 1장이 `analysis/`에 저장되고, 기존 판정 중 뒤집힌 것 목록화.
+
+**결과** (validate-terms v3.3, 산출물 `analysis/harness-s04-ci.txt` + `harness-rolling-origin.txt`): 유일한 PASS = ②−① +7.6 [+5.3,+9.7] — **base가 유일한 입증 신호**. 출하 af −0.1 [−1.0,+0.8]·번들 +0.7 [−1.2,+2.5]·comp +0.1 [−0.4,+0.5]·LP −0.1 [−0.8,+0.7] 전부 미입증 → **예산 항목 확정, 키우기 금지**. 신규 발견: **af 캡(0.05)이 famg만으로 g≈11에서 포화 → famc 질식**(③ −0.1의 구조 원인) ⇒ **F15 실행형 = af에서 famg 성분 제거(0.15·famc, 캡 유지), famc 상향은 기각**. 뒤집힌 판정: W_MU_LP=0.008의 "스윕 최적" 근거(비인과), lib.rs:113 "+2.5%p 신호 보존" 주석. aip 인과 단독 48.4%(S1-1 게이트 정합). 상세: findings §S0-4.
 
 ---
 

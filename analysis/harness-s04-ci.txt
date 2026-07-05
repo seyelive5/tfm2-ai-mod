@@ -1,0 +1,15 @@
+PRE-REGISTERED 6-MODEL COMPARISON + BOOTSTRAP CI (S0-4; 1000× match resample, xorshift64 seed 20260705):
+  ① always-first-side                           :  51.4%  [ 49.8,  52.9]
+  ② base_lane (pooled κ8 harness anchor)        :  59.0%  [ 57.5,  60.5]
+  ③ ② + shipped af (.020·lng+.15·cwr cap .05)   :  58.9%  [ 57.5,  60.4]
+  ④ shipped pick score (board-independent)      :  59.7%  [ 58.2,  61.3]
+  ⑤ ④ − comp                                    :  59.7%  [ 58.2,  61.2]
+  ⑥ ④ − LP                                      :  59.8%  [ 58.2,  61.3]
+  PAIRED DELTAS (adoption gate: bootstrap CI lower bound > 0):
+    ②−① base_lane vs coin (sanity)    :  +7.6  [ +5.3,  +9.7]  PASS
+    ③−② shipped af contribution       :  -0.1  [ -1.0,  +0.8]  FAIL (미입증 — 예산 항목, 키우기 금지)
+    ④−② shipped bundle vs base_lane   :  +0.7  [ -1.2,  +2.5]  FAIL (미입증 — 예산 항목, 키우기 금지)
+    ④−⑤ comp contribution             :  +0.1  [ -0.4,  +0.5]  FAIL (미입증 — 예산 항목, 키우기 금지)
+    ④−⑥ LP contribution               :  -0.1  [ -0.8,  +0.7]  FAIL (미입증 — 예산 항목, 키우기 금지)
+
+>> A term EARNS engine weight only if it lifts base_lane beyond ~±0.8%p noise.
