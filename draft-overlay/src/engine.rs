@@ -1124,8 +1124,12 @@ pub fn recommend(
 
     // fearless ban targeting: the ENEMY's remaining strong depth per lane (their
     // pool = available minus their locks minus the board) — a thin lane's last
-    // strong champ is a high-value snipe.
-    let enemy_strong: Option<[u32; 5]> = if phase_ban && !s.enemy_locked.is_empty() {
+    // strong champ is a high-value snipe. S3-2 (2026-07-05): no longer gated on
+    // enemy_locked being non-empty — with zero locks the enemy pool is simply
+    // pool−taken (the filter below degrades to exactly that), and the ≤2-strong
+    // threshold in score_ban keeps false positives down on its own. Set-1 ban
+    // lists need an eyeball check in-game (deploy note).
+    let enemy_strong: Option<[u32; 5]> = if phase_ban {
         let avail: HashSet<String> = CHAMPS
             .iter()
             .map(|(id, _)| *id)
