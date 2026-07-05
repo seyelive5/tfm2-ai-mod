@@ -49,4 +49,17 @@ COMBOS (base anchor too — base beat base_lane standalone):
   aip + 0.08*famg (AI + athlete only)             : 52.4%
   kitchen sink (yesterday's engine shape)         : 59.9%
 
+PER-ORIGIN (Δ = accuracy minus base_lane, within that origin's test set):
+  origin    train  test | base_ln    famg  Δ.02*fg  Δ.08*fg  Δ.25*fc |  ±1sd
+  2026.0.1    535   889 |   59.8%   54.8%     +1.2     +0.7     +0.1 |   1.7
+  2026.1.0   1424   591 |   60.2%   56.1%     +1.2     +1.4     +4.4 |   2.1
+  2026.1.1   2015   651 |   62.2%   56.1%     -0.8     -1.1     +2.9 |   2.0
+  2026.1.2   2666   355 |   56.9%   50.7%     +0.0     -0.6     +2.0 |   2.7
+  2026.2.0   3021   270 |   53.7%   48.3%     -2.2     -3.7     -0.4 |   3.0
+  2026.3.0   3291   541 |   55.5%   47.3%     -1.3     -4.8     -1.3 |   2.1
+  2026.3.1   3832   656 |   59.8%   49.2%     +0.5     -2.4     -1.1 |   2.0
+  EARLY-POOLED (4 origins) n=2486 | base_lane  60.1%  Δ.08*famg  +0.2  Δ.25*famc  +2.1  (±1.0%p)
+  LATE-POOLED  (3 origins, train≥3021) n=1467 | base_lane  57.1%  Δ.08*famg  -3.5  Δ.25*famc  -1.0  (±1.3%p)
+  → leakage: Δfamg ≈0/negative in BOTH pools · data starvation: negative early, POSITIVE late.
+
 >> A term EARNS engine weight only if it lifts base_lane beyond ~±0.8%p noise.

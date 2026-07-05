@@ -263,6 +263,8 @@ struct Terms {
     fam_gc: f64,
     fit: f64,       // athlete lane proficiency diff (as-of-match stat, /100)
     aip: f64,       // game-AI intrinsic valuation diff (empty-board scan scores)
+    /// CV group this record was scored under (origin index for rolling, fold for legacy).
+    group: usize,
     win: bool,
 }
 
@@ -407,7 +409,7 @@ fn main() {
             if groups[i] != g {
                 continue; // score only this origin/fold's matches
             }
-            let mut t = Terms { win: m.blue_win, ..Default::default() };
+            let mut t = Terms { win: m.blue_win, group: g, ..Default::default() };
             let side = |team: &[Ath]| -> (f64, f64, f64, f64, f64, f64, f64) {
                 let b: f64 = team.iter().map(|a| cdelta(&a.champ)).sum();
                 let bl: f64 = team.iter().map(lane_delta).sum();
@@ -575,6 +577,84 @@ fn main() {
         }),
     ] {
         println!("  {:<48}: {:.1}%", name, acc(f));
+    }
+
+    // ---- PER-ORIGIN breakdown: the leakage-vs-starvation discriminator (2026-07-05).
+    // The rolling-origin famg collapse has two candidate explanations: (a) the legacy
+    // i%5 lift was future-volume leakage, or (b) early origins simply train on too
+    // little data. They separate at LATE origins (train = thousands of matches):
+    // leakage predicts Δfamg stays ≈0/negative at every origin regardless of train
+    // size; starvation predicts Δfamg recovering positive as train grows.
+    let acc_in = |set: &[usize], f: &dyn Fn(&Terms) -> f64| -> f64 {
+        let (mut c, mut k) = (0.0, 0usize);
+        for t in recs.iter().filter(|t| set.contains(&t.group)) {
+            k += 1;
+            let s = f(t);
+            if s.abs() < 1e-12 {
+                c += 0.5;
+            } else if (s > 0.0) == t.win {
+                c += 1.0;
+            }
+        }
+        if k > 0 { c / k as f64 * 100.0 } else { 50.0 }
+    };
+    println!("\nPER-ORIGIN (Δ = accuracy minus base_lane, within that origin's test set):");
+    println!(
+        "  {:<9} {:>5} {:>5} | {:>7} {:>7} {:>8} {:>8} {:>8} | {:>5}",
+        "origin", "train", "test", "base_ln", "famg", "Δ.02*fg", "Δ.08*fg", "Δ.25*fc", "±1sd"
+    );
+    let mut scored_groups: Vec<usize> = Vec::new();
+    for g in 0..n_groups {
+        let k = recs.iter().filter(|t| t.group == g).count();
+        if k == 0 {
+            continue;
+        }
+        scored_groups.push(g);
+        let train_n = (0..matches.len()).filter(|&i| is_train(i, g)).count();
+        let label = if legacy {
+            format!("fold{}", g)
+        } else {
+            vsorted[g].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".")
+        };
+        let set = [g];
+        let bl = acc_in(&set, &|t: &Terms| t.base_lane);
+        println!(
+            "  {:<9} {:>5} {:>5} | {:>6.1}% {:>6.1}% {:>+8.1} {:>+8.1} {:>+8.1} | {:>5.1}",
+            label,
+            train_n,
+            k,
+            bl,
+            acc_in(&set, &|t: &Terms| t.fam_g),
+            acc_in(&set, &|t: &Terms| t.base_lane + 0.02 * t.fam_g) - bl,
+            acc_in(&set, &|t: &Terms| t.base_lane + 0.08 * t.fam_g) - bl,
+            acc_in(&set, &|t: &Terms| t.base_lane + 0.25 * t.fam_c) - bl,
+            50.0 / (k as f64).sqrt()
+        );
+    }
+    if !legacy && scored_groups.len() >= 4 {
+        let late: Vec<usize> = scored_groups[scored_groups.len() - 3..].to_vec();
+        let early: Vec<usize> = scored_groups[..scored_groups.len() - 3].to_vec();
+        let min_train =
+            late.iter().map(|&g| (0..matches.len()).filter(|&i| is_train(i, g)).count()).min().unwrap_or(0);
+        for (name, set, note) in [
+            ("EARLY-POOLED", &early, String::new()),
+            ("LATE-POOLED ", &late, format!(", train≥{}", min_train)),
+        ] {
+            let k = recs.iter().filter(|t| set.contains(&t.group)).count();
+            let bl = acc_in(set, &|t: &Terms| t.base_lane);
+            println!(
+                "  {} ({} origins{}) n={:>4} | base_lane {:>5.1}%  Δ.08*famg {:>+5.1}  Δ.25*famc {:>+5.1}  (±{:.1}%p)",
+                name,
+                set.len(),
+                note,
+                k,
+                bl,
+                acc_in(set, &|t: &Terms| t.base_lane + 0.08 * t.fam_g) - bl,
+                acc_in(set, &|t: &Terms| t.base_lane + 0.25 * t.fam_c) - bl,
+                50.0 / (k as f64).sqrt()
+            );
+        }
+        println!("  → leakage: Δfamg ≈0/negative in BOTH pools · data starvation: negative early, POSITIVE late.");
     }
     println!("\n>> A term EARNS engine weight only if it lifts base_lane beyond ~±{:.1}%p noise.", 50.0 / n.sqrt());
 }

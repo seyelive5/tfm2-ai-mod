@@ -41,6 +41,7 @@ cd C:\tmp\tfm2-ai-mod\draft-overlay; cargo run --release --bin validate-terms   
 
 ### S0-1. rolling-origin 폴드 — ✅ 완료 (2026-07-05) — ⚠️ 결과가 프로젝트 #1 신호를 뒤엎음
 구현·실행·검증 완료. `--legacy`가 구 i%5를 비트단위 재현 → 리팩터 무결. **rolling-origin이 famg("숙련 games") 검증을 누출 아티팩트로 폭로**: base_lane+0.08famg 66.3%→**57.8%** (리프트 → 해악), famg 단독 64.8→52.4. base_lane 견고(59.4→59.0), fam_c만 생존(+1.0%p 인과). → **`analysis/harness-causal-findings.md`** (전문·표·해석·신규 **F15 fam 재가중**) + `analysis/harness-rolling-origin.txt`·`harness-legacy-i5.txt`. **다음: S0-3(프로덕션 수학 이식) 후 famc 재가중 확정 — 그 전엔 fam 가중 변경 금지.**
+**S0-1b (per-origin 판별, 07-05): 누출 확정, 굶주림(초기 훈련량 부족) 기각** — Δfamg가 훈련량 증가와 함께 악화(train 535→3832에서 +0.7→−4.8/−2.4; 후기 famg 단독 47~49% <50%), 동일 훈련량(~3590)의 legacy 폴드는 전부 +5.4~+10.8 → 리프트는 미래 데이터가 훈련에 들어갈 때만 존재. 부수: **famc +1.0%p는 early-집중(late 풀 −1.0) → famc 생존 잠정**, S0-3 게이트 근거 데이터로 재확인. 표·해석은 findings 문서 §판별 실험.
 
 <details><summary>원 스펙 (구현 기록)</summary>
 
