@@ -105,17 +105,17 @@
 - **살아남는 그림**: `base_lane`가 신호, `fam_c`가 소폭 실재 리프트(+1.0%p), 나머지(famg/syn/cnt/mu/lp/comp/aip/fit) 전부 무증분. 훨씬 겸손하고 정직한 모델.
 - **Step 0가 게이트인 이유를 증명**: 하네스가 거짓말하고 있었고, 가장 중요한 것에 대해 거짓말했다. 이 수치 없이 가중치를 만졌으면 famg를 더 키웠을 것.
 
-## 새 백로그 항목 → **F15: fam 재가중 — ✅ 출하 완료 (2026-07-05, 커밋 `3648700`)**
+## 새 백로그 항목 → **F15: fam 재가중 — ✅ 출하 완료 (2026-07-05, 커밋 `426822f`)**
 `af()` 프로듀서(tfm2_db_export/src/lib.rs)를 인과 증거에 맞춰 재가중:
 - ✅ **famg 성분(0.020·ln games) 제거됨** — S0-1b·S0-3·S0-4 3중 확인(무가치/해악) + 캡 포화 구조 결함(§S0-4: g≈11에서 famg 단독으로 0.05 캡 도달 → famc 질식). 출하형: `af = min(0.05, 0.15·famc)`.
 - ✅ **famc 0.15 유지 확정, 상향(0.25) 기각** — 출하 앵커 +1.6%p 포인트는 S0-4 CI 미입증 + early-집중(late 풀 −1.0) → 예산 항목(키우기 금지).
-- ✅ 주석 정정 완료: lib.rs 프로듀서 doc + engine.rs athlete_bonus/af()/score_pick_in fam 단락 (`3648700`).
+- ✅ 주석 정정 완료: lib.rs 프로듀서 doc + engine.rs athlete_bonus/af()/score_pick_in fam 단락 (`426822f`).
 - ✅ PLAN.md 2026-06-13 표에 소급 정정 배너(비인과 수치·famg 판정 폐기).
 - 검증(af_new, v3.4 진단): base_lane 대비 +0.3 [−0.5,+1.1] / prod 앵커 +0.1 [−0.7,+0.8] — 구 af(−0.1)보다 포인트 개선, CI 미입증(예상 크기).
 
 ## Step 2 집행 (2026-07-05) — 하네스 판정과 출하
 S0 하네스(v3.4 POST-HOC 진단 + T-nudge/T-amnesia)로 Step 2 전 항목을 판정했다. 상세 수치: `harness-rolling-origin.txt` POST-HOC 섹션 + `ALGO-FIXES.md` Step 2 집행 결과.
-- **출하 3건**: F15(af famg 제거, `3648700`) · S2-4(W_MU_LP=0 + power_ramp 1.0 복원 — matchup 축 전체 weight-0, `0b3ae2a`) · S2-2(카운트-스케일 chg_nudge — T-nudge slope +0.0125/chg, r +0.66, n=46; CHG 행 5필드 하위호환, `641f7dd`). DLL 재배포 완료(백업 유지).
+- **출하 3건**: F15(af famg 제거, `426822f`) · S2-4(W_MU_LP=0 + power_ramp 1.0 복원 — matchup 축 전체 weight-0, `ac355ea`) · S2-2(카운트-스케일 chg_nudge — T-nudge slope +0.0125/chg, r +0.66, n=46; CHG 행 5필드 하위호환, `32981f6`). DLL 재배포 완료(백업 유지).
 - **기각/종결 4건**: S2-7 스택(Δ−0.1 [−0.5,+0.3]) · S2-8 comp 전 성분 가산 미입증(heal −0.2 포함 — W_COMP는 UX 가드레일로만 유지) · S2-3 κ 스윕 평탄(40 확정, EB 불채택) · S2-1 이월(n≤2 모집단 1개 — 전량 리셋 유지).
 - **잔여 2건 → 예비 기각 (v3.5, 07-05)**: S2-5 솔로 prev-블렌드 Δ+0.0 [−0.1,+0.2](솔로 분포가 3.0/3.1 쏠림 — prev-경로 얇음) · S2-6 BT θ 단독 58.8% vs base_prod 60.0, thin 층 −2.7(수축 없는 joint fit의 얇은-챔프 과적합). 둘 다 S0-2 재캡처 후 재확인. 부수: parse_lane_dom 비결정성(BTreeMap 결정화 — `--legacy` 바이트 회귀가 검출).
 

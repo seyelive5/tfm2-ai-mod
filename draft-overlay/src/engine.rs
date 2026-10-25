@@ -539,7 +539,7 @@ impl Tables {
     /// below chance on 3293 matches — PLAN.md 2026-06-13), so it must never outvote
     /// authored patch direction (±0.02) or real evidence. Linear fade to ZERO at
     /// 15 games — the approved scope (PLAN.md:144-145 "통계 0 챔프만, 15판 페이드");
-    /// the earlier never-vanishing K=10 blend (640edf8) silently widened a
+    /// the earlier never-vanishing K=10 blend (75cdac8) silently widened a
     /// same-night-rejected signal. Cap 0.024 (0.6 tier) so it can't clear a tier
     /// or beat nudge+evidence at any g≥5. Zero-data champs (g==u32::MAX, e.g. a
     /// release-day seed) keep the full prior — the one regime where the dev-intent

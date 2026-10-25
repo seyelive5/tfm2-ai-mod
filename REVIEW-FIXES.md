@@ -1,6 +1,6 @@
 # REVIEW-FIXES — 상세 구현 스펙 (2026-07-04 max 리뷰 후속, 신규 세션 핸드오프용)
 
-대상 커밋: `9a28808` (authored patch buff/nerf). 리뷰 결과 **15건 보고** (11 CONFIRMED / 4 PLAUSIBLE), 3건 기각.
+대상 커밋: `ea33e9d` (authored patch buff/nerf). 리뷰 결과 **15건 보고** (11 CONFIRMED / 4 PLAUSIBLE), 3건 기각.
 이 문서는 **대화 컨텍스트 없는 새 세션이 그대로 실행**할 수 있도록 각 작업을 현재코드→변경→이유→검증→함정 수준으로 기술한다. 라인 번호는 2026-07-04 워킹트리 기준(±수 줄 오차 가능 — 항상 주변 코드로 재확인).
 
 ---
@@ -41,7 +41,7 @@ Copy-Item C:\tmp\tfm2-ai-mod\tfm2_db_export\tfm2_db_export.dll `
 - [x] **#3** `$ErrorActionPreference="Stop"` 복원 (가짜 "Build successful" 회귀 — 전 경로 empirically 재현 후 수정)
 - [x] **#14** `RUSTUP_TOOLCHAIN` 누수: `$prevToolchain` 보존 + finally 원복 (실증: 종료 후 `[]`)
 - [x] `nightly-2026-05-24` 설치, 빌드 종단 검증, 게임 배포(+백업)
-- [x] 위 수정 커밋: `8ad80c5` (Phase 1 커밋과 분리됨)
+- [x] 위 수정 커밋: `3baf7ad` (Phase 1 커밋과 분리됨)
 
 ---
 
@@ -186,7 +186,7 @@ atomic_write(&format!("{}/chg_authored.txt", out),
 
 ---
 
-## Phase 2 — 패치 내성 (0.4.15 대비) — ✅ 완료 (2026-07-04, 커밋 `5432ae0`)
+## Phase 2 — 패치 내성 (0.4.15 대비) — ✅ 완료 (2026-07-04, 커밋 `b7f0824`)
 
 > P2-1~P2-4 전부 구현·검증됨. 아래 스펙은 구현 기록으로 보존.
 > 검증: `build_mod.ps1`이 SDK에서 `rustc 23a3312d9 / nightly-2026-05-24` 자동 도출 → db_export 빌드 성공(4.4s) + env 원복; `check_patch_probe.ps1` 카나리 그린(E0308/E0609 소멸); 두 셔틀 exit 0.

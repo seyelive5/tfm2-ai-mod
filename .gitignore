@@ -2,3 +2,5 @@ target/
 *.dll
 *.exe
 *.pdb
+# Game-vendor Mod SDK (1.2GB prebuilt rlibs) — never commit; see ROADMAP/CLAUDE.md for where to get it
+sdk/
