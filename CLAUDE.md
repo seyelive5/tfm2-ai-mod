@@ -5,6 +5,13 @@ This file is the **verified ground truth**. Where something is proven, it says *
 inferred or not run in-game, it says **UNTESTED**. Do not "re-discover" sealed paths that are marked
 IMPOSSIBLE-PROVEN below, and do not downgrade UNTESTED items to IMPOSSIBLE without running the experiment.
 
+> ⚠️ **2026-10-26:** game is now **0.6+**, where the vendor stopped shipping/supporting the **classic** SDK this
+> whole document is built on — every mod here is classic and no longer loads; the path forward is the **stable API**
+> (`mod-sdk-stable/` in the game folder; see upstream `TeamfightManager2Mod/docs/stable-*.md`). Treat classic-only
+> facts below as history. The champion creator (`champion-gen`, `creator-app`, `tfm2_champion_creator`,
+> `tfm2_combat_ai` + their analysis docs) was split out to `github.com/seyelive5/tfm2-champion-creator`
+> (local: `C:\tmp\tfm2-champion-creator`).
+>
 > ★ Read the **CAPABILITY VERDICTS** table (§4) before designing anything. The single most important
 > correction in this revision: **live banpick auto-read is UNTESTED-NEEDS-EXPERIMENT, NOT impossible.**
 > The prior "IMPOSSIBLE-PROVEN" verdict conflated the tick hooks with the command path; the
@@ -45,8 +52,7 @@ analysis\                  # writeups + extracted data (see §6 cross-links)
 sdk\mod-sdk\               # (gitignored) extracted TFM2 Mod SDK 0.4.6 (deps/ native/ template/ build scripts)
 
 # --- code-mod experiments (folder name == mod id) ---
-tfm2_combat_ai\            # ModPlayerInputAi baseline (low-HP retreat). Build-validation artifact.
-tfm2_champion_creator\     # custom champion(s) via ModChampionInfo (+ItemInfo); content modding
+# (tfm2_combat_ai\ + tfm2_champion_creator\ moved to the tfm2-champion-creator repo, 2026-10-26)
 tfm2_draft_ai\             # ModDraftScoreHook + IPC write_state. SUPERSEDED by overlay; still enabled, spams C:\tmp
 tfm2_pool_reader\          # ModExtension that exports db.available_champions + champion_patch_statistics (live stats)
 draftwatch\                # gameview Debug-dump probe (ModExtension)
@@ -55,8 +61,7 @@ pickcap\ , q\              # throwaway probes
 # --- NON-mod tooling for the recommender product ---
 draft-overlay\             # source of the hudhook overlay (draft_overlay.dll)
 draft-weights-gen\         # generates draft_weights.tsv (10-factor scoring)
-champion-gen\              # champion data generation tooling
-creator-app\               # champion-creator GUI tooling
+# (champion-gen\ + creator-app\ moved to the tfm2-champion-creator repo, 2026-10-26)
 ```
 
 ### 1b. Shipped product `c:\tmp\tfm2-overlay\` (the recommender — NOT a mod)
@@ -227,10 +232,10 @@ that hash, restores env):
 ```
 (`build_db_export.ps1` / `check_patch_probe.ps1` are thin shims to these; no per-patch pin edits needed.)
 
-**Build via the SDK script** (for `mod_api`-only mods like `tfm2_combat_ai`; run from **PowerShell**):
+**Build via the SDK script** (for `mod_api`-only mods like `tfm2_pool_reader`, or `tfm2_combat_ai` in the creator repo; run from **PowerShell**):
 ```powershell
 $env:PATH="$env:USERPROFILE\.cargo\bin;$env:PATH"
-cd C:\tmp\tfm2-ai-mod\tfm2_combat_ai     # rustup resolves rust-toolchain.toml from CWD, not manifest — cd in first!
+cd C:\tmp\tfm2-ai-mod\<mod_folder>      # rustup resolves rust-toolchain.toml from CWD, not manifest — cd in first!
 & C:\tmp\tfm2-ai-mod\sdk\mod-sdk\build_mod_cargo.ps1 -Project . -SdkDir C:\tmp\tfm2-ai-mod\sdk\mod-sdk
 ```
 - The SDK injects `mod_api` by globbing `libmod_api-*.rlib` and passing `--extern mod_api=<rlib>` + `-L dependency=deps`
@@ -356,16 +361,16 @@ Full and reliable (PROVEN, docs accurate) but ONLY from `&GameCtx` callbacks ins
 
 **Analysis writeups** (`c:\tmp\tfm2-ai-mod\analysis\`):
 - `recommender-algorithm-review.md` — **2026-07-05 알고리즘 건전성 심사**: 5-도메인 병렬 분석 + 실측(BT 분해 τ≈0, comp 층화, EB κ\*, W_* 출처 전수 감사). 핵심: 코어(κ-수축/posterior-mean/블렌딩)는 건전, ai_prior 신뢰서열 역전·comp 부스트 반증·dup 부호 반대·티어 허위확신·비인과 CV가 결함. Step 0–3 로드맵 + 재론금지 표 포함 — **점수 모델을 만지기 전에 반드시 읽을 것**.
-- `builtin-ai-architecture.md` — `FactoredBanpickAgent` + base AI strategies/operations.
-- `behavior-design-space.md` — what GameCtx mutations allow; VERIFIED-ABSENT list.
 - `draft-ai-design.md` — `ModDraftScoreHook` design notes (base_score scale unknown).
-- `champion-creator-feasibility.md`, `completeness-audit.md`.
-- `base_champion_info.json` (extracted champion data), `src_map.txt`, `strings_ascii.txt`/`strings_utf16.txt` (binary string dumps).
+- `src_map.txt`, `strings_ascii.txt`/`strings_utf16.txt` (binary string dumps).
+- Moved to the tfm2-champion-creator repo (2026-10-26): `builtin-ai-architecture.md` (`FactoredBanpickAgent` + base AI
+  strategies), `behavior-design-space.md` (GameCtx mutations; VERIFIED-ABSENT list), `champion-creator-feasibility.md`,
+  `completeness-audit.md`, `base_champion_info.json`.
 
 **Docs / SDK** (`c:\tmp\`):
 - `TFM2Mod-docs\docs\` — `native-mod-api-reference.md` (authoritative method surface), `native-ai-hooks.md`, `native-rust-mods.md`, `mod-save-data.md`, `data-champion.md`, `asset-overrides-and-i18n.md`, `mod-package.md`, `getting-started.md`, `troubleshooting.md`.
 - `mod-sdk\` — `deps\libmod_api-*.{rlib,rmeta}` (the facade), `libgame_core-*.rmeta` (server types), `libgame_view-*.rmeta` (client types), `native\` (windows import libs), `template\`, `build_mod.bat`, `build_mod_cargo.ps1`, `rust-toolchain.toml`, `toolchain_version.txt`, `base_version.txt`.
-- Working compiling examples: `c:\tmp\tfm2-ai-mod\tfm2_combat_ai\src\lib.rs` (champion+passive+effect), `tfm2_pool_reader\` (live-stats export), `draftwatch\` (client probe).
+- Working compiling examples: `tfm2_combat_ai\src\lib.rs` in the creator repo (champion+passive+effect), `tfm2_pool_reader\` (live-stats export), `draftwatch\` (client probe).
 
 ---
 

@@ -1,81 +1,62 @@
-# TFM2 Champion Creator
+# TFM2 Draft Coach
 
-*Teamfight Manager 2*용 **챔피언 창작 도구** — 코딩 없이 새 챔피언을 만들어 게임에 추가하고 Steam 창작마당에 공유합니다.
+*Teamfight Manager 2*용 **밴픽(드래프트) 추천 모드** — 게임의 밴픽 화면 안에서 실시간으로 픽/밴을 추천합니다.
 
-> 영어 요약: a standalone desktop tool to create custom *Teamfight Manager 2* champions
-> (role, stats, growth, tags, skills, sprite/icon) and emit a ready-to-load mod folder.
+> English: an in-game ban/pick recommender mod for *Teamfight Manager 2*. It reads the live draft and
+> stamps tier labels, pick/ban highlights and a recommendation panel onto the game's own ban/pick screen —
+> no external window, no launcher.
 
----
+> ⚠️ **상태 (2026-10-26): 개발 중단 후 재개 준비 중.**
+> 현재 코드는 게임 **0.4.14** 기준 **classic 모드 API**로 작성되어 있어 **게임 0.6+에서는 로드되지 않습니다**
+> (게임사가 0.6부터 classic SDK 배포·지원을 종료). stable API로 이식할지 결정하는 중입니다.
 
-## 무엇인가요?
+## 무엇을 하나요 (마지막 작동 버전: 게임 0.4.14)
 
-- **데스크톱 앱**(`creator-app`)에서 챔피언을 마우스로 만듭니다 → 게임이 읽는 **모드 폴더**가 생성됩니다.
-- 게임을 재시작하면 만든 챔피언이 **밴픽 풀에 등장**하고 AI가 플레이합니다.
-- 만든 챔피언은 게임에 동봉된 `TFM2ModUploader.exe`로 **창작마당에 업로드**할 수 있습니다.
-- 공식 모드 업로더처럼 **별도 실행 프로그램**입니다(창작마당이 아니라 직접 받아 실행).
+- **밴픽 보드 자동 읽기** — 밴/픽/순서/진영을 밴픽 화면에서 실시간으로 읽습니다.
+- **게임 화면에 직접 표시** — 챔피언 칸마다 티어 글자, 추천 테두리(청록 = 픽 / 보라 = 밴),
+  상단 추천·스왑 줄, "AI 추천기" 패널. 외부 실행 파일·창 없이 모드 하나(`tfm2_db_export`)로 동작합니다.
+- **점수 모델**
+  - 현재 패치 위주의 챔피언 승률(베타 사후평균 + 수축), 이전 패치는 감쇠 반영
+  - 패치 노트 버프/너프 — 게임 자체 `PatchNote`의 `is_buff`를 직접 읽어 반영
+  - 선수의 챔피언 숙련(약하게), 챔피언 라인 배정, 선픽 감지·픽 순서별 밴 가중, 피어리스 대응
 
-## 빠른 사용법
+## 검증
 
-1. `champion-creator.exe`(릴리스 빌드: `creator-app/target/release/creator-app.exe`)를 실행합니다.
-   - 게임 번들(`bundle.game_data`)을 자동으로 읽어 실제 챔피언 데이터를 참고로 불러옵니다.
-2. 왼쪽 **추가**로 챔피언을 만들고 가운데서 편집:
-   - **이름(한/영), 역할, 태그**
-   - **능력치 Lv.1 + 레벨당 성장치** — 슬라이더 옆 괄호는 *실제 챔피언들의 범위*(감 잡기용)
-   - **스프라이트 / 스킬 아이콘**: `랜덤` / `선택`(게임 기본 그림 재활용) / `업로드`(내 PNG)
-   - **스킬 3개**: 템플릿(투사체·버프·돌진·힐·광역스턴·실드·스턴샷·넉백·독 등) + 수치 조정
-3. 아래 **생성 (Generate)** → 출력 폴더에 모드가 만들어집니다(기본: 게임 `mods\tfm2_champion_creator`).
-4. **게임 재시작** → 타이틀 화면 **Mods** 메뉴에서 활성화 → 연습 경기/새 게임에서 확인.
-5. 공유하려면 `TFM2ModUploader.exe`로 그 모드 폴더를 창작마당에 업로드.
+- 시간순(rolling-origin) 홀드아웃 백테스트 + 부트스트랩 신뢰구간으로 모든 점수 항을 채택/기각합니다.
+- 5,274경기 기준 "점수 높은 팀이 이긴다" 예측 정확도 **약 60%**.
+- 검증에서 **효과 없음**이 확인된 항(챔피언 시너지/카운터, 동라인 매치업, 상대 팀 성향, 포켓픽 밴 등)은 가중치 0으로 제거했습니다.
+- 상세: [`ALGO-FIXES.md`](ALGO-FIXES.md), [`analysis/recommender-algorithm-review.md`](analysis/recommender-algorithm-review.md),
+  [`analysis/harness-causal-findings.md`](analysis/harness-causal-findings.md)
 
-## 그림(에셋)은 어디서?
-
-앱 상단 **"그림 구하기 (도움말)"** 버튼에 안내가 있습니다. 요점:
-- **CC0** 라고 적힌 무료 그림이면 마음 편하게 씁니다(공유 OK, 출처표기 불필요).
-- 캐릭터: [itch.io CC0 픽셀아트](https://itch.io/game-assets/assets-cc0/tag-pixel-art), [OpenGameArt CC0](https://opengameart.org/content/cc0-resources)
-- 스킬 아이콘: [game-icons.net](https://game-icons.net/) (출처 한 줄 표기 조건)
-
-## 현재 한계 (알아두기)
-
-- **업로드 스프라이트는 정적 1프레임**입니다. *캐릭터 1명이 그려진 한 장* PNG(투명배경)만 제대로 들어갑니다.
-  여러 동작이 격자로 든 **스프라이트시트는 아직 통째로 뭉개져** 보입니다(애니메이션 업로드는 추후).
-- 가장 확실한 그림은 **`선택`(기존 챔피언 스프라이트)** — 애니메이션까지 완벽 동작.
-- 스킬은 **정해진 템플릿 조합**입니다(임의 스크립팅 아님). 수치는 자유 조정.
-- 어떤 그림/수치든 최종 확인은 **생성 → 게임에서 직접 확인**.
-
-## 안전장치
-
-- 생성 시 **자동 검증**: 잘못된 값/형식을 게임에 띄우기 전에 잡아냅니다(게임 재시작 낭비 방지).
-- 능력치/성장치/쿨타임 기본값은 **게임 실제 데이터**에서 뽑은 값으로 시드됩니다.
-
----
-
-## 개발자용 / 저장소 구조
+## 저장소 구조
 
 | 폴더 | 내용 |
 |---|---|
-| `creator-app/` | 제품: egui 데스크톱 GUI (이걸 빌드/배포) |
-| `champion-gen/` | 엔진: 번들 파싱 + 챔피언 생성 + 검증 (라이브러리 + `champion-gen` CLI). creator-app이 재사용 |
-| `tfm2_combat_ai/` | 실험: 네이티브 Rust 챔피언(처형자) — 코드 모드 빌드 파이프라인 검증용 |
-| `tfm2_champion_creator/` | Phase 0 수동 증명용 데이터 챔피언(엠벌링) |
-| `sdk/mod-sdk/` | TFM2 Mod SDK 0.4.6 (네이티브 빌드용) |
-| `analysis/` | 리버스 엔지니어링/설계 문서(내장 AI 구조, 행동 공간, 완성도 감사, 베이스 챔피언 데이터) |
+| `tfm2_db_export/` | **제품** — 추천기 모드 본체(v3.0): 보드 읽기 + 통계 수집 + 추천 + 인게임 표시 |
+| `draft-overlay/` | 점수 엔진 `src/engine.rs`(`tfm2_db_export`가 `#[path]`로 공유) + 검증 하네스(`src/bin/validate-terms.rs`, `backtest.rs`) + 구 hudhook 오버레이 |
+| `draft-weights-gen/` | 구 가중치 생성기(구 오버레이용) |
+| `tfm2_bp_reader/` | 라이브 밴픽 읽기 프로토타입 — `tfm2_db_export`에 통합됨 |
+| `tfm2_patch_probe/` | 게임 패치 후 컴파일 카나리 |
+| `bp_probe/`, `tfm2_bp2/`, `tfm2_ui_probe/`, `tfm2_aiscore/`, `tfm2_pool_reader/`, `draftwatch/`, `q/` | API 조사용 프로브 |
+| `tfm2_draft_ai/` | 은퇴한 구 모드(드래프트 점수 후크) |
+| `analysis/` | 알고리즘 심사·하네스 결과·바이너리 문자열 덤프 |
 
-### 빌드 (소스에서)
+## 문서
+
+- [`CLAUDE.md`](CLAUDE.md) — 모딩 API·빌드 파이프라인·검증된 사실 레퍼런스(classic API 시절)
+- [`PLAN.md`](PLAN.md) — 마스터 플랜(검증 인프라 → 게임 AI 신호 → 선수 축 → 픽 순서 → 정리 → 배포)
+- [`ALGO-FIXES.md`](ALGO-FIXES.md) — 알고리즘 개선 스펙과 "재론 금지" 판정표
+- [`REVIEW-FIXES.md`](REVIEW-FIXES.md) — 2026-07-04 코드 리뷰 후속 기록
+
+## 빌드 (classic, 게임 0.4.14까지)
 
 ```powershell
-# Rust nightly-2026-05-29 + MSVC 빌드도구 필요 (네이티브 코드 모드 빌드용; creator-app은 일반 toolchain로도 됨)
-cd creator-app
-cargo build --release      # -> target/release/creator-app.exe
-
-cd ../champion-gen
-cargo build --release      # CLI: champion-gen <spec.json> --out <mod_dir>  /  --check <file.data_champion>
+& .\build_mod.ps1 -Crate .\tfm2_db_export   # classic SDK가 C:\tmp\mod-sdk 에 있어야 함(저장소 미포함)
 ```
 
-CLI 생성기는 JSON 스펙으로도 챔피언을 찍어낼 수 있습니다(앱이 내부적으로 쓰는 형식). 예: `champion-gen/specs/champions.json`.
+classic SDK는 게임사 바이너리라 저장소에 포함하지 않으며, 게임 0.6+용으로는 더 이상 배포되지 않습니다.
 
-### 핵심 사실 (모딩)
+## 관련
 
-- 게임 엔진은 **Rust**. 모드: 데이터(`.data_champion` JSON) 또는 네이티브 코드(`mod_api` cdylib).
-- 챔피언 이름/설명 i18n은 base 텍스트에 `merge`가 **동작하지 않아**, 베이스 스냅샷+우리 키 합본을 `override`-교체합니다.
-- 인게임 UI 모드 API는 매우 제한적(읽기+이벤트만, 노드 변경/그리기 불가) → 그래서 창작 도구는 **독립 데스크톱 앱**.
-- 자세한 내용은 `analysis/` 문서 참고.
+- 챔피언 생성기(분리됨): [`tfm2-champion-creator`](https://github.com/seyelive5/tfm2-champion-creator)
+- 공식 모드 문서: [`teamsamoyed/TeamfightManager2Mod`](https://github.com/teamsamoyed/TeamfightManager2Mod)
