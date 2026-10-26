@@ -2,6 +2,11 @@
 name = "tfm2_db_export"
 version = "0.1.0"
 edition = "2021"
+
 [lib]
 crate-type = ["cdylib"]
+
+[dependencies]
+mod-api-stable = { path = "../sdk/mod-sdk-stable/mod-api-stable" }
+
 [workspace]

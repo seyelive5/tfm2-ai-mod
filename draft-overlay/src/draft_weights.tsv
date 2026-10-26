@@ -2257,6 +2257,14 @@ T	werewolf	Assassin	AD	AD,AOE,Assassin,CC,Heal,Mobility
 T	whip_master	Range	AD	AD,AOE,Backline,Poke,Range
 T	white_mage	Magician	AP	AOE,AP,CC,Dot,Magic,Magician,Poke,Summon
 T	wind_mage	Magician	AP	AOE,AP,CC,DOT,Magic,Magician,Mobility,Poke,Summon
+T	alchemist	Magician	AP	AOE,AP,CC,DOT,Dot,Magic,Magician,Poke
+T	astrologer	Magician	AP	AOE,AP,CC,Magic,Magician,Poke
+T	crossbowman	Range	AD	AD,Backline,Poke,Range
+T	harpooner	Range	AD	AD,Backline,CC,Poke,Range
+T	nightmare	Assassin	AD	AD,Assassin,Mobility
+T	sand_mage	Magician	AP	AOE,AP,CC,DOT,Dot,Magic,Magician,Poke
+T	spellbreaker	Melee	AD|AP	AD,AP,CC,Frontline,Melee,Mobility
+T	strongman	Melee	AD	AD,CC,Frontline,Melee,Shield,Tank
 B	android	0.606
 B	archer	0.394
 B	bard	0
@@ -2362,3 +2370,19 @@ POS	werewolf	1	1
 POS	whip_master	1	1
 POS	white_mage	3	3,2
 POS	wind_mage	2	2
+POS	chef	4	4,0,2
+POS	enchanter	2	2,1,4
+POS	hitman	1	1,3,0
+POS	jiangshi	0	0,1,4
+POS	necromancer	2	2,1,4
+POS	plague_doctor	0	0,3,1
+POS	shield_bearer	4	4,0,1
+POS	voodoo_shaman	2	2,1,4
+POS	alchemist	2	2,1,4
+POS	astrologer	2	2,1,4
+POS	crossbowman	3	3,2
+POS	harpooner	3	3,1,4
+POS	nightmare	3	3,1,0
+POS	sand_mage	2	2,1,4
+POS	spellbreaker	1	1,0,2
+POS	strongman	4	4,0,1

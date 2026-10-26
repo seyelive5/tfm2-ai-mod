@@ -16,7 +16,7 @@ pub const WEIGHTS_TSV: &str = include_str!("draft_weights.tsv");
 pub const STATE_PATH: &str = "C:\\tmp\\tfm2_draft_state.txt";
 pub const TOP_N: usize = 8;
 
-// champion id -> Korean display name (all 60; banpick-data.js champions[]).
+// champion id -> Korean display name (all 68 as of 0.6.5).
 pub const CHAMPS: &[(&str, &str)] = &[
     ("vampire", "흡혈귀"), ("monk", "몽크"), ("circus_blade", "곡예사"), ("android", "안드로이드"),
     ("inquisitor", "이단심문관"), ("lancer", "창술사"), ("ninja", "닌자"), ("fighter", "격투가"),
@@ -33,6 +33,8 @@ pub const CHAMPS: &[(&str, &str)] = &[
     ("hammerer", "중보병"), ("clown", "광대"), ("cavalry_knight", "기병"), ("enchanter", "인챈터"),
     ("soldier", "소총수"), ("plague_doctor", "역병의사"), ("dancer", "무희"), ("boomerang_hunter", "부메랑 헌터"),
     ("voodoo_shaman", "부두술사"), ("poison_dart_hunter", "독침술사"), ("bard", "음유시인"), ("ogre", "오우거"),
+    ("alchemist", "연금술사"), ("astrologer", "점성술사"), ("crossbowman", "석궁병"), ("harpooner", "작살꾼"),
+    ("nightmare", "몽마"), ("sand_mage", "모래술사"), ("spellbreaker", "파법사"), ("strongman", "차력사"),
 ];
 
 pub fn ko_name(id: &str) -> String {

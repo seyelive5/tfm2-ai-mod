@@ -3,5 +3,12 @@
 version = 4
 
 [[package]]
+name = "mod-api-stable"
+version = "0.1.0"
+
+[[package]]
 name = "tfm2_db_export"
 version = "0.1.0"
+dependencies = [
+ "mod-api-stable",
+]

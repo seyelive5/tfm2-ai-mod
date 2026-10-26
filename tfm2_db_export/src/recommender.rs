@@ -456,12 +456,26 @@ struct Series {
     first_pick: Option<bool>,
 }
 
+/// Structured row for the in-game Top-5 UI panel.
+#[derive(Default, Clone)]
+pub struct RecRow {
+    pub id: String,
+    pub ko: String,
+    pub lane: String,
+    pub tier: String,
+    pub chg: String,
+    pub score: String,
+    pub reason: String,
+}
+
 /// Everything the in-game display needs this frame.
 #[derive(Default, Clone)]
 pub struct Output {
     pub rec_ban: bool,
     /// ranked (id, ko, signed score string)
     pub recs: Vec<(String, String, String)>,
+    /// structured top-5 rows for the UI card
+    pub detail_rows: Vec<RecRow>,
     /// "라인 이름" pairs once my 5 picks are in
     pub swap: Vec<String>,
     /// commentary lines ('\n'-joined)
@@ -630,6 +644,38 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         .then(|| raw[0].1.clone());
     let recs: Vec<(String, String, String)> =
         raw.into_iter().map(|(id, ko, sc)| (id, ko, format!("{:+.0}", sc * 100.0))).collect();
+    let detail_rows: Vec<RecRow> = recs
+        .iter()
+        .map(|(id, ko, sc)| {
+            if let Some(lv) = lane_view.as_ref().filter(|lv| lv.has_pos) {
+                if let Some((l, c)) = lv
+                    .lanes
+                    .iter()
+                    .find_map(|l| l.cands.iter().find(|c| c.id == *id).map(|c| (l, c)))
+                {
+                    return RecRow {
+                        id: id.clone(),
+                        ko: ko.clone(),
+                        lane: l.name.to_string(),
+                        tier: c.tier.to_string(),
+                        chg: c.chg.to_string(),
+                        score: sc.clone(),
+                        reason: c.label.to_string(),
+                    };
+                }
+            }
+            let r = view.rows.iter().find(|r| r.id == *id);
+            RecRow {
+                id: id.clone(),
+                ko: ko.clone(),
+                lane: if rec_ban { "밴".to_string() } else { "픽".to_string() },
+                tier: r.map(|x| x.tier.to_string()).unwrap_or_default(),
+                chg: r.map(|x| x.chg.to_string()).unwrap_or_default(),
+                score: sc.clone(),
+                reason: r.map(|x| x.label.to_string()).unwrap_or_default(),
+            }
+        })
+        .collect();
 
     // ── swap lane assignment (my 5 picks in)
     let swap: Vec<String> = match lane_view.as_ref().filter(|lv| lv.has_pos && board.my_pick.len() >= 5) {
@@ -879,7 +925,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         })
         .collect();
 
-    let out = Arc::new(Output { rec_ban, recs, swap, say: parts.join("\n"), tiers });
+    let out = Arc::new(Output { rec_ban, recs, detail_rows, swap, say: parts.join("\n"), tiers });
     if let Ok(mut g) = OUTPUT.lock() {
         *g = Some((key, out.clone()));
     }
