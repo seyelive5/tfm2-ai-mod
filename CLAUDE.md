@@ -12,6 +12,11 @@ IMPOSSIBLE-PROVEN below, and do not downgrade UNTESTED items to IMPOSSIBLE witho
 > `tfm2_combat_ai` + their analysis docs) was split out to `github.com/seyelive5/tfm2-champion-creator`
 > (local: `C:\tmp\tfm2-champion-creator`).
 >
+> ▶ **2026-10-27:** `tfm2_db_export` is ported to the stable API (**v4.1.0**, branch `stable-port`, built + deployed,
+> in-game verification pending). For anything stable-API, **`ROADMAP.md` is the reference** (verified facts with
+> sources, the v4.0 draft review, decisions, the in-game check). Build: `build_db_export.ps1 [-Deploy]` — any
+> toolchain; the nightly-pinning rules in §0/§3/§5 are classic-only history.
+>
 > ★ Read the **CAPABILITY VERDICTS** table (§4) before designing anything. The single most important
 > correction in this revision: **live banpick auto-read is UNTESTED-NEEDS-EXPERIMENT, NOT impossible.**
 > The prior "IMPOSSIBLE-PROVEN" verdict conflated the tick hooks with the command path; the
@@ -398,3 +403,8 @@ Full and reliable (PROVEN, docs accurate) but ONLY from `&GameCtx` callbacks ins
   - [x] **Step 0-2 done + full 10-version recheck (2026-07-05 evening):** 5,809 replays / 10 versions (4.0=608, 4.1=477), 5,274 scored. **Verdicts moved:** ④−② (shipped bundle vs base_lane) **+2.2 [+0.6,+3.8] → CI-PASS** (pooled base collapsed to 58.1% on the patch-churn origins while the shipped patch-local state held 59.9–60.2 — the design's edge widened); famc early-concentration caveat RESOLVED (both pools +1.4/+1.5; raise still CI-unproven → keep 0.15); famg's monotone-worsening argument RETIRED (late pool flipped to +0.8) but the LEAKAGE conclusion stands via the legacy-gap (+5.4..+10.8 at matched train vs causal ≈0 mixed-sign) — F15 unchanged (cap-saturation grounds); BT θ now significantly NEGATIVE (−1.6 [−3.1,−0.1]); S2-5 solo Δ+0.0 reconfirmed; T4 baseline stable (0.678/0.625, Δ+0.053 [+0.047,+0.060]); T-nudge robust (slope +0.0134, r 0.60, n 62). ⚠️ T-amnesia n≤2 stratum CONTAMINATED by synthesized 4.0/4.1 note sections (n=1 placeholder counts, `analysis/patch_notes_ext.txt`) — S2-1 stays rejected; the news dump was added to the DEBUG_DUMPS gate (deployed 20:57) so future captures carry REAL counts.
   - [x] **T-ban grader built + adjudicated (2026-07-05 night, v3.7, 11,138 chronological predictions):** enemy-pick recall@5 — global pickrate 0.185 vs team-usage OPP 0.184 (Δ−0.002 — NO team identity beyond the meta) vs OPP+pocket 0.162 (Δ−0.021 [−0.024,−0.019] — athlete volume points at old-meta mains, actively counterproductive). Actions shipped: W_BAN_OPP=0, ban-side enemy_pocket term removed, S3-3 W_PICK_DENY=0 (retracted ~3h after shipping, by the grader built to adjudicate it; snipe S3-2 is strength-based — kept). DLL deployed 21:05.
   - [ ] **S2-1 re-adjudication** (needs a real-count notes dump from the next DEBUG_DUMPS capture), **T3 deliberate-hover check** (optional), **S3-6** (optional; over-engineering guard), **S3-6** (optional, over-engineering guard), **T3 deliberate-hover check** (optional, 1 draft). 07-05 17:42 session smoke (file-verified): mod clean on 2026.4.0, `source=authored anchor=2026.3.1` (11 champs), DEBUG_DUMPS gate held, count-scaled nudge circumstantially live (our 3 bans were all note-changed champs). See ALGO-FIXES.md.
+- [~] **Stable API port (game 0.6.5+, 2026-10-27) — v4.1.0 built + deployed, in-game check pending.** The v4.0 draft
+  (`b406915`, never run in-game) was reviewed (16 defects) and fixed on top; the score model is unchanged vs `70cb62c`
+  (ROADMAP G2). `tfm2_db_export` is now `json`/`db`/`board`/`ui`/`prior`/`diag`/`recommender` + a wiring `lib.rs`;
+  it edits no game node (own nodes only, clicks pass through). Next: the one-run in-game check (ROADMAP §5) → read
+  `diag.txt`/`board_log.txt` → fixes; then ROADMAP Phase 2 (re-validate on 0.6.5 data). **Full plan: `ROADMAP.md`.**

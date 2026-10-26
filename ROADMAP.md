@@ -1,0 +1,157 @@
+# ROADMAP — Stable SDK 포팅 (게임 0.6.5+) · 2026-10-27
+
+> 이 문서가 0.6+ 재가동 작업의 기준점이다. 알고리즘 규율은 그대로 `PLAN.md`·`ALGO-FIXES.md`를 따른다
+> (**점수 모델 변경 = 백테스트 수치 동반**). 이 문서는 "다시 동작하게" 만드는 Phase 1과 그 이후 순서를 정한다.
+>
+> **현재 상태 (2026-10-27): v4.1.0 빌드·배포 완료, 인게임 검증(§5) 대기.** Phase 1 작업 P1-1~P1-7 완료.
+
+## 0. 배경
+
+- 게임 0.6부터 classic SDK(rlib 링크 + raw-cast)가 배포·지원 종료 → 이 repo의 모든 모드가 로드 불가.
+  대체 = 게임 폴더에 동봉된 **stable SDK** (`mod-sdk-stable/`, 현재 ABI level 10). 아무 Rust 툴체인으로 빌드되고
+  게임 패치 후 재빌드가 필요 없다.
+- **v4.0 초안**(커밋 `b406915`에 원본 보존): v4.0은 이전 Claude 세션(삭제됨)이 작성했고, 이어서
+  2026-10-26 02:35–03:34 Antigravity CLI(Gemini) 세션이 리뷰·Phase 1 일부 작업 후 빌드·배포했다.
+  게임 로그(`%APPDATA%\TeamSamoyed\TeamfightManager2\data\log.log`)의 마지막 실행이 01:45라서
+  **인게임에서 한 번도 실행되지 않았다.** 아래 §3이 그 초안의 점검 결과다.
+- 경쟁작 LT AI Coach와 비교한 결론(2026-10-26): 예측력은 동급(59.86% vs ~60%), 외부 창 방식이 불편 →
+  **자체 인게임 모드 개발을 계속한다.** LT는 GPL-3.0이므로 코드는 가져오지 않고, 문서에 기록된 사실·아이디어만 참고한다
+  (아이디어도 백테스트를 통과해야 채택).
+
+## 1. Phase 1 목표 (완료 조건)
+
+- **G1 기능 복원:** stable SDK로 로드되고, 밴픽 화면에서 v3.0과 같은 정보를 보여준다 —
+  챔피언 칸의 티어/순위 태그, 추천 칸 테두리(청록=픽, 보라=밴), "AI 추천기" 창(Top-5 + 해설, 드래그 가능).
+- **G2 모델 불변:** 점수 모델은 v3.0 출하본(`70cb62c`)과 같다. 검증 안 된 점수 변경 0건.
+- **G3 관찰 가능:** 진영 판정·밴 귀속·UI 생성 성공 여부가 전부 진단 파일에 남는다 → 인게임 1회 실행으로 판정.
+- **G4 무충돌:** 게임 노드는 **하나도 수정하지 않는다** — 화면에 보이는 것은 전부 우리가 만든 노드
+  (타일 테두리·태그, 추천기 창). 창 본체(드래그)와 X 버튼 외에는 전부 `ignore_event: true`라서 클릭이 게임으로
+  통과한다. LT 모드와 동시 사용 가능.
+
+## 2. 확인된 사실 (출처 포함)
+
+| 사실 | 출처 |
+|---|---|
+| 그리드 타일 = `main.champions.contents.<champ_id>` (`banpick_champion_slot` 러너). 자식: `.ban` `.blue`/`.blue.text`(픽 순서) `.red`/`.red.text` `.fearless_icon` `.fearless_x` `.fearless_tooltip.text` `.tier` `.pos1` `.pos2` `.name` `.icon` | 0.6.5 `bundle.game_data`의 타일 템플릿 추출 + LT `docs/stable-sdk-port.md` B1(실측) |
+| 타일 러너 속성 `line_width: 1; line_color: { normal: #4a4c56ff; hover: #e8e8e8ff; }` — 게임 노드 속성이라 **쓰지 않는다**(G4). 테두리는 우리 노드 `tfm2dc_ring` | 같은 템플릿 |
+| `.ui` 문법: 자식은 `#id:kind {`, 스타일은 `@"asset/base/style/main#label";` 한 줄, 라벨은 `size`/`align_x`/`align_y`(Left·Center·Right / Center·Top)/`line_height`, 모서리는 `rounding: N;` 또는 `rounding: Uniform { rounding: N; }`, 색은 `#rrggbbaa`, 좌표·크기는 `px`·`%`. 여러 줄 라벨은 자동 줄바꿈(밴픽 UI의 `align_y`는 전부 Center) | 게임 `.ui` 파일 742개 노드 집계 + 0.6.5 템플릿 |
+| `color` 러너에 `stroke`가 있으면 **`color` = 테두리색, `back_color` = 채움색** | `match_slot.ui`, `decoration_item_button.ui`(hover 때 `color`만 바뀜), 코치 팝업 템플릿 |
+| 드래그 가능한 창 러너 `draggable_popup` 존재 (코치 대화 팝업이 사용) | 번들 템플릿 `coach_dialogue_popup:draggable_popup` |
+| `ui_spawn_source`는 러너 종류와 게임 `.ui` 문법을 그대로 받는다. `ui_register_click` 핸들러는 해제되지 않는다(누수) → 창을 (재)생성할 때만 등록 | SDK `client_ctx.rs` |
+| `ui_text`는 게임 라벨에 대해 **번역 키**를 돌려준다 (`#asset/base/text/ui?…`). 팀명·숫자 같은 리터럴은 그대로 | LT 실측 |
+| 피어리스 툴팁 키 4종: `fearless_tooltip_own` / `_blue` / `_red` / `_both` | 번들 i18n |
+| 진영 판정 재료: 깨끗한 팀명 `main.{blue,red}_picks.pick_slot_0.popup.header.team_name`, 장식 팀명 `main.bottom.{blue,red}_side.name`, 내 팀 = `player_team_id()` + `team_name()` | LT B1 + SDK `client_ctx.rs` |
+| 턴 표시 = `main.header.desc.{blue,red}_arrow` 가시성 → 없으면 밴 슬롯의 `#in_turn` | 번들 레이아웃 + LT B1 |
+| 밴 슬롯 자식: `#icon`(회색조) `#ban_icon` `#in_turn`(차례 테두리) `#later_phase`(뒤 밴 단계 덮개). 진영별 이번 단계 밴 허용 수 = 보이고 `later_phase`가 아닌 `ban_slot_N` 수 | 번들 `ban_slot` 템플릿 |
+| 밴픽 레이아웃(1920×1080): `champion_info` x310–1610 y690–970 = 스탯 8칸(y690–760; 마저·사거리·이속이 오른쪽 끝) + 스킬1·스킬2·궁 칸(y770–970, 궁 x1183–1610). `main.swap` x310–1610 y60–970 = 양 팀 표 + 하단 코치/확정 버튼(y903–970). **빈 공간이 없다** | 번들 밴픽 레이아웃 전체 추출(70,419 B) |
+| LT 브리지는 `main.header.step`/`.desc` 텍스트로 밴픽 단계를 판정 → 우리가 `desc`를 덮어쓰면 LT가 고장 | LT B1 |
+| `MatchReplay` 레코드 필드: `version, blue_team_id, red_team_id, blue_team_win, blue_ban, red_ban, blue_team[{athlete_id, position, champion, statistics{dealing,tanking,healing}}], blue_performance.gold_line_phase` | LT B4b(실측) + LT serde 구조체 |
+| 리플레이 테이블에는 연습경기가 섞여 있다. classic `match_replays`와 **같은 테이블**이므로 v3.0 검증 데이터와 같은 모집단 | LT B4b ("field-for-field what the classic exporter writes") |
+| 레코드 1건 읽기 ≈131µs (12,145건 ≈1.6s) | LT B4b |
+| `SoloRankMatch`에 `played:false`(아직 안 열린) 경기가 섞여 있다 | LT B4b |
+| 패치노트: `Team.news[].ty.PatchNote{version, added_champion, champion_patch_data:[[champ,[{key, pre_value, after_value, is_buff, target_action}]]]}` | 이 세이브의 LT 내보내기 `player_team_news.json`으로 직접 확인 (10개 노트) |
+| 0.6.5 신규 8챔(alchemist, astrologer, crossbowman, harpooner, nightmare, sand_mage, spellbreaker, strongman)의 category·tags가 v4.0 T행과 일치 | `champion_brief` 값(LT 내보내기 `champion_metadata.json`) |
+| 신규 챔프 공식 한국어 이름: harpooner **작살잡이**, spellbreaker **스펠브레이커**, strongman **괴력사** (v4.0 표의 작살꾼·파법사·차력사는 오역). 나머지 5챔은 일치 | 번들 한국어 i18n `"<id>": { "name": … }` |
+| draft score hook은 배경 리그 시뮬레이션에서만 발화 — 플레이어 드래프트에 귀속 불가 | CLAUDE.md §2c(classic) + LT B1(stable) 재확인 |
+| `StableDraftContext`의 draft id는 `champion_briefs` 인덱스 — `champion_name(id)`로 이름을 바로 얻는다 | SDK `mod-api-stable` |
+| 챔피언 표시 이름은 `ctx.i18n(키)`로 게임 언어 그대로 받을 수 있다 | SDK `client_ctx.rs` (키 형식은 인게임 diag로 확정) |
+| `ClientSceneKindV1`: Main 0 · Lineup 1 · StadiumEntrance 2 · Match 3 · MatchResult 4 · LockerRoom 5 · InGame 6 · … · SetFeedback 14(세트 사이 화면). 경기 관전 화면 = InGame(6)으로 **추정**(번들 `ui/ingame/*` = 킬로그·카메라 HUD) — 인게임 diag로 확정 | SDK `values.rs` |
+| SDK의 extern shim은 전부 `catch_unwind` → 모드가 패닉해도 게임은 살지만, 우리 Mutex가 poison되어 모드가 조용히 멈춘다 | SDK `mod_shim.rs:29` |
+| stable SDK 모드는 툴체인 무관 (DLL 경계를 넘는 건 repr(C) 계약뿐) | SDK README |
+
+## 3. v4.0 초안 점검 결과 → 조치
+
+| # | 문제 | 영향 | 조치 (v4.1) |
+|---|---|---|---|
+| 1 | `.ui` 문법 오류: 자식에 `#` 없음, `style: @…` 형식, 없는 속성(`font_size`, `text_align`, `vertical_align`, `radius`) | 오버레이가 전부 생성 실패 가능 | 게임 템플릿 문법으로 다시 작성 |
+| 2 | `stroke` 의미를 반대로 사용 (`back_color`를 테두리로 착각) | 테두리 대신 칸 전체가 색칠됨 | 우리 노드 `tfm2dc_ring`(`color`=테두리, `back_color` 투명, 1위는 굵게) |
+| 3 | 칸 전체를 덮는 노드에 `ignore_event` 없음 | **챔피언 클릭(픽/밴)이 막힐 위험** | 우리 노드 전부 `ignore_event: true` (창 본체·X 버튼만 예외) |
+| 4 | `main.header.desc` 덮어쓰기 | LT 동시 사용 시 단계 판정 고장 | 게임 노드는 하나도 건드리지 않음(G4). 추천 종류는 추천기 창 제목에 |
+| 5 | 진영: 장식 팀명 우선 → 매칭 실패하면 조용히 블루로 가정 | 상대 팀 기준으로 추천 | 깨끗한 팀명 → 장식 팀명 포함 검사 순, 불명이면 **추천 보류 + 창에 표시** |
+| 6 | 내 팀 = "뉴스가 가장 긴 팀" 추정 | 오판 가능 | `player_team_id()` (추정은 폴백만) |
+| 7 | 피어리스 `blue`/`red` 툴팁을 무조건 상대 잠금으로 처리 | 내 잠금이 상대 것으로 | 내 진영 기준으로 판정 (`own`·내 색=나, `both`·불명=양쪽, 다른 색=상대) |
+| 8 | 밴 귀속 상한 `ban_count.max(5)` | 상한이 사실상 없음 | 진영별 상한 = 이번 단계 밴 허용 수(§2 밴 슬롯), 한 프레임 다중 밴은 "추정" 표시 + 로그 |
+| 9 | 리플레이 200판 미만이면 솔로랭크를 전량 합류 + `played:false` 미필터 | 검증 안 된 점수 변경 + 미래 경기 오염 | 제외 — v3.0과 동일 (S2-5에서 솔로 합류 기각). 콜드스타트 활용은 Phase 2 후보 |
+| 10 | 첫 밴픽 진입 프레임에 전 리플레이 파싱 + 매 프레임 `record_ids` 3회 | 수 초 멈춤 | 프레임당 시간 예산으로 미리 증분 파싱(§3b), 2초 간격 폴링, 밴픽 중 테이블 동결 |
+| 11 | 매 프레임 타일마다 setter 호출 | 불필요한 부하 | 바뀐 칸만 호출 |
+| 12 | 진단 TSV를 리빌드마다 기록, `ai_scores.log` 상시 기록 | 디스크 낭비 | `probe\DEBUG_DUMPS` 마커가 있을 때만 (v3.0 규칙) |
+| 13 | `validate-terms`의 기본 경로를 검증 안 된 부분 이월로 바꿈 | 하네스가 출하 수학과 달라져 과거 기준선과 비교 불가 | 되돌림. 아이디어는 Phase 3 후보로 보존 (`b406915`에 원본) |
+| 14 | 한국어 이름 하드코딩 | 신규 챔프 오역 (실제로 3건) | 타일 이름 라벨의 i18n 키를 `ctx.i18n`으로 풀어 게임 이름 그대로 표시. 엔진 표는 폴백 — 오역 3건 수정(§2) |
+| 15 | `rust-toolchain.toml`이 nightly 고정 | 불필요 (stable SDK) | 고정 파일 삭제 — 툴체인 무관 |
+| 16 | 진단 수단 없음 | 인게임 결과를 판정할 근거 없음 | `diag.txt`(상태) + `board_log.txt`(보드 변화) + 패닉 기록 |
+
+v4.0에서 그대로 유지하는 것: 레코드 JSON 파서·필드명(사실표와 일치), 패치노트 파서(실데이터와 일치),
+패치 TSV 재구성(하네스가 검증한 리플레이 기반 수학과 같은 입력 — `bans`·`total_match`가 포지션 행마다 반복되는
+classic 형식까지 같고, 소비처는 첫 행만 읽는다), 신규 8챔 T행, `RecRow` 표시 구조.
+POS 폴백 행(16챔)은 출처가 약하다(분류별 추정) — 리플레이가 쌓이면 실데이터(`compute_pos`)가 덮어쓴다.
+
+## 3b. 구현하면서 정한 것 (v4.1)
+
+| 결정 | 이유 |
+|---|---|
+| 모듈 분할: `json`·`db`·`board`·`ui`·`prior`·`diag`·`recommender`, `lib.rs`는 배선만 | v4.0의 1,785줄 단일 파일 → 책임별로 검증 가능하게 |
+| 추천 후보 풀 = 밴픽 그리드에 실제로 있는 챔피언 (10칸 이상 읽혔을 때) | 세이브·모드마다 쓸 수 있는 챔피언이 다르다 |
+| 게임 AI prior를 `champion_name(draft id)`로 키잉 | classic은 id 순서 추정에 기댔다 — stable은 이름을 직접 준다 |
+| 피어리스 "내가 쓴 챔프" 키 = 경기 id + 양 팀 id (세트 번호 제외). 밴픽 화면을 떠나도 경기 프로브 유지 | 세트마다 키가 바뀌면 지난 세트 기록이 지워진다 |
+| 선수 숙련(af) = 선수 레코드 `season_statistics` (v3.0과 같은 출처), 못 읽으면 리플레이 이력 | G2 모델 불변 |
+| 패치노트 = 내 팀 받은편지함 우선, 없으면 전체 팀(classic 방식). 최신 패치보다 오래된 노트뿐이면 미사용(`stale-note`) | 노트 위치가 세이브마다 다를 수 있음 + v3.0 currency guard |
+| 백그라운드 파싱 예산: 관리 화면 4ms/프레임 · 밴픽(테이블 준비 후)·경기 관전 1ms · 테이블 없는 밴픽 8ms. 테이블 재빌드는 관리 화면에서만(테이블이 아직 없을 때는 어디서든) | 밴픽 중 추천이 흔들리지 않게, 관전 화면이 끊기지 않게 |
+| 추천기 창 = `draggable_popup`(실패 시 `color`) — 코치 대화 팝업 모양. 기본 위치: 드래프트 중 champion_info 오른쪽 끝(궁 설명 + 스탯 3칸 위), 스왑 단계엔 상대 팀 표 위(내가 블루·불명 → 아래 y625, 레드 → 위 y64). 버튼은 가리지 않는다 | 빈 공간이 없음(§2) → 정보만 가린다 |
+| Tab = 접기/펼치기(닫혀 있으면 다시 열기, 검색창 입력 중엔 무시). 접기 상태는 세트 사이에 유지, X는 이번 밴픽 화면에서만 닫힘 | |
+| 추천 줄 아이콘 = `ui_set_champion_icon` 성공 시에만 표시 | 빈 이미지 노드가 화면에 보이지 않게 |
+| `declare_stable_mod!(init, requires = 5)` | 데이터원(MatchReplay)과 챔피언 아이콘이 level 5부터 — 낮은 게임은 로더가 "게임 업데이트" 안내 |
+| 패닉 훅 → `diag.txt`에 `PANIC` 줄 (최대 20) | shim이 패닉을 삼켜서 원인이 안 남는다(§2) |
+
+## 4. Phase 1 작업
+
+- [x] P1-1 `tfm2_db_export` 모듈 분할 (§3b)
+- [x] P1-2 DB 증분 동기화: 시간 예산 파싱, 세이브 전환 감지(목록 축소 시 리셋), 밴픽 중 테이블 동결
+- [x] P1-3 보드 리더: 진영(§3-5/6), 피어리스(§3-7), 밴 귀속(§3-8), 첫 픽 측
+- [x] P1-4 UI: 타일 테두리·태그(우리 노드, 클릭 통과) + `draggable_popup` 추천기 창(Tab 접기, X 닫기, 스왑 단계 회피)
+- [x] P1-5 진단 파일 2종 + 패닉 기록
+- [x] P1-6 빌드: `build_mod.ps1` — 게임 폴더 `mod-sdk-stable`과 스탬프(`base_version.txt` + 계약 `lib.rs` 해시)가 다르거나
+  repo 사본이 없으면 gitignored `sdk\mod-sdk-stable`로 자동 복사, `-Deploy`·`-CheckOnly`, 툴체인 고정 없음
+- [x] P1-7 `validate-terms.rs` 되돌림 (§3-13)
+- [ ] P1-8 인게임 1회 검증 (§5) → diag로 판정 → 필요한 수정
+
+## 5. 인게임 검증 (사용자 1회 실행)
+
+1. 게임 실행 → 모드 메뉴에서 "TFM2 드래프트 추천기"가 켜져 있는지 확인(LT 모드와 함께 켜도 된다) → 새 게임 시작.
+2. 첫 경기 밴픽 화면까지 진행해서 밴 1~2개, 픽 1~2개를 해 본다.
+3. 화면 확인: 챔피언 칸 왼쪽 위 태그(①~⑤ + 티어), 추천 칸 테두리(청록=픽, 보라=밴), "AI 추천기" 창 —
+   드래그, Tab 접기/펼치기, X 닫기 후 Tab으로 다시 열기. 챔피언 클릭과 검색창 입력이 정상인지.
+   스왑 단계에서 창이 버튼을 가리지 않는지. 창 기본 위치가 불편한지(궁 설명·스탯 3칸을 가린다).
+4. 경기 관전 화면까지 한 번 가 본다(화면 코드 확인용).
+5. 게임 종료 후 Claude가 `%LOCALAPPDATA%\tfm2-overlay\diag.txt`·`board_log.txt`와 게임 `log.log`를 읽어 판정한다.
+
+판정 항목: 모드 로드(`1 mod`, `log.log`), 진영 판정 근거(`4 side`), 밴 슬롯의 어느 플래그가 "채워짐"인지,
+밴/픽 목록·귀속이 화면과 일치하는지(`board_log.txt`), 창 러너 종류·생성 실패 수(`6 ui`), 티어 태그 수,
+이름 i18n 키 형식(`5 board names=`), Tab 키 이름(`keys_seen`), 리플레이 필드·파싱 소요(`3 db`),
+AI hook 호출 수(`7 prior`), 관전 화면의 `client_scene_kind`(`2 scene`), `PANIC` 줄 없음.
+
+## 6. 이후 단계
+
+**Phase 2 — 0.6.5 데이터로 재검증 (게임 데이터가 쌓인 뒤)**
+- P2-1 하네스 입력: `DEBUG_DUMPS` 게이트로 리플레이 JSONL 덤프 + `validate-terms` JSONL 입력 지원 → 기준선 재측정
+  (v3.0의 base_prod ≈60.0%가 0.6.5 메타에서도 재현되는지).
+- P2-2 S2-1 재판정: 실제 변경 개수가 담긴 패치노트(news에서 직접)로 T-amnesia 재실행.
+- P2-3 콜드스타트 솔로랭크 사전(S2-5b): 새 게임 초반(리플레이 부족)에만 쓰는 형태로 하네스 판정.
+- P2-4 POS 폴백 행을 실데이터로 대체.
+- P2-5 창 기본 위치·크기 조정 (§5 사용자 피드백 후 — 표시만, 점수 무관).
+
+**Phase 3 — 개선 후보 (전부 백테스트 게이트)**
+- 패치 변경 크기 가중 이월 (`b406915`의 `validate-terms` 실험 — 가중치 1.35/1.15/0.90/0.75는 근거 없음, 재설계 필요).
+- LT식 레이팅 블렌드 `30/(30+g)` — LT 자체 백테스트에서 효과 없음(59.86→59.63%), 우선순위 낮음.
+- Antigravity 제안(숙련도 스탯 공식, 밴 포트폴리오) — 가설로만 보관.
+
+**Phase 4 — 정리·배포**
+- Workshop 업로드(`TFM2ModUploader.exe`), README 스크린샷, CLAUDE.md classic 절 정리.
+
+## 7. 재론 금지 (stable 추가분)
+
+| 질문 | 판정 | 근거 |
+|---|---|---|
+| draft score hook으로 플레이어 드래프트 읽기 | 불가 | classic 06-11 + LT stable 실측 모두 배경 심만 발화 |
+| 게임 노드 텍스트 덮어쓰기 (`header.desc` 등) | 금지 | LT 브리지가 그 텍스트로 단계 판정 |
+| 이미지 노드에서 챔피언 식별 (`ui_state_json`) | 불가 | 이미지 상태는 `{}` (LT B1) — 그리드 타일로 읽는다 |
+| 추천기 창을 빈 공간에 두기 | 불가 | 1920×1080 밴픽 화면에 빈 공간이 없다(전체 레이아웃 추출, §2) — 정보 영역 위 + 드래그로 해결 |
