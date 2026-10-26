@@ -342,56 +342,15 @@ fn beta_mean(w: f64, m: f64, prior_mean: f64, kappa: f64) -> f64 {
 
 /// champ posterior MEAN under the shipped patch-local state: current-version WL
 /// + previous-version WL at 0.35·(1−cm/40) (cm = champ's current games so far);
-/// champs in this version's patch note drop the prev blend (or retain partial carry
-/// when the patch change magnitude is small).
-/// Value = (dir, buff_count, nerf_count, weighted_mag).
-type Changed = HashMap<String, (char, u32, u32, f64)>;
-
-fn patch_stat_weight(key: &str) -> f64 {
-    if key.contains("stat.hp")
-        || key.contains("stat.attack_speed")
-        || key.contains("stat.attack")
-        || key.contains("stat.magic_power")
-    {
-        1.35
-    } else if key.contains("stat.defence")
-        || key.contains("stat.magic_resistance")
-        || key.contains("patch_key.cooltime")
-        || key.contains("patch_key.attack_coef")
-        || key.contains("patch_key.ap_coef")
-        || key.contains("patch_key.heal")
-        || key.contains("patch_key.shield")
-        || key.contains("patch_key.damage")
-    {
-        1.15
-    } else if key.contains("patch_key.growth_") {
-        0.90
-    } else {
-        0.75
-    }
-}
-
-fn chg_retain_factor(c: &str, changed: &Changed) -> f64 {
-    match changed.get(c) {
-        None => 1.0,
-        Some((dir, b, nrf, mag)) => {
-            if *dir == 'R' || b + nrf >= 3 {
-                0.0
-            } else if mag.abs() > 1e-6 {
-                (1.0 - mag.abs() / 0.30).max(0.0)
-            } else {
-                (1.0 - (b + nrf) as f64 / 3.0).max(0.0)
-            }
-        }
-    }
-}
+/// champs in this version's patch note drop the prev blend (stale — restart).
+type Changed = HashMap<String, (char, u32, u32)>;
 
 /// blended (current ×1 + prev ×0.35·fade) pseudo-counts for a champ under the
-/// shipped patch-local state; changed champs scale prev retention by change magnitude.
+/// shipped patch-local state; changed champs drop the prev blend entirely.
 fn prod_blend(c: &str, cur: &HashMap<&str, WL>, prev: &HashMap<&str, WL>, changed: &Changed) -> (f64, f64) {
     let cu = cur.get(c).copied().unwrap_or_default();
-    let pv = prev.get(c).copied().unwrap_or_default();
-    let pw = PROD_PREV_W * chg_retain_factor(c, changed) * (1.0 - (cu.g / PROD_CONF_CHAMP).min(1.0));
+    let pv = if changed.contains_key(c) { WL::default() } else { prev.get(c).copied().unwrap_or_default() };
+    let pw = PROD_PREV_W * (1.0 - (cu.g / PROD_CONF_CHAMP).min(1.0));
     (cu.w + pw * pv.w, cu.g + pw * pv.g)
 }
 
@@ -421,11 +380,13 @@ fn prod_lane_delta(
     let cmean = prod_champ_post(&a.champ, cur_c, prev_c, changed);
     if a.lane < 5 {
         let cu = cur_cp.get(&(a.champ.as_str(), a.lane)).copied().unwrap_or_default();
-        let pv = prev_cp.get(&(a.champ.as_str(), a.lane)).copied().unwrap_or_default();
+        let pv = if changed.contains_key(a.champ.as_str()) {
+            WL::default()
+        } else {
+            prev_cp.get(&(a.champ.as_str(), a.lane)).copied().unwrap_or_default()
+        };
         let champ_cm = cur_c.get(a.champ.as_str()).map_or(0.0, |w| w.g);
-        let pw = PROD_PREV_W
-            * chg_retain_factor(a.champ.as_str(), changed)
-            * (1.0 - (champ_cm / PROD_CONF_CHAMP).min(1.0));
+        let pw = PROD_PREV_W * (1.0 - (champ_cm / PROD_CONF_CHAMP).min(1.0));
         let (w, m) = (cu.w + pw * pv.w, cu.g + pw * pv.g);
         if m > 0.0 {
             return beta_mean(w, m, cmean, PROD_KAPPA_LANE) - 0.5;
@@ -451,9 +412,13 @@ fn prod_delta_for(
     let cd = prod_champ_post(c, cur_c, prev_c, changed) - 0.5;
     if lane < 5 {
         let cu = cur_cp.get(&(c, lane)).copied().unwrap_or_default();
-        let pv = prev_cp.get(&(c, lane)).copied().unwrap_or_default();
+        let pv = if changed.contains_key(c) {
+            WL::default()
+        } else {
+            prev_cp.get(&(c, lane)).copied().unwrap_or_default()
+        };
         let champ_cm = cur_c.get(c).map_or(0.0, |w| w.g);
-        let pw = PROD_PREV_W * chg_retain_factor(c, changed) * (1.0 - (champ_cm / PROD_CONF_CHAMP).min(1.0));
+        let pw = PROD_PREV_W * (1.0 - (champ_cm / PROD_CONF_CHAMP).min(1.0));
         let (w, m) = (cu.w + pw * pv.w, cu.g + pw * pv.g);
         if m > 0.0 {
             return beta_mean(w, m, cd + 0.5, PROD_KAPPA_LANE) - 0.5;
@@ -464,9 +429,13 @@ fn prod_delta_for(
 }
 
 /// `=== version V ===` sections + `[champ] #…±` lines from patch_notes_dump.txt
-/// → per-version changed champs WITH direction, change counts, AND continuous weighted magnitude.
-fn parse_patch_notes(text: &str) -> HashMap<String, Changed> {
-    let mut out: HashMap<String, Changed> = HashMap::new();
+/// → per-version changed champs WITH direction AND change counts. Each `#…`
+/// token's trailing +/− is that change's authored is_buff; the champ direction
+/// uses the PRODUCTION reduce (lib.rs:514): all-buff '+', all-nerf '-', mixed
+/// '~' (no nudge). Value = (dir, buff_count, nerf_count); key presence alone =
+/// "changed" (stale prev-blend drop applies regardless of direction).
+fn parse_patch_notes(text: &str) -> HashMap<String, HashMap<String, (char, u32, u32)>> {
+    let mut out: HashMap<String, HashMap<String, (char, u32, u32)>> = HashMap::new();
     let mut cur: Option<String> = None;
     for line in text.lines() {
         let lt = line.trim();
@@ -476,35 +445,13 @@ fn parse_patch_notes(text: &str) -> HashMap<String, Changed> {
             cur = Some(v);
         } else if let (Some(v), Some(rest)) = (cur.as_ref(), lt.strip_prefix('[')) {
             if let Some(end) = rest.find(']') {
-                let (mut b, mut nrf, mut mag) = (0u32, 0u32, 0.0f64);
+                let (mut b, mut nrf) = (0u32, 0u32);
                 for tok in rest[end + 1..].split_whitespace() {
-                    let is_buff = match tok.as_bytes().last() {
-                        Some(b'+') => {
-                            b += 1;
-                            true
-                        }
-                        Some(b'-') => {
-                            nrf += 1;
-                            false
-                        }
-                        _ => continue,
-                    };
-                    let body = &tok[..tok.len() - 1];
-                    let (key, vals) = body.split_once(':').unwrap_or((body, ""));
-                    let w_key = patch_stat_weight(key);
-                    let rel = if let Some((pre_s, aft_s)) = vals.split_once("->") {
-                        let pre = pre_s.trim().trim_end_matches('%').parse::<f64>().ok();
-                        let aft = aft_s.trim().trim_end_matches('%').parse::<f64>().ok();
-                        match (pre, aft) {
-                            (Some(p), Some(a)) if p.abs().max(a.abs()) > 1e-6 => {
-                                ((a - p).abs() / p.abs().max(a.abs())).clamp(0.01, 0.50)
-                            }
-                            _ => 0.08,
-                        }
-                    } else {
-                        0.08
-                    };
-                    mag += (if is_buff { 1.0 } else { -1.0 }) * w_key * rel;
+                    match tok.as_bytes().last() {
+                        Some(b'+') => b += 1,
+                        Some(b'-') => nrf += 1,
+                        _ => {}
+                    }
                 }
                 let dir = if b > 0 && nrf == 0 {
                     '+'
@@ -513,7 +460,7 @@ fn parse_patch_notes(text: &str) -> HashMap<String, Changed> {
                 } else {
                     '~'
                 };
-                out.get_mut(v).unwrap().insert(rest[..end].to_string(), (dir, b, nrf, mag));
+                out.get_mut(v).unwrap().insert(rest[..end].to_string(), (dir, b, nrf));
             }
         }
     }
@@ -923,9 +870,8 @@ fn main() {
                 // ---- S0-4: shipped pick-score terms (retrospective full-board) ----
                 let chg_nudge = |c: &str| -> f64 {
                     let d = match changed.get(c) {
-                        Some((_, _, _, mag)) if mag.abs() > 1e-6 => 0.032 * (mag / 0.45).tanh(),
-                        Some(('+', b, nrf, _)) => 0.01 + 0.005 * ((*b + *nrf).max(1).min(4) as f64),
-                        Some(('-', b, nrf, _)) => -(0.01 + 0.005 * ((*b + *nrf).max(1).min(4) as f64)),
+                        Some(('+', _, _)) => 0.02,
+                        Some(('-', _, _)) => -0.02,
                         _ => return 0.0,
                     };
                     let gm = prod_games(c, &cur_c, &prev_c, changed);
@@ -940,13 +886,8 @@ fn main() {
                         None => return 0.0,
                     };
                     let gm = prod_games(c, &cur_c, &prev_c, changed);
-                    // P2-4 cold-start gate: in mature careers, only apply AI prior to zero-data
-                    // champs without authored patch notes (prevents 48.4% anti-correlated AI prior
-                    // from overriding patch resets or thin real samples).
-                    if gm > 0.0 || changed.contains_key(c) {
-                        return 0.0;
-                    }
-                    (0.4 * p).clamp(-0.024, 0.024)
+                    let fresh = if gm <= 0.0 { 1.0 } else { (1.0 - gm / 15.0).max(0.0) };
+                    (0.4 * p * fresh).clamp(-0.024, 0.024)
                 };
                 let af_c = |aid: u64, c: &str| -> f64 {
                     let cw = fam_x.get(&(aid, c)).copied().unwrap_or_default();
@@ -1100,7 +1041,7 @@ fn main() {
                     let mut sum_p = 0.0;
                     for a in team {
                         let sc = |c: &str| -> f64 {
-                            1.0 * prod_delta_for(c, a.lane, &cur_c, &prev_c, &cur_cp, &prev_cp, changed)
+                            0.85 * prod_delta_for(c, a.lane, &cur_c, &prev_c, &cur_cp, &prev_cp, changed)
                                 + chg_nudge(c)
                                 + ai_term(c)
                                 + af_c(a.aid, c)
@@ -1455,21 +1396,6 @@ fn main() {
             let (lo, hi) = ci(&mut v);
             let gate = if lo > 0.0 { "PASS" } else { "FAIL (미입증 — 예산 항목, 키우기 금지)" };
             println!("    {:<34}: {:>+5.1}  [{:>+5.1}, {:>+5.1}]  {}", name, point[a] - point[b], lo, hi, gate);
-        }
-        println!("\n  PHASE 2 ABLATION ON PRODUCTION ENGINE:");
-        for (name, f) in [
-            ("dfor_prod alone", (&|t: &Terms| t.dfor_prod) as &dyn Fn(&Terms) -> f64),
-            ("dfor_prod + chg_n (P2-1)", &|t: &Terms| t.dfor_prod + t.chg_n),
-            ("dfor_prod + chg_n + aip (P2-4)", &|t: &Terms| t.dfor_prod + t.chg_n + t.aip_prod),
-            ("dfor_prod + chg_n + af_new", &|t: &Terms| t.dfor_prod + t.chg_n + t.af_new),
-            ("dfor_prod + chg_n + af_new + 0.08*fit", &|t: &Terms| {
-                t.dfor_prod + t.chg_n + t.af_new + 0.08 * t.fit
-            }),
-            ("base_lane_prod + chg_n + af_new + 0.08*fit", &|t: &Terms| {
-                t.base_lane_prod + t.chg_n + t.af_new + 0.08 * t.fit
-            }),
-        ] {
-            println!("    {:<42}: {:.2}%", name, acc(f));
         }
 
         // ---- POST-HOC S2 DIAGNOSTICS (NOT pre-registered — S2 decision tests) ----
@@ -1849,18 +1775,17 @@ fn main() {
                     }
                 }
             }
-            // S2-2 T-nudge: does the SIGNED change count / continuous weighted mag predict
-            // the realized delta shift across the boundary? (κ8-shrunk per-version deltas, ≥10 games both)
-            let (mut xs, mut xmag, mut ys) = (Vec::new(), Vec::new(), Vec::new());
+            // S2-2 T-nudge: does the SIGNED change count predict the realized delta
+            // shift across the boundary? (κ8-shrunk per-version deltas, ≥10 games both)
+            let (mut xs, mut ys) = (Vec::new(), Vec::new());
             for g in 1..n_groups {
                 let label = vsorted[g].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".");
                 if let Some(note) = notes.get(&label) {
-                    for (c, (_, b, nrf, mag)) in note {
+                    for (c, (_, b, nrf)) in note {
                         let cur = vwl.get(&(g, c.clone())).copied().unwrap_or_default();
                         let prev = vwl.get(&(g - 1, c.clone())).copied().unwrap_or_default();
                         if cur.g >= 10.0 && prev.g >= 10.0 {
                             xs.push(*b as f64 - *nrf as f64);
-                            xmag.push(*mag);
                             ys.push(cur.delta(8.0) - prev.delta(8.0));
                         }
                     }
@@ -1875,7 +1800,7 @@ fn main() {
                 let slope = if sxx > 0.0 { sxy / sxx } else { 0.0 };
                 let r = if sxx > 0.0 && syy > 0.0 { sxy / (sxx.sqrt() * syy.sqrt()) } else { 0.0 };
                 println!(
-                    "  S2-2 T-nudge (count): realized Δdelta vs signed change-count — slope {:+.4}/chg, r {:+.2}, n {}  → {}",
+                    "  S2-2 T-nudge: realized Δdelta vs signed change-count — slope {:+.4}/chg, r {:+.2}, n {}  → {}",
                     slope,
                     r,
                     xs.len(),
@@ -1885,17 +1810,6 @@ fn main() {
                         "flat → keep uniform ±0.02"
                     }
                 );
-                let mm = xmag.iter().sum::<f64>() / nn;
-                let mxy: f64 = xmag.iter().zip(&ys).map(|(x, y)| (x - mm) * (y - my)).sum();
-                let mxx: f64 = xmag.iter().map(|x| (x - mm) * (x - mm)).sum();
-                let mslope = if mxx > 0.0 { mxy / mxx } else { 0.0 };
-                let mr = if mxx > 0.0 && syy > 0.0 { mxy / (mxx.sqrt() * syy.sqrt()) } else { 0.0 };
-                println!(
-                    "  P2-1 T-nudge (weighted mag): realized Δdelta vs continuous mag — slope {:+.4}/mag, r {:+.2}, n {}",
-                    mslope,
-                    mr,
-                    xmag.len(),
-                );
             }
             // S2-1 T-amnesia: predict a changed champ's FIRST-20-games winrate in the
             // new patch: (reset 0.5) vs (full 0.35·prev carry) vs (count-scaled carry).
@@ -1903,7 +1817,7 @@ fn main() {
             for g in 1..n_groups {
                 let label = vsorted[g].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".");
                 if let Some(note) = notes.get(&label) {
-                    for (c, (_, b, nrf, _)) in note {
+                    for (c, (_, b, nrf)) in note {
                         let nch = (b + nrf) as f64;
                         let act = early20.get(&(g, c.clone())).copied().unwrap_or_default();
                         let prev = vwl.get(&(g - 1, c.clone())).copied().unwrap_or_default();
