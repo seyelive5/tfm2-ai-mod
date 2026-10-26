@@ -480,6 +480,9 @@ pub struct Output {
     pub swap: Vec<String>,
     /// commentary lines ('\n'-joined)
     pub say: String,
+    /// the commentary minus the lines that restate the ranked rows (the ① headline
+    /// and the runner-up list) — for displays that already show `detail_rows`.
+    pub notes: Vec<String>,
     /// champ id -> tier label text ("S▲" …)
     pub tiers: HashMap<String, String>,
 }
@@ -689,6 +692,8 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
 
     // ── commentary
     let mut parts: Vec<String> = Vec::new();
+    // indices of `parts` that restate detail_rows (excluded from `notes`)
+    let mut restates: Vec<usize> = Vec::new();
     if let Some(op) = &op_gap {
         parts.push(format!(
             "점수 격차가 큽니다 — 지금은 {} 확보가 우선입니다(라인 조합은 다음 픽에서).",
@@ -725,8 +730,10 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                 t.push_str(". 다만 표본이 적어 확신은 낮습니다");
             }
             t.push('.');
+            restates.push(parts.len());
             parts.push(t);
             if lane.cands.len() > 1 {
+                restates.push(parts.len());
                 parts.push(format!(
                     "같은 라인 대안: {}.",
                     lane.cands
@@ -783,8 +790,10 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
             t.push_str(". 다만 표본이 적어 확신은 낮습니다");
         }
         t.push('.');
+        restates.push(parts.len());
         parts.push(t);
         if view.rows.len() > 1 {
+            restates.push(parts.len());
             parts.push(format!(
                 "차순위 후보: {}.",
                 view.rows
@@ -925,7 +934,9 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         })
         .collect();
 
-    let out = Arc::new(Output { rec_ban, recs, detail_rows, swap, say: parts.join("\n"), tiers });
+    let notes: Vec<String> =
+        parts.iter().enumerate().filter(|(i, _)| !restates.contains(i)).map(|(_, p)| p.clone()).collect();
+    let out = Arc::new(Output { rec_ban, recs, detail_rows, swap, say: parts.join("\n"), notes, tiers });
     if let Ok(mut g) = OUTPUT.lock() {
         *g = Some((key, out.clone()));
     }
