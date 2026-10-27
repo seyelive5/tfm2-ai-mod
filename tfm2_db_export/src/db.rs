@@ -56,6 +56,9 @@ struct Part {
 
 struct Replay {
     version: String,
+    /// a set the game ran on its simplified sim (other leagues at the lighter
+    /// simulation setting) — not watchable back; E3 counts them
+    is_brief: bool,
     blue_team_id: usize,
     red_team_id: usize,
     blue_win: bool,
@@ -90,6 +93,10 @@ struct Db {
     builds: usize,
     chg_line: String,
     first_keys: String,
+    /// replay_mix() at `mix_at` = (parsed replays, player team) — diag only,
+    /// recomputed when either moves rather than every frame
+    mix_line: String,
+    mix_at: Option<(usize, Option<usize>)>,
 }
 
 static DB: Mutex<Option<Db>> = Mutex::new(None);
@@ -173,10 +180,15 @@ pub(crate) fn tick(ctx: &StableClient, screen: Screen) {
     if db.queue.is_empty() && db.built != Some(db.replays.len()) && (screen == Screen::Menu || !ready) {
         build(ctx, db);
     }
+    let mix_key = (db.replays.len(), db.player_team);
+    if db.mix_at != Some(mix_key) {
+        db.mix_line = replay_mix(&db.replays, db.player_team);
+        db.mix_at = Some(mix_key);
+    }
     diag::set(
         "3 db",
         format!(
-            "player_team={:?} name={:?} teams={}\nreplays listed={} parsed={} failed={} queued={} parse_ms_total={}\nreplay_fields={}\ntables builds={} on_replays={:?} last_build_ms={} gen={}\nchg {}",
+            "player_team={:?} name={:?} teams={}\nreplays listed={} parsed={} failed={} queued={} parse_ms_total={}\nreplay_fields={}\nE3 replay_mix {}\ntables builds={} on_replays={:?} last_build_ms={} gen={}\nchg {}",
             db.player_team,
             db.player_team.and_then(|id| db.teams.get(&id)),
             db.teams.len(),
@@ -186,6 +198,7 @@ pub(crate) fn tick(ctx: &StableClient, screen: Screen) {
             db.queue.len(),
             db.parse_us / 1000,
             db.first_keys,
+            db.mix_line,
             db.builds,
             db.built,
             db.build_ms,
@@ -207,6 +220,7 @@ fn poll(ctx: &StableClient, db: &mut Db) {
         TABLES_GEN.fetch_add(1, Ordering::Relaxed);
     }
     db.player_team = ctx.player_team_id();
+    crate::prior::set_my_team(db.player_team);
     db.teams.clear(); // cheap typed reads; names can change (rebrands)
     for id in ctx.team_ids() {
         if let Some(n) = ctx.team_name(id) {
@@ -240,6 +254,21 @@ fn pos_to_name(idx: u8) -> &'static str {
         3 => "Bottom",
         _ => "Support",
     }
+}
+
+/// What the parsed replays are made of (review E3): simplified-sim sets, the
+/// player's own sets, and sets per game version.
+fn replay_mix(replays: &BTreeMap<usize, Replay>, my_team: Option<usize>) -> String {
+    let brief = replays.values().filter(|r| r.is_brief).count();
+    let mine = my_team.map_or("-".to_string(), |t| {
+        replays.values().filter(|r| r.blue_team_id == t || r.red_team_id == t).count().to_string()
+    });
+    let mut per: BTreeMap<Vec<u32>, (&str, usize)> = BTreeMap::new();
+    for r in replays.values() {
+        per.entry(vkey(&r.version)).or_insert((&r.version, 0)).1 += 1;
+    }
+    let versions = per.values().map(|(v, n)| format!("{}:{}", v, n)).collect::<Vec<_>>().join(" ");
+    format!("brief={}/{} mine={} versions=[{}]", brief, replays.len(), mine, versions)
 }
 
 fn parse_replay(v: &JsonVal) -> Option<Replay> {
@@ -288,6 +317,7 @@ fn parse_replay(v: &JsonVal) -> Option<Replay> {
     };
     Some(Replay {
         version,
+        is_brief: v.get("is_brief").and_then(|x| x.as_bool()).unwrap_or(false),
         blue_team_id,
         red_team_id,
         blue_win,
@@ -656,4 +686,38 @@ pub(crate) fn athlete_tables(
         }
     }
     (af, pocket, dbg.trim_end().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn replay(json: &str) -> Replay {
+        parse_replay(&JsonVal::parse(json).unwrap()).unwrap()
+    }
+
+    fn rp(version: &str, blue: usize, red: usize, brief: bool) -> Replay {
+        replay(&format!(
+            r#"{{"version":"{}","blue_team_id":{},"red_team_id":{},"blue_team_win":true,"is_brief":{}}}"#,
+            version, blue, red, brief
+        ))
+    }
+
+    #[test]
+    fn parse_replay_reads_the_brief_flag() {
+        assert!(rp("0.6.5", 1, 2, true).is_brief);
+        assert!(!rp("0.6.5", 1, 2, false).is_brief);
+        let old = r#"{"version":"0.6.5","blue_team_id":1,"red_team_id":2,"blue_team_win":true}"#;
+        assert!(!replay(old).is_brief);
+    }
+
+    #[test]
+    fn replay_mix_counts_brief_mine_and_versions_in_version_order() {
+        let rs: BTreeMap<usize, Replay> =
+            [(1, rp("0.6.10", 8, 2, false)), (2, rp("0.6.5", 3, 8, true)), (3, rp("0.6.5", 3, 4, false))]
+                .into_iter()
+                .collect();
+        assert_eq!(replay_mix(&rs, Some(8)), "brief=1/3 mine=2 versions=[0.6.5:2 0.6.10:1]");
+        assert_eq!(replay_mix(&rs, None), "brief=1/3 mine=- versions=[0.6.5:2 0.6.10:1]");
+    }
 }

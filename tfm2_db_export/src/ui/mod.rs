@@ -203,16 +203,17 @@ fn typing(ctx: &StableClient) -> bool {
         .unwrap_or(false)
 }
 
-/// A subtree as lines: path, runner, visible, rect, label text.
-fn dump_tree(ctx: &StableClient, path: &str, depth: usize, max_depth: usize, out: &mut Vec<String>) {
-    if out.len() >= 90 {
+/// A subtree as lines (path "" = the root): name, runner, visible, rect, label
+/// text — `max_depth` levels below `path`, until `out` holds `cap` lines.
+pub(crate) fn dump_tree(ctx: &StableClient, path: &str, depth: usize, max_depth: usize, cap: usize, out: &mut Vec<String>) {
+    if out.len() >= cap {
         return;
     }
     let runner = ctx.ui_runner_name(path).unwrap_or_default();
     let mut line = format!(
         "{}{} [{}] vis={:?} rect={:?}",
         "  ".repeat(depth),
-        path.rsplit('.').next().unwrap_or(path),
+        if path.is_empty() { "(root)" } else { path.rsplit('.').next().unwrap_or(path) },
         runner,
         ctx.ui_visible(path),
         ctx.ui_node_rect(path).map(|(x, y, w, h)| (x as i32, y as i32, w as i32, h as i32))
@@ -223,7 +224,8 @@ fn dump_tree(ctx: &StableClient, path: &str, depth: usize, max_depth: usize, out
     out.push(line);
     if depth < max_depth {
         for c in ctx.ui_child_names(path) {
-            dump_tree(ctx, &format!("{}.{}", path, c), depth + 1, max_depth, out);
+            let child = if path.is_empty() { c } else { format!("{}.{}", path, c) };
+            dump_tree(ctx, &child, depth + 1, max_depth, cap, out);
         }
     }
 }
@@ -246,16 +248,13 @@ pub(crate) fn stamp(ctx: &mut StableClient, view: &View) {
         st.hidden = !st.hidden;
     }
 
-    // an unstable letter is drawn dimmed only while some letters are stable: at
-    // a cold start every letter is unstable, and dimming them all says nothing
-    let dim = view.out.as_deref().map_or(false, |o| {
-        let lettered = || o.tiers.values().filter(|m| !m.letter.is_empty());
-        lettered().any(|m| m.unsure) && lettered().any(|m| !m.unsure)
-    });
+    // unsure tier letters are drawn dimmed; at a cold start that is every letter,
+    // and the rank card says the list is provisional (cards::TierDim)
+    let dim = view.out.as_deref().map_or(cards::TierDim::Off, |o| cards::tier_dim(&o.tiers));
     let swap = ctx.ui_visible("main.swap") == Some(true);
     let place = layout::place(swap, view.my_blue == Some(false));
     cards::stamp(ctx, st, view, &place, dim);
-    tiles::stamp(ctx, st, view, dim);
+    tiles::stamp(ctx, st, view, dim.on());
 
     if st.frame % 30 == 1 {
         let ranked = st.tiles.values().filter(|l| l.ring.is_some()).count();
@@ -265,7 +264,7 @@ pub(crate) fn stamp(ctx: &mut StableClient, view: &View) {
         diag::set(
             "6 ui",
             format!(
-                "cards parent={:?} mode={:?} hidden_by_tab={} yield_to={:?} dim={} markup_on={}\nrank at={:?} rect={:?} vis={:?} | note at={:?} rect={:?} vis={:?}\ninfo_visible={:?} swap_visible={:?} my_blue={:?} step={:?}\ntiles on_screen={} with_nodes={} ranked={} tagged={} spawn_retry={}\nspawns={} spawn_fails={} set_fails={} icon_fails={} readback_bad={}\ntab_presses={} keys_seen={:?} search_state={:?}",
+                "cards parent={:?} mode={:?} hidden_by_tab={} yield_to={:?} tier_dim={:?} markup_on={}\nrank at={:?} rect={:?} vis={:?} | note at={:?} rect={:?} vis={:?}\ninfo_visible={:?} swap_visible={:?} my_blue={:?} step={:?}\ntiles on_screen={} with_nodes={} ranked={} tagged={} spawn_retry={}\nspawns={} spawn_fails={} set_fails={} icon_fails={} readback_bad={}\ntab_presses={} keys_seen={:?} search_state={:?}",
                 st.parent,
                 st.mode,
                 st.hidden,
@@ -317,8 +316,8 @@ pub(crate) fn stamp(ctx: &mut StableClient, view: &View) {
             .collect();
         lines.push(format!("main children: {}", main_kids.join(" ")));
         if let Some(parent) = st.parent {
-            dump_tree(ctx, &format!("{}.{}", parent, cards::RANK), 0, 2, &mut lines);
-            dump_tree(ctx, &format!("{}.{}", parent, cards::NOTE), 0, 1, &mut lines);
+            dump_tree(ctx, &format!("{}.{}", parent, cards::RANK), 0, 2, 90, &mut lines);
+            dump_tree(ctx, &format!("{}.{}", parent, cards::NOTE), 0, 1, 90, &mut lines);
         }
         let tile = st
             .tiles
@@ -327,7 +326,7 @@ pub(crate) fn stamp(ctx: &mut StableClient, view: &View) {
             .map(|(c, _)| c.clone())
             .or_else(|| view.tiles.first().cloned());
         if let Some(c) = tile {
-            dump_tree(ctx, &format!("main.champions.contents.{}", c), 0, 2, &mut lines);
+            dump_tree(ctx, &format!("main.champions.contents.{}", c), 0, 2, 90, &mut lines);
         }
         diag::set("9 tree", lines.join("\n"));
     }

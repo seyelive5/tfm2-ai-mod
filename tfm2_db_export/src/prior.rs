@@ -10,7 +10,7 @@
 use crate::diag;
 use mod_api_stable::*;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 /// champ → (score sum, observations) over empty-board ban scans
@@ -26,6 +26,68 @@ static RESETS: AtomicU32 = AtomicU32::new(0);
 static LOG_BUF: Mutex<String> = Mutex::new(String::new());
 static FLUSH_TICK: AtomicU32 = AtomicU32::new(0);
 
+/// Whose draft a call scores, seen from the player's team.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Side {
+    /// the AI drafts FOR the player's team (coach delegation)
+    Ally,
+    /// the AI drafts AGAINST the player's team (the opponent in the player's match)
+    Enemy,
+}
+
+fn side_of(my: Option<usize>, ally: Option<usize>, enemy: Option<usize>) -> Option<Side> {
+    let my = my?;
+    if ally == Some(my) {
+        Some(Side::Ally)
+    } else if enemy == Some(my) {
+        Some(Side::Enemy)
+    } else {
+        None
+    }
+}
+
+// Review experiment E1 (docs/research/2026-10-28-advanced-directions.md): does
+// the hook fire for the player's own drafts? The ABI-10 team ids say whose draft
+// a call scores; counted always — two compares per call.
+/// the player's team (db poll), usize::MAX = unknown
+static MY_TEAM: AtomicUsize = AtomicUsize::new(usize::MAX);
+static WITH_IDS: AtomicU64 = AtomicU64::new(0);
+/// [as ally outside banpick, as ally in banpick, as enemy outside, as enemy in]
+static MINE: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
+/// the latest such call, with its board, to hold against the screen
+static MINE_LAST: Mutex<String> = Mutex::new(String::new());
+
+pub(crate) fn set_my_team(team: Option<usize>) {
+    MY_TEAM.store(team.unwrap_or(usize::MAX), Ordering::Relaxed);
+}
+
+fn count_mine(phase: char, ctx: &StableDraftContext, cand: usize, score: f32) {
+    let (ally, enemy) = (ctx.ally_team(), ctx.enemy_team());
+    if ally.is_some() && enemy.is_some() {
+        WITH_IDS.fetch_add(1, Ordering::Relaxed);
+    }
+    let my = Some(MY_TEAM.load(Ordering::Relaxed)).filter(|&t| t != usize::MAX);
+    let Some(side) = side_of(my, ally, enemy) else { return };
+    let banpick = crate::IN_BANPICK.load(Ordering::Relaxed);
+    MINE[(side == Side::Enemy) as usize * 2 + banpick as usize].fetch_add(1, Ordering::Relaxed);
+    if let Ok(mut last) = MINE_LAST.lock() {
+        let names = |v: &[usize]| v.iter().map(|&i| ctx.champion_name(i).unwrap_or("?")).collect::<Vec<_>>().join(",");
+        *last = format!(
+            "{} {:?} banpick={} t={}s cand={} {:.3} | ally picks[{}] bans[{}] | enemy picks[{}] bans[{}]",
+            phase,
+            side,
+            banpick,
+            diag::now_ms() / 1000,
+            ctx.champion_name(cand).unwrap_or("?"),
+            score,
+            names(ctx.ally_picks()),
+            names(ctx.ally_bans()),
+            names(ctx.enemy_picks()),
+            names(ctx.enemy_bans()),
+        );
+    }
+}
+
 /// Leaving the InGame scene: the next save starts from nothing.
 pub(crate) fn reset() {
     if let Ok(mut p) = PRIOR.lock() {
@@ -33,6 +95,10 @@ pub(crate) fn reset() {
     }
     if let Ok(mut a) = LAST_ANCHOR.lock() {
         *a = None;
+    }
+    set_my_team(None);
+    if let Ok(mut l) = MINE_LAST.lock() {
+        l.clear();
     }
 }
 
@@ -63,6 +129,7 @@ pub(crate) fn snapshot() -> (HashMap<String, f32>, usize) {
 
 fn observe(phase: char, ctx: &StableDraftContext, cand: usize, score: f32) {
     CALLS.fetch_add(1, Ordering::Relaxed);
+    count_mine(phase, ctx, cand, score);
     let empty = ctx.ally_picks().is_empty()
         && ctx.enemy_picks().is_empty()
         && ctx.ally_bans().is_empty()
@@ -128,16 +195,33 @@ impl StableDraftHook for Hook {
 pub(crate) fn tick() {
     let keys = PRIOR.lock().ok().and_then(|p| p.as_ref().map(|m| m.len())).unwrap_or(0);
     let anchor = LAST_ANCHOR.lock().ok().and_then(|a| a.clone());
+    let scans = SCANS.load(Ordering::Relaxed);
+    let mine = MINE.each_ref().map(|c| c.load(Ordering::Relaxed));
+    let my = MY_TEAM.load(Ordering::Relaxed);
+    let last = MINE_LAST.lock().map(|l| l.clone()).unwrap_or_default();
     diag::set(
         "7 prior",
         format!(
-            "hook_calls={} empty_board_ban_scans={} champs={} unnamed={} resets={} anchor={:?}",
+            "hook_calls={} empty_board_ban_scans={} champs={} unnamed={} resets={} anchor={:?}\n\
+             E1 team_ids={} my_team={} mine: as_ally={} (in banpick {}) as_enemy={} (in banpick {})\n\
+             E1 last_mine={}\n\
+             E3 drafts_seen≈{}",
             CALLS.load(Ordering::Relaxed),
-            SCANS.load(Ordering::Relaxed),
+            scans,
             keys,
             UNNAMED.load(Ordering::Relaxed),
             RESETS.load(Ordering::Relaxed),
-            anchor
+            anchor,
+            WITH_IDS.load(Ordering::Relaxed),
+            if my == usize::MAX { "-".to_string() } else { my.to_string() },
+            mine[0] + mine[1],
+            mine[1],
+            mine[2] + mine[3],
+            mine[3],
+            if last.is_empty() { "-" } else { &last },
+            // a draft's first ban scans every candidate on an empty board; a rescan
+            // of that board counts again, so this is an upper bound
+            if keys > 0 { (scans as usize / keys).to_string() } else { "-".to_string() },
         ),
     );
     if FLUSH_TICK.fetch_add(1, Ordering::Relaxed) % 600 != 0 {
@@ -156,5 +240,27 @@ pub(crate) fn tick() {
     }
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = f.write_all(body.as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_call_scoring_for_my_team_is_mine_as_ally() {
+        assert_eq!(side_of(Some(8), Some(8), Some(7)), Some(Side::Ally));
+    }
+
+    #[test]
+    fn a_call_scoring_against_my_team_is_mine_as_enemy() {
+        assert_eq!(side_of(Some(8), Some(7), Some(8)), Some(Side::Enemy));
+    }
+
+    #[test]
+    fn other_drafts_and_unknown_ids_are_not_mine() {
+        assert_eq!(side_of(Some(8), Some(3), Some(7)), None);
+        assert_eq!(side_of(Some(8), None, None), None);
+        assert_eq!(side_of(None, Some(8), Some(7)), None);
     }
 }

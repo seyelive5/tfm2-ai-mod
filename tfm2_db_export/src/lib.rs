@@ -19,6 +19,7 @@ mod diag;
 mod json;
 mod markup;
 mod prior;
+mod probe;
 mod recommender;
 mod ui;
 
@@ -28,7 +29,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub(crate) const MOD_TAG: &str = "tfm2_db_export v4.2.0";
+pub(crate) const MOD_TAG: &str = "tfm2_db_export v4.2.1";
 
 /// Numeric per-component version key ("2026.10.0" sorts above "2026.2.0").
 pub(crate) fn vkey(v: &str) -> Vec<u32> {
@@ -120,6 +121,7 @@ fn frame(ctx: &StableClient) {
             db::reset();
             board::reset();
             prior::reset();
+            probe::reset();
             ui::reset();
             if let Ok(mut i) = INPUTS.lock() {
                 *i = None;
@@ -167,6 +169,7 @@ fn frame(ctx: &StableClient) {
             }
             diag::log_line("left banpick");
         }
+        probe::screen(ctx);
         return;
     }
     if !IN_BANPICK.swap(true, Ordering::Relaxed) {
@@ -174,6 +177,7 @@ fn frame(ctx: &StableClient) {
     }
     let read = board::read(ctx);
     let (out, status, inputs_dbg) = recommend(ctx, &read);
+    probe::banpick(ctx, &read, out.as_deref().map(|o| o.rec_ban));
     diag::set(
         "8 rec",
         match out.as_deref() {

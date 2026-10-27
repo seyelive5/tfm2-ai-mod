@@ -5,7 +5,7 @@
 use super::layout::{Place, CARD_H, CARD_W, HINT_H, HINT_W};
 use super::{Applied, UiState, View};
 use crate::markup;
-use crate::recommender::{Output, RecRow};
+use crate::recommender::{Output, RecRow, TierMark};
 use mod_api_stable::*;
 use std::collections::HashMap;
 
@@ -95,11 +95,54 @@ pub fn title(m: Mode) -> &'static str {
 }
 
 /// Under the title: the draft step being decided, or what the swap card is.
-pub fn subtitle(m: Mode, step: Option<(usize, usize)>) -> String {
-    match (m, step) {
-        (Mode::Swap, _) => "라인 배치".to_string(),
+/// `provisional` = every tier letter is unsure (`TierDim::All`), said here
+/// next to the rows rather than in the note card, whose budget could cut it.
+pub fn subtitle(m: Mode, step: Option<(usize, usize)>, provisional: bool) -> String {
+    let count = match (m, step) {
+        (Mode::Swap, _) => return "라인 배치".to_string(),
         (Mode::Ban | Mode::Pick, Some((done, total))) if total > 0 => format!("{} / {}", (done + 1).min(total), total),
         _ => String::new(),
+    };
+    match (provisional, count.is_empty()) {
+        (false, _) => count,
+        (true, true) => "티어 잠정".to_string(),
+        (true, false) => format!("{} · 티어 잠정", count),
+    }
+}
+
+/// How unsure tier letters (engine `tier_unsure`) are drawn this frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TierDim {
+    /// no lettered tier is unsure: nothing dimmed
+    Off,
+    /// some letters are unsure: those are dimmed, the note card's legend says why
+    Partial,
+    /// every letter is unsure — a cold start: all are dimmed (at full ink they
+    /// would read as certain) and the rank card calls the list provisional
+    All,
+}
+
+impl TierDim {
+    /// unsure letters are drawn dimmed
+    pub fn on(self) -> bool {
+        self != TierDim::Off
+    }
+}
+
+pub fn tier_dim(tiers: &HashMap<String, TierMark>) -> TierDim {
+    let lettered = || tiers.values().filter(|m| !m.letter.is_empty());
+    match (lettered().any(|m| m.unsure), lettered().any(|m| !m.unsure)) {
+        (false, _) => TierDim::Off,
+        (true, true) => TierDim::Partial,
+        (true, false) => TierDim::All,
+    }
+}
+
+/// The note card's closing line for dimmed letters.
+pub fn legend(t: TierDim) -> Option<&'static str> {
+    match t {
+        TierDim::Partial => Some(DIM_LEGEND),
+        _ => None,
     }
 }
 
@@ -716,7 +759,7 @@ fn covering(ctx: &StableClient, place: &Place) -> Option<&'static str> {
 }
 
 /// Both cards for this frame: spots, Tab / overlay visibility, contents.
-pub(super) fn stamp(ctx: &mut StableClient, st: &mut UiState, view: &View, place: &Place, dim: bool) {
+pub(super) fn stamp(ctx: &mut StableClient, st: &mut UiState, view: &View, place: &Place, dim: TierDim) {
     if !ensure(ctx, st, place) {
         return;
     }
@@ -741,7 +784,7 @@ pub(super) fn stamp(ctx: &mut StableClient, st: &mut UiState, view: &View, place
     }
 }
 
-fn fill_rank(ctx: &mut StableClient, ap: &mut Applied, card: &str, view: &View, m: Mode, dim: bool) {
+fn fill_rank(ctx: &mut StableClient, ap: &mut Applied, card: &str, view: &View, m: Mode, dim: TierDim) {
     let turn = turn_rgb(m);
     for icon in ["chart", "swap"] {
         let path = format!("{}.slot.{}", card, icon);
@@ -752,7 +795,7 @@ fn fill_rank(ctx: &mut StableClient, ap: &mut Applied, card: &str, view: &View, 
         ap.vis(ctx, &path, on);
     }
     ap.text(ctx, &format!("{}.title", card), title(m));
-    ap.text(ctx, &format!("{}.sub", card), &subtitle(m, view.step));
+    ap.text(ctx, &format!("{}.sub", card), &subtitle(m, view.step, dim == TierDim::All));
     let idle = format!("{}.idle", card);
     ap.vis(ctx, &idle, m == Mode::Wait);
     if m == Mode::Wait {
@@ -763,7 +806,7 @@ fn fill_rank(ctx: &mut StableClient, ap: &mut Applied, card: &str, view: &View, 
         };
         ap.text(ctx, &idle, why);
     }
-    let rows = view.out.as_deref().map(|o| rows(o, &view.names, dim)).unwrap_or_default();
+    let rows = view.out.as_deref().map(|o| rows(o, &view.names, dim.on())).unwrap_or_default();
     let g = geom(m);
     for i in 0..5 {
         let r = format!("{}.r{}", card, i);
@@ -822,7 +865,7 @@ fn fill_rank(ctx: &mut StableClient, ap: &mut Applied, card: &str, view: &View, 
     }
 }
 
-fn fill_note(ctx: &mut StableClient, ap: &mut Applied, card: &str, view: &View, o: &Output, m: Mode, dim: bool) {
+fn fill_note(ctx: &mut StableClient, ap: &mut Applied, card: &str, view: &View, o: &Output, m: Mode, dim: TierDim) {
     let icon = format!("{}.slot.chat", card);
     ap.props(ctx, &icon, &format!("color: #{}ff;", turn_rgb(m)));
     ap.vis(ctx, &icon, true);
@@ -834,9 +877,9 @@ fn fill_note(ctx: &mut StableClient, ap: &mut Applied, card: &str, view: &View, 
         notes.push(view.status.clone());
     }
     notes.extend(o.notes.iter().cloned());
-    if dim {
+    if let Some(l) = legend(dim) {
         // after the data line: the first to give way
-        notes.push(markup::dim(DIM_LEGEND));
+        notes.push(markup::dim(l));
     }
     ap.text(ctx, &format!("{}.body", card), &fit_notes(&notes, NOTE_LINES, NOTE_UNITS));
 }
@@ -949,6 +992,44 @@ mod tests {
         assert_eq!(rows(&o, &none(), false)[0].tier_ink, "fad33eff");
     }
 
+    fn marks(v: &[(&str, &'static str, bool)]) -> HashMap<String, TierMark> {
+        v.iter().map(|&(id, letter, unsure)| (id.to_string(), TierMark { letter, unsure, chg: "" })).collect()
+    }
+
+    #[test]
+    fn a_cold_start_dims_every_letter() {
+        // at full ink an all-unsure list would read as certain
+        assert_eq!(tier_dim(&marks(&[("a", "S", true), ("b", "C", true)])), TierDim::All);
+    }
+
+    #[test]
+    fn a_mixed_tier_list_dims_only_the_unsure() {
+        assert_eq!(tier_dim(&marks(&[("a", "S", true), ("b", "C", false)])), TierDim::Partial);
+    }
+
+    #[test]
+    fn sure_or_letterless_tiers_dim_nothing() {
+        assert_eq!(tier_dim(&marks(&[("a", "S", false), ("b", "D", false)])), TierDim::Off);
+        assert_eq!(tier_dim(&marks(&[("a", "", true)])), TierDim::Off);
+        assert_eq!(tier_dim(&HashMap::new()), TierDim::Off);
+    }
+
+    #[test]
+    fn subtitle_calls_an_all_unsure_tier_list_provisional() {
+        assert_eq!(subtitle(Mode::Ban, Some((2, 14)), true), "3 / 14 · 티어 잠정");
+        assert_eq!(subtitle(Mode::Pick, None, true), "티어 잠정");
+        // swap rows carry no tier
+        assert_eq!(subtitle(Mode::Swap, Some((14, 14)), true), "라인 배치");
+    }
+
+    #[test]
+    fn the_note_legend_explains_a_mixed_list_only() {
+        // a cold start is named on the rank card, where the note budget cannot cut it
+        assert_eq!(legend(TierDim::Partial), Some(DIM_LEGEND));
+        assert_eq!(legend(TierDim::All), None);
+        assert_eq!(legend(TierDim::Off), None);
+    }
+
     #[test]
     fn rows_stop_at_five() {
         let many = (0..7).map(|i| row(&format!("c{}", i), "가", "탑", "", "+1")).collect();
@@ -984,11 +1065,11 @@ mod tests {
 
     #[test]
     fn subtitle_counts_the_step_being_decided() {
-        assert_eq!(subtitle(Mode::Ban, Some((0, 16))), "1 / 16");
-        assert_eq!(subtitle(Mode::Pick, Some((15, 16))), "16 / 16");
-        assert_eq!(subtitle(Mode::Pick, Some((16, 16))), "16 / 16");
-        assert_eq!(subtitle(Mode::Swap, Some((16, 16))), "라인 배치");
-        assert_eq!(subtitle(Mode::Pick, None), "");
+        assert_eq!(subtitle(Mode::Ban, Some((0, 16)), false), "1 / 16");
+        assert_eq!(subtitle(Mode::Pick, Some((15, 16)), false), "16 / 16");
+        assert_eq!(subtitle(Mode::Pick, Some((16, 16)), false), "16 / 16");
+        assert_eq!(subtitle(Mode::Swap, Some((16, 16)), false), "라인 배치");
+        assert_eq!(subtitle(Mode::Pick, None, false), "");
     }
 
     #[test]
