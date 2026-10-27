@@ -1,7 +1,7 @@
 //! Display on the game's banpick screen. Rule (ROADMAP §1 G4): game-owned nodes
 //! are never edited — everything shown lives in nodes we spawn, and all of them
-//! except the panel itself (draggable) and its close button are `ignore_event`,
-//! so clicks reach the game.
+//! except the panel itself and its buttons are `ignore_event`, so clicks reach
+//! the game.
 //!   per tile — `tfm2dc_ring`: recommendation outline (teal pick / violet ban,
 //!              thicker for #1 — v3.0 colors); `tfm2dc_tag`: rank glyph + our
 //!              tier letter in the tile's free top-left corner (the game's ban /
@@ -9,24 +9,27 @@
 //!              No "?" on an unstable letter — next to a letter in these fonts it
 //!              reads as a broken glyph (2026-10-27 test); such letters are drawn
 //!              dimmed instead, and only while some letters are stable.
-//!   panel    — `main.tfm2dc_panel`: a draggable window built like the game's
-//!              coach-dialogue popup, down to its `#header` / `#cancel` child
-//!              names: top 5, notes, status. Tab folds it (reopens it when
-//!              closed); X hides it until the next banpick screen; the fold
-//!              choice persists across sets. Its fill is an opaque child: the
-//!              popup's own `back_color` let the text behind it show through at
-//!              about a third (2026-10-27 screenshot, alpha set 0xf2).
+//!   panel    — `main.tfm2dc_panel`: a window in the look of the game's
+//!              coach-dialogue popup: top 5, notes, status. ◀ ▶ in its header
+//!              move it, Tab folds it (reopens it when closed), X hides it until
+//!              the next banpick screen; the spot and fold choices persist
+//!              across sets. A plain `color` box: the game's `draggable_popup`
+//!              runner drags only by a handle height (+ min size, resize border)
+//!              that game code writes into each of its popups after building them
+//!              itself, which no property
+//!              or SDK call reaches, so a mod-spawned one never moves; it also
+//!              drew its fill see-through (2026-10-27 tests).
 //! Placement (0.6.5 layout, 1920×1080): no area is free, so the panel covers
-//! INFORMATION, never controls — during the draft one end of champion_info
-//! (x310–1610, y690–970: a row of eight stat cells over three skill boxes), the
-//! end AWAY from the player's own coach, whose dialogue toasts stack up from
-//! their side's bottom corner (red: x≈1388–1908, y≈700–950): blue → the right
-//! end (ult box x1183–1610 + magic resistance / range / move speed cells), red
-//! → its mirror x316–756 (first skill box + attack / spell power / attack speed
-//! cells). In the swap phase `main.swap` covers the centre with its coach /
-//! confirm buttons at y903–970, so the panel moves over the OPPONENT's table
-//! (stat columns) instead. Once the player drags it, their spot wins for the
-//! rest of the session.
+//! INFORMATION, never controls — during the draft champion_info (x310–1610,
+//! y690–970: a row of eight stat cells over three skill boxes) at its left end,
+//! centre or right end (◀ ▶), by default the end AWAY from the player's own
+//! coach, whose dialogue toasts stack up from their side's bottom corner (red:
+//! x≈1388–1908, y≈700–950): blue → the right end (ult box x1183–1610 + magic
+//! resistance / range / move speed cells), red → its mirror x316–756 (first
+//! skill box + attack / spell power / attack speed cells). In the swap phase
+//! `main.swap` covers the centre with its coach / confirm buttons at y903–970,
+//! so the panel moves over the OPPONENT's table instead, by default at its right
+//! end (stat columns).
 //! A node is written only when its desired state differs from what we applied.
 //! `.ui` grammar and property values are the ones the game's own templates use
 //! (0.6.5 bundle): `#child:kind`, a bare style line, `size`/`align_*` on labels,
@@ -37,13 +40,15 @@ use crate::diag;
 use crate::recommender::{Output, RecRow};
 use mod_api_stable::*;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 const PANEL: &str = "main.tfm2dc_panel";
 const BODY: &str = "main.tfm2dc_panel.tfm2dc_body";
-const CLOSE: &str = "main.tfm2dc_panel.cancel";
-const TITLE: &str = "main.tfm2dc_panel.header.title";
+const CLOSE: &str = "main.tfm2dc_panel.tfm2dc_close";
+const TITLE: &str = "main.tfm2dc_panel.tfm2dc_head.tfm2dc_title";
+const LEFT: &str = "main.tfm2dc_panel.tfm2dc_left";
+const RIGHT: &str = "main.tfm2dc_panel.tfm2dc_right";
 const RANK_GLYPH: [&str; 5] = ["①", "②", "③", "④", "⑤"];
 /// v3.0 REC_PICK_COLOR [0.22, 0.84, 0.70] / REC_BAN_COLOR [0.78, 0.40, 0.95]
 const PICK_COL: &str = "#38d6b3";
@@ -51,10 +56,10 @@ const BAN_COL: &str = "#c766f2";
 const PANEL_W: i32 = 440;
 const PANEL_H: i32 = 274;
 const HEAD_H: i32 = 34;
-/// panel left edge: the right end of champion_info (6px in from its x1610 edge) /
-/// the same spot mirrored at its left end (red side's draft spot)
-const PANEL_X: i32 = 1164;
-const PANEL_X_LEFT: i32 = 1920 - PANEL_X - PANEL_W;
+/// panel left edge per ◀ ▶ spot: champion_info's left end, centre, right end
+/// (6px in from its x310 / x1610 edges — over its first / middle / last skill box)
+const RIGHT_X: i32 = 1164;
+const SPOT_X: [i32; 3] = [1920 - RIGHT_X - PANEL_W, (1920 - PANEL_W) / 2, RIGHT_X];
 /// panel top edge: draft (bottom at champion_info's bottom, y970) / swap over the
 /// red table (bottom 4px above the confirm buttons) / swap over the blue table
 const TOP_DRAFT: i32 = 970 - PANEL_H;
@@ -74,7 +79,7 @@ pub(crate) struct View {
     pub status: String,
     pub tiles: Vec<String>,
     pub taken: HashSet<String>,
-    /// my side (None = unresolved) — picks the swap-phase panel spot
+    /// my side (None = unresolved) — picks the panel's default spot
     pub my_blue: Option<bool>,
     /// the game's own champion names (board::Read::names)
     pub names: Arc<HashMap<String, String>>,
@@ -108,11 +113,10 @@ struct UiState {
     panel_kind: &'static str,
     panel_visible: Option<bool>,
     applied_fold: Option<bool>,
-    /// where we last put the panel, and on which frame (layout settles after it)
     applied_pos: Option<(i32, i32)>,
-    applied_at: u64,
-    /// frames on which the panel was found moved by the player
-    drag_frames: usize,
+    /// ◀ ▶ spawned and bound; their greyed state (at the left / right end) applied
+    arrows_ok: bool,
+    applied_ends: Option<(bool, bool)>,
     title: Option<String>,
     rows: [Option<(String, String)>; 5],
     say: Option<String>,
@@ -132,8 +136,12 @@ struct UiState {
 static UI: Mutex<Option<UiState>> = Mutex::new(None);
 static USER_CLOSED: AtomicBool = AtomicBool::new(false);
 static FOLDED: AtomicBool = AtomicBool::new(false);
-/// where the player dragged the panel (session-wide, like the fold choice)
-static USER_POS: Mutex<Option<(i32, i32)>> = Mutex::new(None);
+/// the player's ◀ ▶ spot (index into SPOT_X; usize::MAX = none yet → side
+/// default), session-wide like the fold choice
+static USER_SPOT: AtomicUsize = AtomicUsize::new(usize::MAX);
+/// ◀ ▶ clicks not yet applied (−1 / +1 each)
+static SPOT_STEP: AtomicI32 = AtomicI32::new(0);
+static ARROW_CLICKS: AtomicUsize = AtomicUsize::new(0);
 static CLOSE_CLICKS: AtomicUsize = AtomicUsize::new(0);
 
 /// Left the banpick screen: our nodes died with it; a closed panel reopens next time.
@@ -185,7 +193,7 @@ fn fit_notes(notes: &[String]) -> String {
     out.join("\n")
 }
 
-fn panel_source(kind: &str, (x, top): (i32, i32)) -> String {
+fn panel_source((x, top): (i32, i32)) -> String {
     let mut rows = String::new();
     for i in 0..5 {
         rows.push_str(&format!(
@@ -219,7 +227,7 @@ fn panel_source(kind: &str, (x, top): (i32, i32)) -> String {
         ));
     }
     format!(
-        r#"tfm2dc_panel:{kind} {{
+        r#"tfm2dc_panel:color {{
   width: {w}px;
   height: {h}px;
   x: {x}px;
@@ -230,18 +238,7 @@ fn panel_source(kind: &str, (x, top): (i32, i32)) -> String {
   rounding: Uniform {{
     rounding: 8;
   }}
-  #tfm2dc_bg:color {{
-    width: 100%;
-    height: 100%;
-    ignore_event: true;
-    stroke: 1;
-    color: #4a4c56ff;
-    back_color: #161721ff;
-    rounding: Uniform {{
-      rounding: 8;
-    }}
-  }}
-  #header:color {{
+  #tfm2dc_head:color {{
     width: 100%;
     height: {head}px;
     ignore_event: true;
@@ -250,12 +247,12 @@ fn panel_source(kind: &str, (x, top): (i32, i32)) -> String {
       top_left: 8;
       top_right: 8;
     }}
-    #title:label {{
+    #tfm2dc_title:label {{
       @"asset/base/style/main#bold_label";
       x: 12px;
       anchor_y: 0.5;
       pivot_y: 0.5;
-      width: 380px;
+      width: 300px;
       height: 24px;
       size: 14;
       align_y: Center;
@@ -263,7 +260,7 @@ fn panel_source(kind: &str, (x, top): (i32, i32)) -> String {
       text: "AI 추천기";
     }}
   }}
-  #cancel:button {{
+  #tfm2dc_close:button {{
     width: 14px;
     height: 14px;
     anchor_x: 1;
@@ -298,7 +295,6 @@ fn panel_source(kind: &str, (x, top): (i32, i32)) -> String {
     }}
   }}
 }}"#,
-        kind = kind,
         w = PANEL_W,
         h = PANEL_H,
         x = x,
@@ -306,6 +302,33 @@ fn panel_source(kind: &str, (x, top): (i32, i32)) -> String {
         head = HEAD_H,
         body = PANEL_H - 46,
         rows = rows
+    )
+}
+
+/// ◀ / ▶ over the header, left of X and like X a child of the panel itself (the
+/// header ignores events) — the game's own category arrows (banpick
+/// `prev_champion_category`: tertiary_button style, 6×8 `left` / `right` icon)
+/// at 24px. Spawned apart from the panel so a refusal costs only the arrows.
+fn arrow_source(name: &str, icon: &str, x: i32) -> String {
+    format!(
+        r#"{name}:color_icon_button {{
+  @"asset/base/style/main#tertiary_button";
+  width: 24px;
+  height: 24px;
+  anchor_x: 1;
+  pivot_x: 1;
+  x: {x}px;
+  y: 5px;
+  icon: {{
+    source: "asset/base/ui/icons/{icon}";
+    rect: {{
+      x: 9;
+      y: 8;
+      w: 6;
+      h: 8;
+    }}
+  }}
+}}"#
     )
 }
 
@@ -385,24 +408,18 @@ fn typing(ctx: &StableClient) -> bool {
 fn ensure_panel(ctx: &mut StableClient, st: &mut UiState, pos: (i32, i32)) {
     if ctx.ui_exists(PANEL) {
         if !st.panel_ok {
-            // kept alive from an earlier visit (its close handler is still bound);
+            // kept alive from an earlier visit (its handlers are still bound);
             // the fresh caches below re-apply every property
             st.panel_ok = true;
             st.panel_kind = "kept";
+            st.arrows_ok = ctx.ui_exists(LEFT) && ctx.ui_exists(RIGHT);
         }
         return;
     }
-    // a draggable window like the game's coach-dialogue popup; a plain box only
-    // if the host refuses that runner kind for mod source
-    let mut kind = "draggable_popup";
-    let mut ok = ctx.ui_spawn_source("main", &panel_source(kind, pos));
-    if !ok {
-        kind = "color";
-        ok = ctx.ui_spawn_source("main", &panel_source(kind, pos));
-    }
+    let ok = ctx.ui_spawn_source("main", &panel_source(pos));
     st.spawns += 1;
     st.panel_ok = ok;
-    st.panel_kind = kind;
+    st.panel_kind = "color";
     if !ok {
         st.spawn_fails += 1;
         return;
@@ -410,7 +427,7 @@ fn ensure_panel(ctx: &mut StableClient, st: &mut UiState, pos: (i32, i32)) {
     st.panel_visible = None;
     st.applied_fold = None;
     st.applied_pos = Some(pos);
-    st.applied_at = st.frame;
+    st.applied_ends = None;
     st.title = None;
     st.rows = Default::default();
     st.say = None;
@@ -421,15 +438,18 @@ fn ensure_panel(ctx: &mut StableClient, st: &mut UiState, pos: (i32, i32)) {
         let _ = c.ui_set_visible(PANEL, false);
     });
     st.click = format!("close registered={}", ok);
-}
-
-/// Our spot for the current phase and side (module doc: Placement).
-fn auto_pos(ctx: &StableClient, view: &View) -> (i32, i32) {
-    let red = view.my_blue == Some(false);
-    if ctx.ui_visible("main.swap") == Some(true) {
-        (PANEL_X, if red { TOP_SWAP_HIGH } else { TOP_SWAP_LOW })
-    } else {
-        (if red { PANEL_X_LEFT } else { PANEL_X }, TOP_DRAFT)
+    st.arrows_ok = true;
+    for (path, name, icon, x, step) in [(LEFT, "tfm2dc_left", "left", -70, -1), (RIGHT, "tfm2dc_right", "right", -40, 1)] {
+        st.spawns += 1;
+        let ok = ctx.ui_spawn_source(PANEL, &arrow_source(name, icon, x))
+            && ctx.ui_register_click(path, "", move |_: &mut StableClient<'_>| {
+                ARROW_CLICKS.fetch_add(1, Ordering::Relaxed);
+                SPOT_STEP.fetch_add(step, Ordering::Relaxed);
+            });
+        if !ok {
+            st.spawn_fails += 1;
+            st.arrows_ok = false;
+        }
     }
 }
 
@@ -486,9 +506,32 @@ fn set_vis(ctx: &mut StableClient, st: &mut UiState, path: &str, v: bool) {
     }
 }
 
+/// The ◀ ▶ spot: the player's (after applying pending clicks), else the side
+/// default — module doc: Placement.
+fn spot(swap: bool, red: bool) -> usize {
+    let last = SPOT_X.len() - 1;
+    let mut s = USER_SPOT.load(Ordering::Relaxed);
+    if s > last {
+        s = if !swap && red { 0 } else { last };
+    }
+    let step = SPOT_STEP.swap(0, Ordering::Relaxed);
+    if step != 0 {
+        s = (s as i32 + step).clamp(0, last as i32) as usize;
+        USER_SPOT.store(s, Ordering::Relaxed);
+    }
+    s
+}
+
 fn stamp_panel(ctx: &mut StableClient, st: &mut UiState, view: &View, dim: bool) {
-    let user = USER_POS.lock().ok().and_then(|g| *g);
-    let pos = user.unwrap_or_else(|| auto_pos(ctx, view));
+    let swap = ctx.ui_visible("main.swap") == Some(true);
+    let red = view.my_blue == Some(false);
+    let s = spot(swap, red);
+    let top = match (swap, red) {
+        (false, _) => TOP_DRAFT,
+        (true, true) => TOP_SWAP_HIGH,
+        (true, false) => TOP_SWAP_LOW,
+    };
+    let pos = (SPOT_X[s], top);
     ensure_panel(ctx, st, pos);
     if !st.panel_ok {
         return;
@@ -497,7 +540,6 @@ fn stamp_panel(ctx: &mut StableClient, st: &mut UiState, view: &View, dim: bool)
     if st.panel_visible != Some(visible) {
         set_vis(ctx, st, PANEL, visible);
         st.panel_visible = Some(visible);
-        st.applied_at = st.frame;
     }
     if !visible {
         return;
@@ -505,21 +547,13 @@ fn stamp_panel(ctx: &mut StableClient, st: &mut UiState, view: &View, dim: bool)
     if st.applied_pos != Some(pos) {
         set_props(ctx, st, PANEL, &format!("x: {}px; y: {}px;", pos.0, pos.1));
         st.applied_pos = Some(pos);
-        st.applied_at = st.frame;
-    } else if st.frame > st.applied_at + 2 {
-        // moved without us → the player dragged it: their spot wins from now on
-        // (next banpick screens included) instead of snapping back on a phase
-        // change; a spot off the screen is pulled back in on the next frame
-        if let Some((x, y, w, _)) = ctx.ui_node_rect(PANEL) {
-            let (x, y) = (x.round() as i32, y.round() as i32);
-            if w > 0.0 && ((x - pos.0).abs() > 2 || (y - pos.1).abs() > 2) {
-                if let Ok(mut g) = USER_POS.lock() {
-                    *g = Some((x.clamp(0, 1920 - PANEL_W), y.clamp(0, 1080 - HEAD_H)));
-                }
-                st.applied_pos = Some((x, y));
-                st.drag_frames += 1;
-            }
-        }
+    }
+    // the arrow that would step past an end is greyed out
+    let ends = (s == 0, s == SPOT_X.len() - 1);
+    if st.arrows_ok && st.applied_ends != Some(ends) {
+        set_props(ctx, st, LEFT, &format!("disable: {};", ends.0));
+        set_props(ctx, st, RIGHT, &format!("disable: {};", ends.1));
+        st.applied_ends = Some(ends);
     }
     let folded = FOLDED.load(Ordering::Relaxed);
     if st.applied_fold != Some(folded) {
@@ -726,15 +760,19 @@ pub(crate) fn stamp(ctx: &mut StableClient, view: &View) {
         diag::set(
             "6 ui",
             format!(
-                "panel ok={} kind={} runner={:?} rect={:?} visible={:?} pos={:?} user_pos={:?} drag_frames={} folded={} closed_by_user={} close_clicks={} dim={}\n{}\ntiles on_screen={} with_nodes={} ranked={} tagged={} spawn_retry={}\nspawns={} spawn_fails={} set_fails={} icon_fails={}\ntab_presses={} keys_seen={:?}\ntag_runner={:?} search_state={:?} swap_visible={:?}",
+                "panel ok={} kind={} runner={:?} rect={:?} visible={:?} pos={:?} user_spot={} arrows_ok={} arrow_clicks={} folded={} closed_by_user={} close_clicks={} dim={}\n{}\ntiles on_screen={} with_nodes={} ranked={} tagged={} spawn_retry={}\nspawns={} spawn_fails={} set_fails={} icon_fails={}\ntab_presses={} keys_seen={:?}\ntag_runner={:?} search_state={:?} swap_visible={:?}",
                 st.panel_ok,
                 st.panel_kind,
                 ctx.ui_runner_name(PANEL),
                 ctx.ui_node_rect(PANEL),
                 st.panel_visible,
                 st.applied_pos,
-                USER_POS.lock().ok().and_then(|g| *g),
-                st.drag_frames,
+                match USER_SPOT.load(Ordering::Relaxed) {
+                    s if s < SPOT_X.len() => s.to_string(),
+                    _ => "-".to_string(),
+                },
+                st.arrows_ok,
+                ARROW_CLICKS.load(Ordering::Relaxed),
                 FOLDED.load(Ordering::Relaxed),
                 USER_CLOSED.load(Ordering::Relaxed),
                 CLOSE_CLICKS.load(Ordering::Relaxed),
