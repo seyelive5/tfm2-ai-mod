@@ -1,12 +1,18 @@
 # TFM2 Draft Coach
 
+> ⚠️ **프리뷰 알파 — 아직 완성된 모드가 아닙니다.** 이 깃허브 저장소 말고는 어디에도(스팀 창작마당 포함) 올리지 않았습니다.
+> 영어 버전은 준비할 예정이지만 시간이 더 필요합니다.
+>
+> *Preview alpha — not a finished mod. It is not released anywhere except this GitHub repository (no Steam Workshop
+> release). An English version is planned but needs more time.*
+
 *Teamfight Manager 2*용 **밴픽(드래프트) 추천 모드** — 게임의 밴픽 화면 안에서 실시간으로 픽/밴을 추천합니다.
 
 > English: an in-game ban/pick recommender mod for *Teamfight Manager 2*. It reads the live draft and
 > draws tier tags, pick/ban highlights and two game-style recommendation cards onto the game's own
 > ban/pick screen — no external window, no launcher.
 
-> **상태 (2026-10-28): v4.2.1 — 게임 카드 UI, 인게임 표시 확인** (`stable-port` 브랜치, 게임 0.6.5).
+> **상태 (2026-10-28): v4.2.1 — 게임 카드 UI, 인게임 표시 확인** (게임 0.6.5).
 > 게임 0.6부터 게임사가 classic 모드 SDK 지원을 끝내서, 게임 0.6.5+의 **stable 모드 API**로 다시 작성했습니다.
 > 카드 표시는 게임에서 확인했고, 해설 글자 색과 Tab 동작은 확인 중입니다.
 > 계획·점검 결과: [`ROADMAP.md`](ROADMAP.md), 다음 단계: [고도화 검토](docs/research/2026-10-28-advanced-directions.md).
