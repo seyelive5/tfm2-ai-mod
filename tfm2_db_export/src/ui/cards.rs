@@ -290,6 +290,12 @@ pub fn fit_notes(notes: &[String], lines: usize, per_line: usize) -> String {
 pub const RANK: &str = "tfm2dc_rank";
 pub const NOTE: &str = "tfm2dc_note";
 pub const HINT: &str = "tfm2dc_hint";
+/// the note card's toggle for the opponent's next move (foresee)
+pub const OPP: &str = "tfm2dc_opp";
+/// the chip, note-card-local (x, y, w, h): under the title, where the note card
+/// has no subtitle
+const CHIP: (i32, i32, i32, i32) = (60, 35, 96, 20);
+const CHIP_TEXT: &str = "상대 수 · F2";
 /// every node a card may hang from (layout::place)
 const PARENTS: [&str; 2] = ["main.champion_info", "main"];
 /// The game's overlays drawn after champion_info: the draft cards sit under
@@ -699,13 +705,90 @@ fn hint_source((x, y): (i32, i32)) -> String {
     )
 }
 
+/// The game's own flat text button (`color_icon_button` + `#text:label`, as its
+/// statistics tabs use), in the pill's colours. Spawned apart from the note
+/// card: a runner our cards never used must not cost the card if the host
+/// turns it down.
+fn chip_source((x, y): (i32, i32)) -> String {
+    format!(
+        r#"{name}:color_icon_button {{
+  x: {x}px;
+  y: {y}px;
+  width: {w}px;
+  height: {h}px;
+  click_sound: "asset/base/sound/sfx/UI_mouse_click";
+  btn: {{
+    rounding: Uniform {{
+      rounding: 10;
+    }}
+    color: #00000000;
+    back_color: #1d1f2cff;
+    stroke: 1;
+  }}
+  hover: {{
+    btn: {{
+      color: #4a4c56ff;
+      back_color: #1d1f2cff;
+    }}
+  }}
+  active: {{
+    btn: {{
+      color: #4a4c56ff;
+      back_color: #1d1f2cff;
+    }}
+  }}
+  #t:label {{
+    {label}
+    width: 100%;
+    height: 100%;
+    size: 12;
+    align_x: Center;
+    align_y: Center;
+    color: #{dim}ff;
+    ignore_event: true;
+    text: "{text}";
+  }}
+}}"#,
+        name = OPP,
+        x = x,
+        y = y,
+        w = CHIP.2,
+        h = CHIP.3,
+        label = LABEL,
+        dim = markup::DIM,
+        text = CHIP_TEXT
+    )
+}
+
+/// The chip under `place.parent` (spawned when missing, retried every 120
+/// frames), its click handler registered with each spawn — F2 does the same.
+fn ensure_chip(ctx: &mut StableClient, st: &mut UiState, place: &Place) -> bool {
+    let path = format!("{}.{}", place.parent, OPP);
+    if ctx.ui_exists(&path) {
+        return true;
+    }
+    if st.chip_fail_at.map_or(false, |at| st.frame < at + 120) {
+        return false;
+    }
+    st.ap.forget(&path);
+    st.chip_spawns += 1;
+    if !ctx.ui_spawn_source(place.parent, &chip_source((place.note.0 + CHIP.0, place.note.1 + CHIP.1))) {
+        st.chip_fails += 1;
+        st.chip_fail_at = Some(st.frame);
+        return false;
+    }
+    st.chip_fail_at = None;
+    st.chip_click = Some(ctx.ui_register_click(&path, "", |_| crate::foresee::clicked()));
+    true
+}
+
 /// All three nodes exist under `place.parent` (spawned when missing; ours under
 /// any other parent removed — the draft/swap switch, or a screen the game kept
 /// alive from an earlier visit).
 fn ensure(ctx: &mut StableClient, st: &mut UiState, place: &Place) -> bool {
     if st.parent != Some(place.parent) {
         for p in PARENTS.iter().filter(|p| **p != place.parent) {
-            for n in [RANK, NOTE, HINT] {
+            for n in [RANK, NOTE, HINT, OPP] {
                 let path = format!("{}.{}", p, n);
                 if ctx.ui_exists(&path) {
                     ctx.ui_remove_node(&path);
@@ -763,6 +846,7 @@ pub(super) fn stamp(ctx: &mut StableClient, st: &mut UiState, view: &View, place
     if !ensure(ctx, st, place) {
         return;
     }
+    let chip = ensure_chip(ctx, st, place).then(|| format!("{}.{}", place.parent, OPP));
     let o = view.out.as_deref();
     let m = mode(o);
     st.mode = m;
@@ -775,12 +859,22 @@ pub(super) fn stamp(ctx: &mut StableClient, st: &mut UiState, view: &View, place
     st.ap.vis(ctx, &rank, shown);
     st.ap.vis(ctx, &note, shown && o.is_some());
     st.ap.vis(ctx, &hint, st.hidden && st.yield_to.is_none());
+    if let Some(chip) = &chip {
+        let (x, y) = (place.note.0 + CHIP.0, place.note.1 + CHIP.1);
+        st.ap.props(ctx, chip, &format!("x: {}px; y: {}px;", x, y));
+        // the swap plan has no next move to foresee
+        st.ap.vis(ctx, chip, shown && o.is_some() && m != Mode::Swap);
+    }
     if !shown {
         return;
     }
     fill_rank(ctx, &mut st.ap, &rank, view, m, dim);
     if let Some(o) = o {
         fill_note(ctx, &mut st.ap, &note, view, o, m, dim);
+    }
+    if let Some(chip) = &chip {
+        let ink = if crate::foresee::on() { markup::NAME } else { markup::DIM };
+        st.ap.props(ctx, &format!("{}.t", chip), &format!("color: #{}ff;", ink));
     }
 }
 
@@ -873,6 +967,10 @@ fn fill_note(ctx: &mut StableClient, ap: &mut Applied, card: &str, view: &View, 
     ap.props(ctx, &format!("{}.pill", card), &format!("width: {}px;", 16 + 6 * markup::width(&p) as i32));
     ap.text(ctx, &format!("{}.pill.t", card), &p);
     let mut notes: Vec<String> = Vec::new();
+    if let Some(l) = view.opp.as_ref().filter(|_| crate::foresee::on()) {
+        // the opponent's next move leads, while the player has it on
+        notes.push(l.clone());
+    }
     if !view.status.is_empty() {
         notes.push(view.status.clone());
     }
@@ -1112,8 +1210,18 @@ mod tests {
     }
 
     #[test]
+    fn the_chip_fits_its_label_and_clears_the_pill_and_the_rule() {
+        let (x, y, w, h) = CHIP;
+        assert!(16 + 6 * markup::width(CHIP_TEXT) as i32 <= w, "the pill's own text budget");
+        // the widest pill: a cold-start sample count
+        let pill_w = 16 + 6 * markup::width(&pill(49_999)) as i32;
+        assert!(x + w < INNER_RIGHT - pill_w, "left of the pill");
+        assert!(y >= 33 && y + h < 59, "under the title, above the rule");
+    }
+
+    #[test]
     fn sources_balance_their_braces() {
-        for src in [rank_source((0, 0)), note_source((0, 0)), hint_source((0, 0))] {
+        for src in [rank_source((0, 0)), note_source((0, 0)), hint_source((0, 0)), chip_source((0, 0))] {
             assert_eq!(src.matches('{').count(), src.matches('}').count());
             assert!(!src.contains("{{") && !src.contains("}}"), "an unformatted brace pair");
         }
@@ -1133,6 +1241,8 @@ mod tests {
         for node in ["#chat:image", "#pill:color", "#body:label"] {
             assert!(note.contains(node), "{}", node);
         }
+        let chip = chip_source((0, 0));
+        assert!(chip.starts_with(&format!("{}:color_icon_button", OPP)) && chip.contains("#t:label"));
     }
 
     #[test]

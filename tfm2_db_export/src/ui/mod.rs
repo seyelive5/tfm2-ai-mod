@@ -1,6 +1,6 @@
 //! Display on the game's banpick screen. Rule (ROADMAP §1 G4): game-owned nodes
 //! are never edited — everything shown lives in nodes we spawn, and all of them
-//! but the two card bodies are `ignore_event`.
+//! but the two card bodies and the note card's chip are `ignore_event`.
 //!   cards  — two cards drawn like champion_info's skill boxes (cards.rs): the
 //!            rank card (top 5, or the lane plan once my five are in) and the
 //!            commentary. Draft: over champion_info — rank on the middle skill
@@ -14,6 +14,9 @@
 //!            of its own popups after building them, and no property or SDK
 //!            call reaches; 2026-10-27 tests). Tab hides
 //!            both for the rest of this banpick screen, leaving a small hint.
+//!            The one button: the note card's "상대 수" chip (the game's flat
+//!            `color_icon_button`) — like F2, it turns the opponent's likely
+//!            next move on/off as the note's first line (foresee.rs).
 //!   tiles  — per tile: rank badge + tier chip in the free top-left corner and
 //!            an outline ring in the turn color (tiles.rs).
 //! Draw order: the draft cards hang from champion_info, so the game's later
@@ -53,6 +56,8 @@ pub(crate) struct View {
     pub names: Arc<HashMap<String, String>>,
     /// (bans + picks made, the draft's total) for the rank card's step counter
     pub step: Option<(usize, usize)>,
+    /// the opponent's likely next move (foresee::line), shown while toggled on
+    pub opp: Option<String>,
 }
 
 /// Node writes. `put_*` write; `text` / `props` / `vis` / `face` write only what
@@ -185,6 +190,15 @@ struct UiState {
     spawn_fails: usize,
     tabs: usize,
     keys: Vec<String>,
+    /// the note card's chip: frame of a failed spawn (retried every 120 frames),
+    /// spawn counts, and whether the host took its click handler
+    chip_fail_at: Option<u64>,
+    chip_spawns: usize,
+    chip_fails: usize,
+    chip_click: Option<bool>,
+    /// frame of the last opponent-line toggle, and F2 presses seen
+    opp_at: Option<u64>,
+    f2s: usize,
 }
 
 static UI: Mutex<Option<UiState>> = Mutex::new(None);
@@ -247,6 +261,13 @@ pub(crate) fn stamp(ctx: &mut StableClient, view: &View) {
         st.tabs += 1;
         st.hidden = !st.hidden;
     }
+    let f2 = events.iter().any(|e| e.kind == Some(InputEventKindV1::KeyPressed) && e.key == "F2");
+    st.f2s += f2 as usize;
+    // a click may reach the handler on press and on release: one toggle per gesture
+    if (crate::foresee::take_click() || f2) && st.opp_at.map_or(true, |at| st.frame >= at + 10) {
+        crate::foresee::toggle();
+        st.opp_at = Some(st.frame);
+    }
 
     // unsure tier letters are drawn dimmed; at a cold start that is every letter,
     // and the rank card says the list is provisional (cards::TierDim)
@@ -264,7 +285,7 @@ pub(crate) fn stamp(ctx: &mut StableClient, view: &View) {
         diag::set(
             "6 ui",
             format!(
-                "cards parent={:?} mode={:?} hidden_by_tab={} yield_to={:?} tier_dim={:?} markup_on={}\nrank at={:?} rect={:?} vis={:?} | note at={:?} rect={:?} vis={:?}\ninfo_visible={:?} swap_visible={:?} my_blue={:?} step={:?}\ntiles on_screen={} with_nodes={} ranked={} tagged={} spawn_retry={}\nspawns={} spawn_fails={} set_fails={} icon_fails={} readback_bad={}\ntab_presses={} keys_seen={:?} search_state={:?}",
+                "cards parent={:?} mode={:?} hidden_by_tab={} yield_to={:?} tier_dim={:?} markup_on={}\nrank at={:?} rect={:?} vis={:?} | note at={:?} rect={:?} vis={:?}\ninfo_visible={:?} swap_visible={:?} my_blue={:?} step={:?}\ntiles on_screen={} with_nodes={} ranked={} tagged={} spawn_retry={}\nspawns={} spawn_fails={} set_fails={} icon_fails={} readback_bad={}\ntab_presses={} keys_seen={:?} search_state={:?}\nopp chip spawns={} fails={} click_registered={:?} vis={:?} f2_presses={}",
                 st.parent,
                 st.mode,
                 st.hidden,
@@ -294,6 +315,11 @@ pub(crate) fn stamp(ctx: &mut StableClient, view: &View) {
                 st.tabs,
                 st.keys,
                 ctx.ui_state_json("main.champion_search"),
+                st.chip_spawns,
+                st.chip_fails,
+                st.chip_click,
+                ctx.ui_visible(&format!("{}.{}", place.parent, cards::OPP)),
+                st.f2s,
             ),
         );
     }

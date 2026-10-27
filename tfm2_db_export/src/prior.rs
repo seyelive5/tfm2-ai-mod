@@ -5,11 +5,13 @@
 //! Keyed by champion NAME via the draft context's own brief table (stable draft
 //! ids index `champion_briefs`) — the classic build relied on an id-order guess.
 //! The hook may run off the main thread: everything here is behind mutexes /
-//! atomics, and the main thread only snapshots.
+//! atomics, and the main thread only snapshots. Every call also feeds foresee
+//! (the opponent's likely next move), which is otherwise free of the SDK.
 
 use crate::diag;
 use mod_api_stable::*;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -109,6 +111,7 @@ pub(crate) fn on_patch_anchor(anchor: Option<&str>) {
             if let Ok(mut p) = PRIOR.lock() {
                 *p = None;
             }
+            crate::foresee::reset();
             RESETS.fetch_add(1, Ordering::Relaxed);
         }
         *last = anchor.map(|s| s.to_string());
@@ -127,9 +130,34 @@ pub(crate) fn snapshot() -> (HashMap<String, f32>, usize) {
     (m, n)
 }
 
+/// foresee's input: the call keyed by its decision (phase + both teams + the
+/// board it scores) and its draft (the team pair). Calls without team ids
+/// (≈1% in E1) cannot be told apart by draft and are left out.
+fn feed_foresee(phase: char, ctx: &StableDraftContext, cand: usize, score: f32) {
+    let (Some(ally), Some(enemy)) = (ctx.ally_team(), ctx.enemy_team()) else { return };
+    let Some(name) = ctx.champion_name(cand) else { return };
+    let lists = [ctx.ally_picks(), ctx.enemy_picks(), ctx.ally_bans(), ctx.enemy_bans()];
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (phase, ally, enemy, lists).hash(&mut h);
+    let my = Some(MY_TEAM.load(Ordering::Relaxed)).filter(|&t| t != usize::MAX);
+    let call = crate::foresee::Call {
+        phase,
+        key: h.finish(),
+        pair: (ally.min(enemy), ally.max(enemy)),
+        size: lists.iter().map(|l| l.len()).sum(),
+        vs_me: side_of(my, Some(ally), Some(enemy)) == Some(Side::Enemy),
+        cand: name,
+        score,
+    };
+    crate::foresee::observe(&call, || {
+        lists.iter().flat_map(|l| l.iter()).map(|&i| ctx.champion_name(i).unwrap_or("?").to_string()).collect()
+    });
+}
+
 fn observe(phase: char, ctx: &StableDraftContext, cand: usize, score: f32) {
     CALLS.fetch_add(1, Ordering::Relaxed);
     count_mine(phase, ctx, cand, score);
+    feed_foresee(phase, ctx, cand, score);
     let empty = ctx.ally_picks().is_empty()
         && ctx.enemy_picks().is_empty()
         && ctx.ally_bans().is_empty()

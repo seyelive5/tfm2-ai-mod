@@ -1,4 +1,4 @@
-//! tfm2_db_export v4.2 — the in-game draft recommender on the stable mod API
+//! tfm2_db_export v4.3 — the in-game draft recommender on the stable mod API
 //! (game 0.6.5+, `mod-api-stable`). This file is wiring only; the plan, the v4.0
 //! defect table and the in-game verification steps live in ROADMAP.md.
 //!   db           save records → engine tables (incremental, time-budgeted)
@@ -6,6 +6,8 @@
 //!   recommender  Board × Tables → `Output` (+ the shared engine; the score model
 //!                is unchanged vs 70cb62c — ROADMAP G2)
 //!   prior        the game's draft AI → cold-start prior
+//!   foresee      the game's draft AI → the opponent's likely next move (E1b),
+//!                shown on request (F2); the score model never sees it
 //!   ui           Output → our own nodes on the banpick screen
 //!   diag         diag.txt / board_log.txt (always on, small)
 //!   json         record JSON reader
@@ -16,6 +18,7 @@
 mod board;
 mod db;
 mod diag;
+mod foresee;
 mod json;
 mod markup;
 mod prior;
@@ -29,7 +32,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub(crate) const MOD_TAG: &str = "tfm2_db_export v4.2.1";
+pub(crate) const MOD_TAG: &str = "tfm2_db_export v4.3.0";
 
 /// Numeric per-component version key ("2026.10.0" sorts above "2026.2.0").
 pub(crate) fn vkey(v: &str) -> Vec<u32> {
@@ -121,6 +124,7 @@ fn frame(ctx: &StableClient) {
             db::reset();
             board::reset();
             prior::reset();
+            foresee::reset();
             probe::reset();
             ui::reset();
             if let Ok(mut i) = INPUTS.lock() {
@@ -150,6 +154,7 @@ fn frame(ctx: &StableClient) {
     };
     db::tick(ctx, screen);
     prior::tick();
+    foresee::tick();
     diag::set(
         "2 scene",
         format!(
@@ -163,6 +168,7 @@ fn frame(ctx: &StableClient) {
     if !bp {
         if IN_BANPICK.swap(false, Ordering::Relaxed) {
             board::leave();
+            foresee::leave();
             ui::reset();
             if let Ok(mut v) = VIEW.lock() {
                 *v = None;
@@ -197,6 +203,7 @@ fn frame(ctx: &StableClient) {
     let step = read.board.as_ref().map(|b| {
         (b.my_ban.len() + b.enemy_ban.len() + b.my_pick.len() + b.enemy_pick.len(), b.ban_count * 2 + 10)
     });
+    let opp = foresee::frame(read.board.as_ref(), &read.grid_pool, &read.names);
     if let Ok(mut v) = VIEW.lock() {
         *v = Some(ui::View {
             out,
@@ -206,6 +213,7 @@ fn frame(ctx: &StableClient) {
             my_blue: read.my_blue,
             names: read.names,
             step,
+            opp,
         });
     }
 }
@@ -255,6 +263,7 @@ fn init(host: &StableHost) -> StableMod {
         ),
     );
     diag::log_line(&format!("init {} game {}.{}.{}", MOD_TAG, v.major, v.minor, v.patch));
+    foresee::load_setting();
     let mut m = StableMod::new("tfm2_db_export");
     m.set_extension(Coach);
     m.add_draft_score_hook(prior::Hook);
