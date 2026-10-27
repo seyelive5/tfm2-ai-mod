@@ -1,4 +1,4 @@
-//! tfm2_db_export v4.1 — the in-game draft recommender on the stable mod API
+//! tfm2_db_export v4.2 — the in-game draft recommender on the stable mod API
 //! (game 0.6.5+, `mod-api-stable`). This file is wiring only; the plan, the v4.0
 //! defect table and the in-game verification steps live in ROADMAP.md.
 //!   db           save records → engine tables (incremental, time-budgeted)
@@ -17,6 +17,7 @@ mod board;
 mod db;
 mod diag;
 mod json;
+mod markup;
 mod prior;
 mod recommender;
 mod ui;
@@ -27,7 +28,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub(crate) const MOD_TAG: &str = "tfm2_db_export v4.1.0";
+pub(crate) const MOD_TAG: &str = "tfm2_db_export v4.2.0";
 
 /// Numeric per-component version key ("2026.10.0" sorts above "2026.2.0").
 pub(crate) fn vkey(v: &str) -> Vec<u32> {
@@ -180,15 +181,18 @@ fn frame(ctx: &StableClient) {
                 "rec_ban={} recs=[{}]\nswap=[{}]\nnotes={} status={:?}\n{}\nsay:\n{}",
                 o.rec_ban,
                 o.recs.iter().map(|(id, _, sc)| format!("{}{}", id, sc)).collect::<Vec<_>>().join(" "),
-                o.swap.join(" / "),
+                o.swap.iter().map(|r| format!("{} {}", r.lane, r.id)).collect::<Vec<_>>().join(" / "),
                 o.notes.len(),
                 status,
                 inputs_dbg,
-                o.say
+                markup::plain(&o.say)
             ),
             None => format!("no output — status={:?}", status),
         },
     );
+    let step = read.board.as_ref().map(|b| {
+        (b.my_ban.len() + b.enemy_ban.len() + b.my_pick.len() + b.enemy_pick.len(), b.ban_count * 2 + 10)
+    });
     if let Ok(mut v) = VIEW.lock() {
         *v = Some(ui::View {
             out,
@@ -197,6 +201,7 @@ fn frame(ctx: &StableClient) {
             taken: read.taken,
             my_blue: read.my_blue,
             names: read.names,
+            step,
         });
     }
 }

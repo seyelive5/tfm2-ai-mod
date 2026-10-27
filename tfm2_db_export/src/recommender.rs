@@ -46,6 +46,7 @@ fn beta_post(w: f64, m: f64, prior_mean: f64, kappa: f64) -> (f64, f64) {
 
 // version sort key: single definition in lib.rs — the changes ANCHOR (writer)
 // and the stale-row CUTOFF (reader, below) must agree on version ordering.
+use crate::markup;
 use crate::vkey;
 
 fn lane_idx(p: &str) -> Option<u8> {
@@ -481,6 +482,14 @@ pub struct TierMark {
     pub chg: &'static str,
 }
 
+/// One lane of the swap-phase assignment.
+#[derive(Clone, Debug)]
+pub struct SwapRow {
+    pub lane: &'static str,
+    pub id: String,
+    pub ko: String,
+}
+
 /// Everything the in-game display needs this frame.
 #[derive(Default, Clone)]
 pub struct Output {
@@ -489,19 +498,31 @@ pub struct Output {
     pub recs: Vec<(String, String, String)>,
     /// structured top-5 rows for the UI card
     pub detail_rows: Vec<RecRow>,
-    /// "라인 이름" pairs once my 5 picks are in
-    pub swap: Vec<String>,
+    /// lane assignment once my 5 picks are in, in lane order
+    pub swap: Vec<SwapRow>,
     /// commentary lines ('\n'-joined)
     pub say: String,
-    /// the commentary minus the lines that restate the ranked rows (the ① headline
-    /// and the runner-up list) — for displays that already show `detail_rows`.
+    /// the commentary minus the runner-up list — for displays that already show
+    /// `detail_rows` (the headline stays: it carries the why, tier and warnings)
     pub notes: Vec<String>,
     /// champ id -> grid tag (champions with neither a letter nor a mark absent)
     pub tiers: HashMap<String, TierMark>,
+    /// effective sample size behind the stats (Tables::matches)
+    pub matches: usize,
 }
 
 static SERIES: Mutex<Option<Series>> = Mutex::new(None);
 static OUTPUT: Mutex<Option<(String, Arc<Output>)>> = Mutex::new(None); // (board key, out)
+
+/// "+12" in the score color.
+fn score_text(score: f32) -> String {
+    markup::num(&format!("{:+.0}", score * 100.0))
+}
+
+/// "검사 +12" with the name and the score in their colors.
+fn name_score(ko: &str, score: f32) -> String {
+    format!("{} {}", markup::name(ko), score_text(score))
+}
 
 /// Per-frame: feed the live board; recompute recommendations only on change.
 /// `tables_gen` = a counter bumped on every tables rebuild, so a mid-banpick
@@ -694,23 +715,28 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         .collect();
 
     // ── swap lane assignment (my 5 picks in)
-    let swap: Vec<String> = match lane_view.as_ref().filter(|lv| lv.has_pos && board.my_pick.len() >= 5) {
+    let swap: Vec<SwapRow> = match lane_view.as_ref().filter(|lv| lv.has_pos && board.my_pick.len() >= 5) {
         Some(lv) => lv
             .lanes
             .iter()
-            .filter_map(|l| l.filled.as_ref().map(|ko| format!("{} {}", l.name, ko)))
+            .filter_map(|l| {
+                // the lane board carries the name only; ko_name is exact on my picks
+                let ko = l.filled.as_ref()?;
+                let id = board.my_pick.iter().find(|p| engine::ko_name(p) == *ko)?;
+                Some(SwapRow { lane: l.name, id: id.clone(), ko: ko.clone() })
+            })
             .collect(),
         None => Vec::new(),
     };
 
-    // ── commentary
+    // ── commentary, in the game's label markup (names / scores / warnings)
     let mut parts: Vec<String> = Vec::new();
-    // indices of `parts` that restate detail_rows (excluded from `notes`)
-    let mut restates: Vec<usize> = Vec::new();
+    // the runner-up list restates detail_rows → kept out of `notes`
+    let mut runner_up: Option<usize> = None;
     if let Some(op) = &op_gap {
         parts.push(format!(
             "점수 격차가 큽니다 — 지금은 {} 확보가 우선입니다(라인 조합은 다음 픽에서).",
-            op
+            markup::name(op)
         ));
     }
     if !swap.is_empty() {
@@ -725,11 +751,11 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                 .find_map(|l| l.cands.iter().find(|c| c.id == *id).map(|c| (l, c)))
         });
         if let Some((lane, c)) = top {
-            let mut t = format!("1순위는 {} {}", lane.name, c.ko);
+            let mut t = format!("1순위는 {} {}", lane.name, markup::name(&c.ko));
             if !c.letter.is_empty() {
                 t.push_str(&format!("({}티어)", c.letter));
             }
-            t.push_str(&format!(", 평점 {:+.0}", c.score * 100.0));
+            t.push_str(&format!(", 평점 {}", score_text(c.score)));
             if !c.label.is_empty() {
                 t.push_str(&format!(" — 근거: {}", c.label));
             }
@@ -737,23 +763,21 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                 t.push_str(&format!(" (이번 패치 변경 {})", c.chg));
             }
             if c.chg == "▼" && c.label == "숙련" {
-                t.push_str(" — 너프됐지만 선수 숙련 보정으로 상위입니다. 대체 픽도 검토하세요");
+                t.push_str(&format!(" — {}", markup::warn("너프됐지만 선수 숙련 보정으로 상위입니다. 대체 픽도 검토하세요")));
             }
             if c.low_conf {
-                t.push_str(". 다만 표본이 적어 확신은 낮습니다");
+                t.push_str(&format!(". {}", markup::warn("다만 표본이 적어 확신은 낮습니다")));
             }
             t.push('.');
-            restates.push(parts.len());
             parts.push(t);
             if lane.cands.len() > 1 {
-                restates.push(parts.len());
                 parts.push(format!(
                     "같은 라인 대안: {}.",
                     lane.cands
                         .iter()
                         .filter(|x| x.id != c.id)
                         .take(2)
-                        .map(|c| format!("{} {:+.0}", c.ko, c.score * 100.0))
+                        .map(|c| name_score(&c.ko, c.score))
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
@@ -765,7 +789,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                 // (2026-07-05 review F10).
                 parts.push(format!(
                     "1순위 픽은 상대 {}에게 라인전 지표상 우위가 있습니다.",
-                    cof
+                    markup::name(cof)
                 ));
             }
             // ★ lane-order guidance, as a SEPARATE suggestion when it differs
@@ -774,10 +798,9 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                 if star.name != lane.name {
                     if let Some(sc) = star.cands.first() {
                         parts.push(format!(
-                            "라인 순서 제안: {} 라인을 먼저 확보하는 것도 좋습니다 — 해당 라인 1순위 {} {:+.0}.",
+                            "라인 순서 제안: {} 라인을 먼저 확보하는 것도 좋습니다 — 해당 라인 1순위 {}.",
                             star.name,
-                            sc.ko,
-                            sc.score * 100.0
+                            name_score(&sc.ko, sc.score)
                         ));
                     }
                 }
@@ -788,11 +811,11 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         }
     } else if let Some(r) = view.rows.first() {
         // flat-list branch serves BOTH phases (ban, and pick without POS data)
-        let mut t = format!("{} 1순위는 {}", if rec_ban { "밴" } else { "픽" }, r.ko);
+        let mut t = format!("{} 1순위는 {}", if rec_ban { "밴" } else { "픽" }, markup::name(&r.ko));
         if !r.letter.is_empty() {
             t.push_str(&format!("({}티어)", r.letter));
         }
-        t.push_str(&format!(", 평점 {:+.0}", r.score * 100.0));
+        t.push_str(&format!(", 평점 {}", score_text(r.score)));
         if !r.label.is_empty() {
             t.push_str(&format!(" — 근거: {}", r.label));
         }
@@ -800,20 +823,19 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
             t.push_str(&format!(" (이번 패치 변경 {})", r.chg));
         }
         if r.low_conf {
-            t.push_str(". 다만 표본이 적어 확신은 낮습니다");
+            t.push_str(&format!(". {}", markup::warn("다만 표본이 적어 확신은 낮습니다")));
         }
         t.push('.');
-        restates.push(parts.len());
         parts.push(t);
         if view.rows.len() > 1 {
-            restates.push(parts.len());
+            runner_up = Some(parts.len());
             parts.push(format!(
                 "차순위 후보: {}.",
                 view.rows
                     .iter()
                     .skip(1)
                     .take(3)
-                    .map(|r| format!("{} {:+.0}", r.ko, r.score * 100.0))
+                    .map(|r| name_score(&r.ko, r.score))
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
@@ -826,7 +848,12 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         let known = ids.iter().filter(|c| tables.role_known(c)).count();
         if known > 0 {
             let (tanks, heals) = tables.comp_counts(&ids);
-            let mut t = format!("상대 조합 {}픽 — 탱커 {} · 힐러 {}", ids.len(), tanks, heals);
+            let mut t = format!(
+                "상대 조합 {}픽 — 탱커 {} · 힐러 {}",
+                ids.len(),
+                markup::num(&tanks.to_string()),
+                markup::num(&heals.to_string())
+            );
             if tanks == 0 && known == ids.len() {
                 t.push_str(". 앞라인이 없어 돌진·암살 가치가 높습니다");
             } else if heals >= 1 {
@@ -844,7 +871,10 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         if known == ids.len() {
             let (tanks, _) = tables.comp_counts(&ids);
             if tanks == 0 {
-                parts.push("아군 조합에 앞라인이 없습니다 — 남은 픽에서 탱커/브루저를 고려하세요.".to_string());
+                parts.push(format!(
+                    "{} — 남은 픽에서 탱커/브루저를 고려하세요.",
+                    markup::warn("아군 조합에 앞라인이 없습니다")
+                ));
             }
         }
     }
@@ -853,8 +883,9 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
     // the player's opponent (CLAUDE.md §2c) — so the line presented league-wide noise
     // as "the enemy's likely next picks". Same root cause as the disabled deny/steal
     // term. The field is still built (harmless) but no longer surfaced to the user.
-    // honesty line: without matchup data the ranking cannot react to enemy picks.
-    if !tables.has_matchup() && !board.enemy_pick.is_empty() {
+    // honesty line: without matchup data the ranking cannot react to enemy picks
+    // (no ranking left to qualify once the swap assignment is up).
+    if !tables.has_matchup() && !board.enemy_pick.is_empty() && swap.is_empty() {
         parts.push("상대 픽 대응(매치업) 데이터가 아직 없습니다 — 이 순위는 상대 픽을 반영하지 못합니다.".to_string());
     }
     let changed_list: Vec<String> = CHAMPS
@@ -888,14 +919,14 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                 set_label,
                 if board.attributed { "하드" } else { "스타일 미상" },
                 if board.attributed { "(공통)" } else { "(공통 처리)" },
-                my_locked.len()
+                markup::num(&my_locked.len().to_string())
             ));
         } else {
             parts.push(format!(
                 "피어리스 {}(노멀) — 사용 불가: 내 {}챔 · 상대 {}챔.",
                 set_label,
-                my_locked.len(),
-                enemy_locked.len()
+                markup::num(&my_locked.len().to_string()),
+                markup::num(&enemy_locked.len().to_string())
             ));
         }
         // depletion: STRONG (S/A) champs still pickable per lane — don't burn a
@@ -919,19 +950,26 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
             })
             .collect();
         let d = tables.strong_per_lane(&avail);
+        // an empty lane in the warning color: the thin lanes are the point
+        let depth = |n: u32| if n == 0 { markup::warn("0") } else { markup::num(&n.to_string()) };
         // NOTE(2026-07-05 review F10): don't flatly say "아껴두세요" — it contradicts the
         // ★ guidance (which urges securing a thin lane NOW before the enemy takes it).
         // Frame the thin lanes as a per-set allocation call, not a blanket "save".
         parts.push(format!(
             "남은 강챔(S/A) ▶ 탑 {} · 정글 {} · 미드 {} · 바텀 {} · 서폿 {} — 적은 라인은 세트 배분에 주의(이번 세트 확보 vs 다음 세트 보존).",
-            d[0], d[1], d[2], d[3], d[4]
+            depth(d[0]),
+            depth(d[1]),
+            depth(d[2]),
+            depth(d[3]),
+            depth(d[4])
         ));
     }
-    parts.push(format!(
+    // last: the first line a full card gives up (the card's pill keeps the count)
+    parts.push(markup::dim(&format!(
         "데이터: 유효 표본 {}판(직전 패치 블렌드 포함){}",
         tables.matches,
         if tables.matches < 50 { " — 콜드스타트 구간, 이론 비중이 큽니다." } else { "." }
-    ));
+    )));
 
     // ── tier labels for the grid
     let tiers: HashMap<String, TierMark> = CHAMPS
@@ -947,10 +985,114 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         .collect();
 
     let notes: Vec<String> =
-        parts.iter().enumerate().filter(|(i, _)| !restates.contains(i)).map(|(_, p)| p.clone()).collect();
-    let out = Arc::new(Output { rec_ban, recs, detail_rows, swap, say: parts.join("\n"), notes, tiers });
+        parts.iter().enumerate().filter(|(i, _)| Some(*i) != runner_up).map(|(_, p)| p.clone()).collect();
+    let out = Arc::new(Output {
+        rec_ban,
+        recs,
+        detail_rows,
+        swap,
+        say: parts.join("\n"),
+        notes,
+        tiers,
+        matches: tables.matches,
+    });
     if let Ok(mut g) = OUTPUT.lock() {
         *g = Some((key, out.clone()));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::markup;
+
+    /// Empty stats + the baked theory rows: the engine still ranks (cold start).
+    /// Each test owns its `teams` key — update() keeps series state across calls.
+    fn run(teams: &str, b: Board, matches: usize) -> Arc<Output> {
+        let mut t = build_tables("", &[], &ChgInfo::default(), "");
+        t.matches = matches;
+        update(&Board { teams: teams.to_string(), ..b }, &t, 7_000_000 + matches)
+    }
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn swap_board() -> Board {
+        Board {
+            my_pick: ids(&["fighter", "swordman", "jiangshi", "pole_warrior", "vampire"]),
+            enemy_pick: ids(&["ogre", "archer", "monk", "ninja", "priest"]),
+            ..Default::default()
+        }
+    }
+
+    fn plain_notes(o: &Output) -> Vec<String> {
+        o.notes.iter().map(|n| markup::plain(n)).collect()
+    }
+
+    #[test]
+    fn pick_notes_open_with_the_first_choice_sentence() {
+        let n = plain_notes(&run("t-pick-first", Board::default(), 0));
+        assert!(n[0].starts_with("1순위는 "), "{:?}", n);
+    }
+
+    #[test]
+    fn pick_notes_keep_the_same_lane_alternatives() {
+        let n = plain_notes(&run("t-pick-alt", Board::default(), 0));
+        assert!(n.iter().any(|x| x.starts_with("같은 라인 대안: ")), "{:?}", n);
+    }
+
+    #[test]
+    fn ban_notes_open_with_the_first_choice_sentence() {
+        let n = plain_notes(&run("t-ban-first", Board { ban_count: 3, ..Default::default() }, 0));
+        assert!(n[0].starts_with("밴 1순위는 "), "{:?}", n);
+    }
+
+    #[test]
+    fn ban_notes_leave_the_runner_up_list_to_the_rows() {
+        let o = run("t-ban-runner", Board { ban_count: 3, ..Default::default() }, 0);
+        assert!(markup::plain(&o.say).contains("차순위 후보: "));
+        assert!(!plain_notes(&o).iter().any(|x| x.contains("차순위 후보")));
+    }
+
+    #[test]
+    fn commentary_paints_names_and_scores() {
+        let o = run("t-paint", Board::default(), 0);
+        let (_, ko, sc) = &o.recs[0];
+        assert!(o.notes[0].contains(&markup::name(ko)), "{}", o.notes[0]);
+        assert!(o.notes[0].contains(&markup::num(sc)), "{}", o.notes[0]);
+    }
+
+    #[test]
+    fn data_line_closes_the_notes_dimmed() {
+        let o = run("t-data", Board::default(), 0);
+        let last = o.notes.last().unwrap();
+        let text = markup::plain(last);
+        assert!(text.starts_with("데이터: "), "{}", text);
+        assert_eq!(*last, markup::dim(&text));
+    }
+
+    #[test]
+    fn output_carries_the_sample_size() {
+        assert_eq!(run("t-matches", Board::default(), 37).matches, 37);
+    }
+
+    #[test]
+    fn swap_rows_name_each_lane_with_its_champion_id() {
+        let b = swap_board();
+        let o = run("t-swap-rows", b.clone(), 0);
+        let lanes: Vec<&str> = o.swap.iter().map(|r| r.lane).collect();
+        assert_eq!(lanes, engine::LANES.to_vec());
+        for r in &o.swap {
+            assert!(b.my_pick.contains(&r.id), "{}", r.id);
+            assert_eq!(r.ko, engine::ko_name(&r.id));
+        }
+    }
+
+    #[test]
+    fn swap_notes_skip_the_ranking_caveat() {
+        let n = plain_notes(&run("t-swap-caveat", swap_board(), 0));
+        assert!(!n.iter().any(|x| x.contains("이 순위는")), "{:?}", n);
+    }
 }
