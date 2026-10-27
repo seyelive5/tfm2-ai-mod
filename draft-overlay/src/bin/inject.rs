@@ -495,7 +495,7 @@ fn regen(save: &Path, cache: &Path) -> (bool, u32) {
     out.extend(c_rows);
     out.extend(cp_rows);
     // CHG rows: champs buffed/nerfed in the current patch (+ direction) — the overlay
-    // tags them ▲/▼/⚡ so the user sees WHY their tier is blank/reset.
+    // tags them ▲/▼/◆ so the user sees WHY their tier is blank/reset.
     out.extend(chg_dirs.iter().map(|(c, d)| format!("CHG\t{}\t{}", c, d)));
     out.push(format!("M\t{}", total));
     // record which db_export stamp this cache was built from, so the loop can

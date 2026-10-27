@@ -821,7 +821,7 @@ impl ImguiRenderLoop for Overlay {
                     s.push('.');
                     parts.push(s);
                 }
-                // ── 이번 패치 변경 챔프 (▲버프 ▼너프 ⚡리워크)
+                // ── 이번 패치 변경 챔프 (▲버프 ▼너프 ◆리워크)
                 let changed: Vec<String> = CHAMPS
                     .iter()
                     .filter_map(|(id, ko)| {
@@ -881,7 +881,7 @@ impl ImguiRenderLoop for Overlay {
         // per-champ meta tier (overall), index-aligned with CHAMPS — shown on every
         // grid button so the draft grid doubles as a live tier table.
         let grid_tiers: Vec<&'static str> = CHAMPS.iter().map(|(id, _)| self.tables.tier_display(id, None)).collect();
-        // patch-change tag per champ (▲버프/▼너프/⚡변경) — shown on the grid + a legend
+        // patch-change tag per champ (▲버프/▼너프/◆변경) — shown on the grid + a legend
         // line, so a blank/reset tier reads as "patched, stats refilling" not "no data".
         let grid_chg: Vec<&'static str> = CHAMPS.iter().map(|(id, _)| self.tables.chg_mark(id)).collect();
         let any_chg = self.tables.any_chg();
@@ -1119,7 +1119,7 @@ impl ImguiRenderLoop for Overlay {
                     ui.same_line();
                     let mut legend = "?=표본부족 · »=추천 라인 · 티어 S~D=현 패치 승률".to_string();
                     if any_chg {
-                        legend.push_str(" · ▲버프 ▼너프 ⚡변경(통계 리셋중)");
+                        legend.push_str(" · ▲버프 ▼너프 ◆변경(통계 리셋중)");
                     }
                     ui.text_colored(GREY, legend);
                     ui.spacing();
@@ -1167,7 +1167,7 @@ impl ImguiRenderLoop for Overlay {
                     ui.same_line();
                     let mut legend = "행 클릭=마킹 · ?=표본부족 · 티어 S~D=현 패치 승률".to_string();
                     if any_chg {
-                        legend.push_str(" · ▲버프 ▼너프 ⚡변경(통계 리셋중)");
+                        legend.push_str(" · ▲버프 ▼너프 ◆변경(통계 리셋중)");
                     }
                     ui.text_colored(GREY, legend);
                     ui.spacing();
@@ -1250,7 +1250,7 @@ impl ImguiRenderLoop for Overlay {
                     let _h = ui.push_style_color(StyleColor::ButtonHovered, c[1]);
                     let _a = ui.push_style_color(StyleColor::ButtonActive, c[2]);
                     // tier prefix (S/A/B/C/D) → the grid reads as a live tier table;
-                    // ▲/▼/⚡ = changed in the current patch (stats resetting).
+                    // ▲/▼/◆ = changed in the current patch (stats resetting).
                     let tp = if grid_tiers[i].is_empty() { String::new() } else { format!("{}·", grid_tiers[i]) };
                     if ui.button_with_size(format!("{}{}{}##{}", tp, grid_chg[i], ko, i), [btn_w * ui_scale, 0.0]) {
                         click_champ(i, mode, &mut slots, &mut pool);

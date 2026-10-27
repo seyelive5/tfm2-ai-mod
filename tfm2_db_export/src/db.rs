@@ -451,7 +451,7 @@ fn notes_into(news: &JsonVal, by_ver: &mut Notes) -> usize {
         for (champ, changes) in pn.get("champion_patch_data").map(|c| c.entries()).unwrap_or_default() {
             let Some(changes) = changes.as_arr() else { continue };
             if changes.is_empty() {
-                continue; // an empty change list would misclassify as '~' (spurious ⚡ + stats reset)
+                continue; // an empty change list would misclassify as '~' (spurious ◆ + stats reset)
             }
             let e = entry.1.entry(champ).or_insert((0, 0));
             for c in changes {

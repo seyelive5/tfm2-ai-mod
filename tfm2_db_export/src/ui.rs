@@ -106,6 +106,9 @@ struct UiState {
     click: String,
     tabs: usize,
     keys: Vec<String>,
+    /// texts read back unequal to what was set (first example kept)
+    readback_bad: usize,
+    readback_first: String,
 }
 
 static UI: Mutex<Option<UiState>> = Mutex::new(None);
@@ -388,6 +391,41 @@ fn ensure_panel(ctx: &mut StableClient, st: &mut UiState) {
 fn set_text(ctx: &mut StableClient, st: &mut UiState, path: &str, text: &str) {
     if !ctx.ui_set_text(path, text) {
         st.set_fails += 1;
+        return;
+    }
+    // garbled-text report (2026-10-27): stored ≠ set means the host mangles the
+    // string; stored = set points at rendering instead
+    let got = ctx.ui_text(path);
+    if got.as_deref() != Some(text) {
+        st.readback_bad += 1;
+        if st.readback_first.is_empty() {
+            st.readback_first = format!("{} want={:?} got={:?}", path, text, got);
+        }
+    }
+}
+
+/// Our subtree (and one tile's) as lines: path, runner, visible, rect, label text.
+fn dump_tree(ctx: &StableClient, path: &str, depth: usize, out: &mut Vec<String>) {
+    if out.len() >= 60 {
+        return;
+    }
+    let runner = ctx.ui_runner_name(path).unwrap_or_default();
+    let mut line = format!(
+        "{}{} [{}] vis={:?} rect={:?}",
+        "  ".repeat(depth),
+        path.rsplit('.').next().unwrap_or(path),
+        runner,
+        ctx.ui_visible(path),
+        ctx.ui_node_rect(path).map(|(x, y, w, h)| (x as i32, y as i32, w as i32, h as i32))
+    );
+    if let Some(t) = ctx.ui_text(path).filter(|t| !t.is_empty()) {
+        line.push_str(&format!(" text={:?}", t.chars().take(48).collect::<String>()));
+    }
+    out.push(line);
+    if depth < 4 {
+        for c in ctx.ui_child_names(path) {
+            dump_tree(ctx, &format!("{}.{}", path, c), depth + 1, out);
+        }
     }
 }
 
@@ -646,5 +684,35 @@ pub(crate) fn stamp(ctx: &mut StableClient, view: &View) {
                 ctx.ui_visible("main.swap"),
             ),
         );
+    }
+    if st.frame % 60 == 2 {
+        let mut lines = vec![format!(
+            "readback_bad={} first={}",
+            st.readback_bad,
+            if st.readback_first.is_empty() { "-" } else { st.readback_first.as_str() }
+        )];
+        let main_kids: Vec<String> = ctx
+            .ui_child_names("main")
+            .into_iter()
+            .map(|c| {
+                let p = format!("main.{}", c);
+                format!("{}[{}{}]", c, ctx.ui_runner_name(&p).unwrap_or_default(), match ctx.ui_visible(&p) {
+                    Some(true) => "",
+                    _ => ",hidden",
+                })
+            })
+            .collect();
+        lines.push(format!("main children: {}", main_kids.join(" ")));
+        dump_tree(ctx, PANEL, 0, &mut lines);
+        let tile = st
+            .tiles
+            .iter()
+            .find(|(_, l)| l.tag != Tag::Off)
+            .map(|(c, _)| c.clone())
+            .or_else(|| view.tiles.first().cloned());
+        if let Some(c) = tile {
+            dump_tree(ctx, &format!("main.champions.contents.{}", c), 0, &mut lines);
+        }
+        diag::set("9 tree", lines.join("\n"));
     }
 }

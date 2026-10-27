@@ -228,7 +228,7 @@ pub struct Tables {
     pub team_names: Vec<(u32, String)>,
     /// champs buffed/nerfed in the CURRENT patch (from `CHG` rows): champ ->
     /// '+' buff / '-' nerf / '~' mixed-rework. Their winrate stats were reset
-    /// (stale prev-patch blend dropped), so the UI tags them ▲/▼/⚡.
+    /// (stale prev-patch blend dropped), so the UI tags them ▲/▼/◆.
     chg: std::collections::HashMap<String, char>,
     /// authored (buffs, nerfs) change counts per changed champ (CHG row fields 4-5,
     /// authored path only) — drives the S2-2 count-scaled nudge sizing.
@@ -430,12 +430,13 @@ impl Tables {
         // cold-start career where nothing has data yet.
         (g == u32::MAX && self.matches > 0) || g < LOW_CONF_GAMES
     }
-    /// patch-change tag: ▲ buffed / ▼ nerfed / ⚡ mixed-rework this patch, "" if unchanged.
+    /// patch-change tag: ▲ buffed / ▼ nerfed / ◆ mixed-rework this patch (⚡ is in
+    /// none of the game's fonts — Roboto, Noto Sans KR), "" if unchanged.
     pub fn chg_mark(&self, c: &str) -> &'static str {
         match self.chg.get(c) {
             Some('+') => "▲",
             Some('-') => "▼",
-            Some(_) => "⚡",
+            Some(_) => "◆",
             None => "",
         }
     }
@@ -1151,7 +1152,7 @@ pub struct Row {
     pub role: &'static str,
     /// meta tier letter (S/A/B/C/D), "" if no winrate data.
     pub tier: &'static str,
-    /// patch-change tag (▲ buff / ▼ nerf / ⚡ rework), "" if unchanged this patch.
+    /// patch-change tag (▲ buff / ▼ nerf / ◆ rework), "" if unchanged this patch.
     pub chg: &'static str,
 }
 
@@ -1277,7 +1278,7 @@ pub struct LaneCand {
     pub role: &'static str,
     /// meta tier letter (S/A/B/C/D) for THIS lane, "" if no winrate data.
     pub tier: &'static str,
-    /// patch-change tag (▲ buff / ▼ nerf / ⚡ rework), "" if unchanged this patch.
+    /// patch-change tag (▲ buff / ▼ nerf / ◆ rework), "" if unchanged this patch.
     pub chg: &'static str,
 }
 
