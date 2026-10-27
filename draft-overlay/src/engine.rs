@@ -659,11 +659,17 @@ impl Tables {
         sd.map(|s| 1.96 * s).unwrap_or(0.0)
     }
 
+    /// The tier letter is statistically unstable — a coin-flip with an adjacent
+    /// tier (2026-07-05 review F2). False when there is no letter.
+    pub fn tier_unsure(&self, c: &str, lane: Option<u8>) -> bool {
+        !self.tier_of(c, lane).is_empty() && self.tier_conf(c, lane) > TIER_UNSTABLE
+    }
+
     /// UI tier letter with a "?" appended when the letter is statistically unstable
     /// (2026-07-05 review F2). tier_of stays the raw letter for internal S/A logic.
     pub fn tier_display(&self, c: &str, lane: Option<u8>) -> &'static str {
         let t = self.tier_of(c, lane);
-        if t.is_empty() || self.tier_conf(c, lane) <= TIER_UNSTABLE {
+        if !self.tier_unsure(c, lane) {
             return t;
         }
         match t {
@@ -1150,8 +1156,11 @@ pub struct Row {
     pub low_conf: bool,
     /// data-driven role glyph (힐/탱/브/딜), "" if unknown.
     pub role: &'static str,
-    /// meta tier letter (S/A/B/C/D), "" if no winrate data.
+    /// meta tier letter (S/A/B/C/D) + "?" when unstable (tier_display), "" if no
+    /// winrate data.
     pub tier: &'static str,
+    /// the bare letter (tier_of) — for displays that show the uncertainty otherwise.
+    pub letter: &'static str,
     /// patch-change tag (▲ buff / ▼ nerf / ◆ rework), "" if unchanged this patch.
     pub chg: &'static str,
 }
@@ -1240,6 +1249,7 @@ pub fn recommend(
             low_conf: tables.low_conf(id),
             role: tables.role_tag(id),
             tier: tables.tier_display(id, None),
+            letter: tables.tier_of(id, None),
             chg: tables.chg_mark(id),
         });
     }
@@ -1276,8 +1286,11 @@ pub struct LaneCand {
     pub low_conf: bool,
     /// data-driven role glyph (힐/탱/브/딜), "" if unknown.
     pub role: &'static str,
-    /// meta tier letter (S/A/B/C/D) for THIS lane, "" if no winrate data.
+    /// meta tier letter (S/A/B/C/D) for THIS lane + "?" when unstable
+    /// (tier_display), "" if no winrate data.
     pub tier: &'static str,
+    /// the bare letter (tier_of) — for displays that show the uncertainty otherwise.
+    pub letter: &'static str,
     /// patch-change tag (▲ buff / ▼ nerf / ◆ rework), "" if unchanged this patch.
     pub chg: &'static str,
 }
@@ -1502,6 +1515,7 @@ pub fn recommend_lanes(
                 low_conf: tables.low_conf_for(id, Some(lane)),
                 role: tables.role_tag(id),
                 tier: tables.tier_display(id, Some(lane)),
+                letter: tables.tier_of(id, Some(lane)),
                 chg: tables.chg_mark(id),
             });
         }

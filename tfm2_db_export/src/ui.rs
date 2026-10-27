@@ -4,19 +4,29 @@
 //! so clicks reach the game.
 //!   per tile — `tfm2dc_ring`: recommendation outline (teal pick / violet ban,
 //!              thicker for #1 — v3.0 colors); `tfm2dc_tag`: rank glyph + our
-//!              tier in the tile's free top-left corner (the game's ban / order /
-//!              fearless marks sit top-right, its own `#tier` at x6 y68).
-//!   panel    — `main.tfm2dc_panel`: a draggable window in the style of the
-//!              game's coach-dialogue popup: top 5, notes, status. Tab folds it
-//!              (reopens it when closed); X hides it until the next banpick
-//!              screen; the fold choice persists across sets.
+//!              tier letter in the tile's free top-left corner (the game's ban /
+//!              order / fearless marks sit top-right, its own `#tier` at x6 y68).
+//!              No "?" on an unstable letter — next to a letter in these fonts it
+//!              reads as a broken glyph (2026-10-27 test); such letters are drawn
+//!              dimmed instead, and only while some letters are stable.
+//!   panel    — `main.tfm2dc_panel`: a draggable window built like the game's
+//!              coach-dialogue popup, down to its `#header` / `#cancel` child
+//!              names: top 5, notes, status. Tab folds it (reopens it when
+//!              closed); X hides it until the next banpick screen; the fold
+//!              choice persists across sets. Its fill is an opaque child: the
+//!              popup's own `back_color` let the text behind it show through at
+//!              about a third (2026-10-27 screenshot, alpha set 0xf2).
 //! Placement (0.6.5 layout, 1920×1080): no area is free, so the panel covers
-//! INFORMATION, never controls — during the draft the right end of
-//! champion_info: its ult box (x1183–1610, y770–970) and the last three stat
-//! cells above it (magic resistance, range, move speed; y690–760), all text; in
-//! the swap phase `main.swap` covers the centre with its coach/confirm buttons at
-//! y903–970, so the panel moves over the OPPONENT's table (stat columns) instead.
-//! The player can drag it anywhere or fold it to its header (Tab).
+//! INFORMATION, never controls — during the draft one end of champion_info
+//! (x310–1610, y690–970: a row of eight stat cells over three skill boxes), the
+//! end AWAY from the player's own coach, whose dialogue toasts stack up from
+//! their side's bottom corner (red: x≈1388–1908, y≈700–950): blue → the right
+//! end (ult box x1183–1610 + magic resistance / range / move speed cells), red
+//! → its mirror x316–756 (first skill box + attack / spell power / attack speed
+//! cells). In the swap phase `main.swap` covers the centre with its coach /
+//! confirm buttons at y903–970, so the panel moves over the OPPONENT's table
+//! (stat columns) instead. Once the player drags it, their spot wins for the
+//! rest of the session.
 //! A node is written only when its desired state differs from what we applied.
 //! `.ui` grammar and property values are the ones the game's own templates use
 //! (0.6.5 bundle): `#child:kind`, a bare style line, `size`/`align_*` on labels,
@@ -27,26 +37,30 @@ use crate::diag;
 use crate::recommender::{Output, RecRow};
 use mod_api_stable::*;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 const PANEL: &str = "main.tfm2dc_panel";
 const BODY: &str = "main.tfm2dc_panel.tfm2dc_body";
-const CLOSE: &str = "main.tfm2dc_panel.tfm2dc_close";
-const TITLE: &str = "main.tfm2dc_panel.tfm2dc_head.tfm2dc_title";
+const CLOSE: &str = "main.tfm2dc_panel.cancel";
+const TITLE: &str = "main.tfm2dc_panel.header.title";
 const RANK_GLYPH: [&str; 5] = ["①", "②", "③", "④", "⑤"];
 /// v3.0 REC_PICK_COLOR [0.22, 0.84, 0.70] / REC_BAN_COLOR [0.78, 0.40, 0.95]
 const PICK_COL: &str = "#38d6b3";
 const BAN_COL: &str = "#c766f2";
-const PANEL_X: u32 = 1164;
-const PANEL_W: u32 = 440;
-const PANEL_H: u32 = 274;
-const HEAD_H: u32 = 34;
+const PANEL_W: i32 = 440;
+const PANEL_H: i32 = 274;
+const HEAD_H: i32 = 34;
+/// panel left edge: the right end of champion_info (6px in from its x1610 edge) /
+/// the same spot mirrored at its left end (red side's draft spot)
+const PANEL_X: i32 = 1164;
+const PANEL_X_LEFT: i32 = 1920 - PANEL_X - PANEL_W;
 /// panel top edge: draft (bottom at champion_info's bottom, y970) / swap over the
 /// red table (bottom 4px above the confirm buttons) / swap over the blue table
-const TOP_DRAFT: u32 = 970 - PANEL_H;
-const TOP_SWAP_LOW: u32 = 899 - PANEL_H;
-const TOP_SWAP_HIGH: u32 = 64;
+const TOP_DRAFT: i32 = 970 - PANEL_H;
+const TOP_SWAP_LOW: i32 = 899 - PANEL_H;
+const TOP_SWAP_HIGH: i32 = 64;
+const DIM_LEGEND: &str = "흐린 티어 글자: 표본이 적어 아직 불확실한 티어";
 /// text budgets in half-em units (ASCII 1, other 2): row label 384px @ size 14,
 /// notes label 416px @ size 13 × 4 lines — with margin for the label's word wrap
 const ROW_UNITS: usize = 52;
@@ -75,7 +89,7 @@ enum Ring {
 #[derive(Clone, PartialEq)]
 enum Tag {
     Off,
-    On { text: String, fill: String, ink: &'static str },
+    On { text: String, fill: String, ink: String },
 }
 
 #[derive(Clone, PartialEq)]
@@ -94,7 +108,11 @@ struct UiState {
     panel_kind: &'static str,
     panel_visible: Option<bool>,
     applied_fold: Option<bool>,
-    applied_top: Option<u32>,
+    /// where we last put the panel, and on which frame (layout settles after it)
+    applied_pos: Option<(i32, i32)>,
+    applied_at: u64,
+    /// frames on which the panel was found moved by the player
+    drag_frames: usize,
     title: Option<String>,
     rows: [Option<(String, String)>; 5],
     say: Option<String>,
@@ -114,6 +132,9 @@ struct UiState {
 static UI: Mutex<Option<UiState>> = Mutex::new(None);
 static USER_CLOSED: AtomicBool = AtomicBool::new(false);
 static FOLDED: AtomicBool = AtomicBool::new(false);
+/// where the player dragged the panel (session-wide, like the fold choice)
+static USER_POS: Mutex<Option<(i32, i32)>> = Mutex::new(None);
+static CLOSE_CLICKS: AtomicUsize = AtomicUsize::new(0);
 
 /// Left the banpick screen: our nodes died with it; a closed panel reopens next time.
 pub(crate) fn reset() {
@@ -164,7 +185,7 @@ fn fit_notes(notes: &[String]) -> String {
     out.join("\n")
 }
 
-fn panel_source(kind: &str) -> String {
+fn panel_source(kind: &str, (x, top): (i32, i32)) -> String {
     let mut rows = String::new();
     for i in 0..5 {
         rows.push_str(&format!(
@@ -205,11 +226,22 @@ fn panel_source(kind: &str) -> String {
   y: {top}px;
   stroke: 1;
   color: #4a4c56ff;
-  back_color: #161721f2;
+  back_color: #161721ff;
   rounding: Uniform {{
     rounding: 8;
   }}
-  #tfm2dc_head:color {{
+  #tfm2dc_bg:color {{
+    width: 100%;
+    height: 100%;
+    ignore_event: true;
+    stroke: 1;
+    color: #4a4c56ff;
+    back_color: #161721ff;
+    rounding: Uniform {{
+      rounding: 8;
+    }}
+  }}
+  #header:color {{
     width: 100%;
     height: {head}px;
     ignore_event: true;
@@ -218,7 +250,7 @@ fn panel_source(kind: &str) -> String {
       top_left: 8;
       top_right: 8;
     }}
-    #tfm2dc_title:label {{
+    #title:label {{
       @"asset/base/style/main#bold_label";
       x: 12px;
       anchor_y: 0.5;
@@ -231,7 +263,7 @@ fn panel_source(kind: &str) -> String {
       text: "AI 추천기";
     }}
   }}
-  #tfm2dc_close:button {{
+  #cancel:button {{
     width: 14px;
     height: 14px;
     anchor_x: 1;
@@ -269,8 +301,8 @@ fn panel_source(kind: &str) -> String {
         kind = kind,
         w = PANEL_W,
         h = PANEL_H,
-        x = PANEL_X,
-        top = TOP_DRAFT,
+        x = x,
+        top = top,
         head = HEAD_H,
         body = PANEL_H - 46,
         rows = rows
@@ -314,14 +346,15 @@ const TAG_SRC: &str = r#"tfm2dc_tag:color {
   }
 }"#;
 
-fn tier_ink(tier: &str) -> &'static str {
-    match tier.chars().next() {
-        Some('S') => "#ffd959ff",
-        Some('A') => "#5ce0e6ff",
-        Some('B') => "#e8e8e8ff",
-        Some('C') => "#a3a9b6ff",
-        Some('D') => "#7d8290ff",
-        _ => "#a3a9b6ff",
+/// tag ink per tier letter, without alpha
+fn tier_rgb(letter: &str) -> &'static str {
+    match letter {
+        "S" => "#ffd959",
+        "A" => "#5ce0e6",
+        "B" => "#e8e8e8",
+        "C" => "#a3a9b6",
+        "D" => "#7d8290",
+        _ => "#a3a9b6",
     }
 }
 
@@ -349,7 +382,7 @@ fn typing(ctx: &StableClient) -> bool {
         .unwrap_or(false)
 }
 
-fn ensure_panel(ctx: &mut StableClient, st: &mut UiState) {
+fn ensure_panel(ctx: &mut StableClient, st: &mut UiState, pos: (i32, i32)) {
     if ctx.ui_exists(PANEL) {
         if !st.panel_ok {
             // kept alive from an earlier visit (its close handler is still bound);
@@ -362,10 +395,10 @@ fn ensure_panel(ctx: &mut StableClient, st: &mut UiState) {
     // a draggable window like the game's coach-dialogue popup; a plain box only
     // if the host refuses that runner kind for mod source
     let mut kind = "draggable_popup";
-    let mut ok = ctx.ui_spawn_source("main", &panel_source(kind));
+    let mut ok = ctx.ui_spawn_source("main", &panel_source(kind, pos));
     if !ok {
         kind = "color";
-        ok = ctx.ui_spawn_source("main", &panel_source(kind));
+        ok = ctx.ui_spawn_source("main", &panel_source(kind, pos));
     }
     st.spawns += 1;
     st.panel_ok = ok;
@@ -376,16 +409,28 @@ fn ensure_panel(ctx: &mut StableClient, st: &mut UiState) {
     }
     st.panel_visible = None;
     st.applied_fold = None;
-    st.applied_top = None;
+    st.applied_pos = Some(pos);
+    st.applied_at = st.frame;
     st.title = None;
     st.rows = Default::default();
     st.say = None;
     // handlers bind per UI build → register on every (re)spawn of the panel
     let ok = ctx.ui_register_click(CLOSE, "", |c: &mut StableClient<'_>| {
+        CLOSE_CLICKS.fetch_add(1, Ordering::Relaxed);
         USER_CLOSED.store(true, Ordering::Relaxed);
         let _ = c.ui_set_visible(PANEL, false);
     });
     st.click = format!("close registered={}", ok);
+}
+
+/// Our spot for the current phase and side (module doc: Placement).
+fn auto_pos(ctx: &StableClient, view: &View) -> (i32, i32) {
+    let red = view.my_blue == Some(false);
+    if ctx.ui_visible("main.swap") == Some(true) {
+        (PANEL_X, if red { TOP_SWAP_HIGH } else { TOP_SWAP_LOW })
+    } else {
+        (if red { PANEL_X_LEFT } else { PANEL_X }, TOP_DRAFT)
+    }
 }
 
 fn set_text(ctx: &mut StableClient, st: &mut UiState, path: &str, text: &str) {
@@ -441,8 +486,10 @@ fn set_vis(ctx: &mut StableClient, st: &mut UiState, path: &str, v: bool) {
     }
 }
 
-fn stamp_panel(ctx: &mut StableClient, st: &mut UiState, view: &View) {
-    ensure_panel(ctx, st);
+fn stamp_panel(ctx: &mut StableClient, st: &mut UiState, view: &View, dim: bool) {
+    let user = USER_POS.lock().ok().and_then(|g| *g);
+    let pos = user.unwrap_or_else(|| auto_pos(ctx, view));
+    ensure_panel(ctx, st, pos);
     if !st.panel_ok {
         return;
     }
@@ -450,22 +497,29 @@ fn stamp_panel(ctx: &mut StableClient, st: &mut UiState, view: &View) {
     if st.panel_visible != Some(visible) {
         set_vis(ctx, st, PANEL, visible);
         st.panel_visible = Some(visible);
+        st.applied_at = st.frame;
     }
     if !visible {
         return;
     }
-    let top = if ctx.ui_visible("main.swap") == Some(true) {
-        if view.my_blue == Some(false) {
-            TOP_SWAP_HIGH
-        } else {
-            TOP_SWAP_LOW
+    if st.applied_pos != Some(pos) {
+        set_props(ctx, st, PANEL, &format!("x: {}px; y: {}px;", pos.0, pos.1));
+        st.applied_pos = Some(pos);
+        st.applied_at = st.frame;
+    } else if st.frame > st.applied_at + 2 {
+        // moved without us → the player dragged it: their spot wins from now on
+        // (next banpick screens included) instead of snapping back on a phase
+        // change; a spot off the screen is pulled back in on the next frame
+        if let Some((x, y, w, _)) = ctx.ui_node_rect(PANEL) {
+            let (x, y) = (x.round() as i32, y.round() as i32);
+            if w > 0.0 && ((x - pos.0).abs() > 2 || (y - pos.1).abs() > 2) {
+                if let Ok(mut g) = USER_POS.lock() {
+                    *g = Some((x.clamp(0, 1920 - PANEL_W), y.clamp(0, 1080 - HEAD_H)));
+                }
+                st.applied_pos = Some((x, y));
+                st.drag_frames += 1;
+            }
         }
-    } else {
-        TOP_DRAFT
-    };
-    if st.applied_top != Some(top) {
-        set_props(ctx, st, PANEL, &format!("y: {}px;", top));
-        st.applied_top = Some(top);
     }
     let folded = FOLDED.load(Ordering::Relaxed);
     if st.applied_fold != Some(folded) {
@@ -523,9 +577,14 @@ fn stamp_panel(ctx: &mut StableClient, st: &mut UiState, view: &View) {
         set_vis(ctx, st, &icon_path, filled);
         st.rows[i] = Some(want[i].clone());
     }
+    let mut notes = out.map(|o| o.notes.clone()).unwrap_or_default();
+    if dim {
+        // last = first to give way when the notes run out of lines
+        notes.push(DIM_LEGEND.to_string());
+    }
     let say = match out {
-        Some(o) if !view.status.is_empty() => format!("{}\n{}", view.status, fit_notes(&o.notes)),
-        Some(o) => fit_notes(&o.notes),
+        Some(_) if !view.status.is_empty() => format!("{}\n{}", view.status, fit_notes(&notes)),
+        Some(_) => fit_notes(&notes),
         None if !view.status.is_empty() => view.status.clone(),
         None => "밴픽 정보를 읽는 중...".to_string(),
     };
@@ -535,13 +594,14 @@ fn stamp_panel(ctx: &mut StableClient, st: &mut UiState, view: &View) {
     }
 }
 
-fn desired_tile(champ: &str, view: &View) -> TileLook {
+fn desired_tile(champ: &str, view: &View, dim: bool) -> TileLook {
     let off = TileLook { ring: Ring::Off, tag: Tag::Off };
     let Some(o) = view.out.as_deref() else { return off };
     if view.taken.contains(champ) {
         return off;
     }
-    let tier = o.tiers.get(champ).map(|t| t.as_str()).unwrap_or("");
+    let (letter, unsure, chg) = o.tiers.get(champ).map_or(("", false, ""), |m| (m.letter, m.unsure, m.chg));
+    let tier = format!("{}{}", letter, chg);
     match o.recs.iter().position(|(id, _, _)| id == champ) {
         Some(rk) => {
             let col = if o.rec_ban { BAN_COL } else { PICK_COL };
@@ -550,19 +610,23 @@ fn desired_tile(champ: &str, view: &View) -> TileLook {
                 tag: Tag::On {
                     text: format!("{}{}", RANK_GLYPH[rk.min(4)], tier),
                     fill: format!("{}e6", col),
-                    ink: "#0b111cff",
+                    ink: "#0b111cff".to_string(),
                 },
             }
         }
         None if !tier.is_empty() => TileLook {
             ring: Ring::Off,
-            tag: Tag::On { text: tier.to_string(), fill: "#0b111cc8".to_string(), ink: tier_ink(tier) },
+            tag: Tag::On {
+                text: tier,
+                fill: "#0b111cc8".to_string(),
+                ink: format!("{}{}", tier_rgb(letter), if dim && unsure { "80" } else { "ff" }),
+            },
         },
         None => off,
     }
 }
 
-fn stamp_tiles(ctx: &mut StableClient, st: &mut UiState, view: &View) {
+fn stamp_tiles(ctx: &mut StableClient, st: &mut UiState, view: &View, dim: bool) {
     for champ in &view.tiles {
         let base = format!("main.champions.contents.{}", champ);
         let ring = format!("{}.tfm2dc_ring", base);
@@ -594,7 +658,7 @@ fn stamp_tiles(ctx: &mut StableClient, st: &mut UiState, view: &View) {
             set_vis(ctx, st, &tag, false);
             st.tiles.insert(champ.clone(), TileLook { ring: Ring::Off, tag: Tag::Off });
         }
-        let want = desired_tile(champ, view);
+        let want = desired_tile(champ, view, dim);
         let Some(have) = st.tiles.get(champ).cloned() else { continue };
         if have == want {
             continue;
@@ -647,8 +711,14 @@ pub(crate) fn stamp(ctx: &mut StableClient, view: &View) {
         }
     }
 
-    stamp_panel(ctx, st, view);
-    stamp_tiles(ctx, st, view);
+    // an unstable letter is drawn dimmed only while some letters are stable: at
+    // a cold start every letter is unstable, and dimming them all says nothing
+    let dim = view.out.as_deref().map_or(false, |o| {
+        let lettered = || o.tiers.values().filter(|m| !m.letter.is_empty());
+        lettered().any(|m| m.unsure) && lettered().any(|m| !m.unsure)
+    });
+    stamp_panel(ctx, st, view, dim);
+    stamp_tiles(ctx, st, view, dim);
 
     if st.frame % 30 == 1 {
         let ranked = st.tiles.values().filter(|l| l.ring != Ring::Off).count();
@@ -656,15 +726,19 @@ pub(crate) fn stamp(ctx: &mut StableClient, view: &View) {
         diag::set(
             "6 ui",
             format!(
-                "panel ok={} kind={} runner={:?} rect={:?} visible={:?} top={:?} folded={} closed_by_user={}\n{}\ntiles on_screen={} with_nodes={} ranked={} tagged={} spawn_retry={}\nspawns={} spawn_fails={} set_fails={} icon_fails={}\ntab_presses={} keys_seen={:?}\ntag_runner={:?} search_state={:?} swap_visible={:?}",
+                "panel ok={} kind={} runner={:?} rect={:?} visible={:?} pos={:?} user_pos={:?} drag_frames={} folded={} closed_by_user={} close_clicks={} dim={}\n{}\ntiles on_screen={} with_nodes={} ranked={} tagged={} spawn_retry={}\nspawns={} spawn_fails={} set_fails={} icon_fails={}\ntab_presses={} keys_seen={:?}\ntag_runner={:?} search_state={:?} swap_visible={:?}",
                 st.panel_ok,
                 st.panel_kind,
                 ctx.ui_runner_name(PANEL),
                 ctx.ui_node_rect(PANEL),
                 st.panel_visible,
-                st.applied_top,
+                st.applied_pos,
+                USER_POS.lock().ok().and_then(|g| *g),
+                st.drag_frames,
                 FOLDED.load(Ordering::Relaxed),
                 USER_CLOSED.load(Ordering::Relaxed),
+                CLOSE_CLICKS.load(Ordering::Relaxed),
+                dim,
                 st.click,
                 view.tiles.len(),
                 st.tiles.len(),

@@ -462,10 +462,23 @@ pub struct RecRow {
     pub id: String,
     pub ko: String,
     pub lane: String,
+    /// bare tier letter — no "?": shown in the game's own fonts a trailing "?"
+    /// reads as a broken glyph (2026-10-27 test)
     pub tier: String,
     pub chg: String,
     pub score: String,
     pub reason: String,
+}
+
+/// A champion's grid tag: tier letter, its uncertainty, patch-change mark.
+#[derive(Clone)]
+pub struct TierMark {
+    /// S/A/B/C/D, "" without winrate data
+    pub letter: &'static str,
+    /// the letter is a coin-flip with an adjacent tier (engine `tier_unsure`)
+    pub unsure: bool,
+    /// ▲ / ▼ / ◆, "" if unchanged this patch
+    pub chg: &'static str,
 }
 
 /// Everything the in-game display needs this frame.
@@ -483,8 +496,8 @@ pub struct Output {
     /// the commentary minus the lines that restate the ranked rows (the ① headline
     /// and the runner-up list) — for displays that already show `detail_rows`.
     pub notes: Vec<String>,
-    /// champ id -> tier label text ("S▲" …)
-    pub tiers: HashMap<String, String>,
+    /// champ id -> grid tag (champions with neither a letter nor a mark absent)
+    pub tiers: HashMap<String, TierMark>,
 }
 
 static SERIES: Mutex<Option<Series>> = Mutex::new(None);
@@ -660,7 +673,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                         id: id.clone(),
                         ko: ko.clone(),
                         lane: l.name.to_string(),
-                        tier: c.tier.to_string(),
+                        tier: c.letter.to_string(),
                         chg: c.chg.to_string(),
                         score: sc.clone(),
                         reason: c.label.to_string(),
@@ -672,7 +685,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                 id: id.clone(),
                 ko: ko.clone(),
                 lane: if rec_ban { "밴".to_string() } else { "픽".to_string() },
-                tier: r.map(|x| x.tier.to_string()).unwrap_or_default(),
+                tier: r.map(|x| x.letter.to_string()).unwrap_or_default(),
                 chg: r.map(|x| x.chg.to_string()).unwrap_or_default(),
                 score: sc.clone(),
                 reason: r.map(|x| x.label.to_string()).unwrap_or_default(),
@@ -713,8 +726,8 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         });
         if let Some((lane, c)) = top {
             let mut t = format!("1순위는 {} {}", lane.name, c.ko);
-            if !c.tier.is_empty() {
-                t.push_str(&format!("({}티어)", c.tier));
+            if !c.letter.is_empty() {
+                t.push_str(&format!("({}티어)", c.letter));
             }
             t.push_str(&format!(", 평점 {:+.0}", c.score * 100.0));
             if !c.label.is_empty() {
@@ -776,8 +789,8 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
     } else if let Some(r) = view.rows.first() {
         // flat-list branch serves BOTH phases (ban, and pick without POS data)
         let mut t = format!("{} 1순위는 {}", if rec_ban { "밴" } else { "픽" }, r.ko);
-        if !r.tier.is_empty() {
-            t.push_str(&format!("({}티어)", r.tier));
+        if !r.letter.is_empty() {
+            t.push_str(&format!("({}티어)", r.letter));
         }
         t.push_str(&format!(", 평점 {:+.0}", r.score * 100.0));
         if !r.label.is_empty() {
@@ -921,16 +934,15 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
     ));
 
     // ── tier labels for the grid
-    let tiers: HashMap<String, String> = CHAMPS
+    let tiers: HashMap<String, TierMark> = CHAMPS
         .iter()
         .filter_map(|(id, _)| {
-            let t = tables.tier_display(id, None);
-            let m = tables.chg_mark(id);
-            if t.is_empty() && m.is_empty() {
-                None
-            } else {
-                Some((id.to_string(), format!("{}{}", t, m)))
-            }
+            let m = TierMark {
+                letter: tables.tier_of(id, None),
+                unsure: tables.tier_unsure(id, None),
+                chg: tables.chg_mark(id),
+            };
+            (!m.letter.is_empty() || !m.chg.is_empty()).then(|| (id.to_string(), m))
         })
         .collect();
 
