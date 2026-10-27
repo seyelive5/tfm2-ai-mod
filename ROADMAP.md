@@ -60,6 +60,7 @@
 | 0.6.5 신규 8챔(alchemist, astrologer, crossbowman, harpooner, nightmare, sand_mage, spellbreaker, strongman)의 category·tags가 v4.0 T행과 일치 | `champion_brief` 값(LT 내보내기 `champion_metadata.json`) |
 | 신규 챔프 공식 한국어 이름: harpooner **작살잡이**, spellbreaker **스펠브레이커**, strongman **괴력사** (v4.0 표의 작살꾼·파법사·차력사는 오역). 나머지 5챔은 일치 | 번들 한국어 i18n `"<id>": { "name": … }` |
 | draft score hook은 모든 AI 드래프트 결정에서 불린다 — 배경 리그 경기뿐 아니라 **내 경기의 상대 AI**도(코치 위임 세트면 내 팀 코치 AI도). 호출마다 `ally_team()`·`enemy_team()` id가 있어(99%) 누구의 드래프트인지 가린다. 내 수동 픽은 훅을 거치지 않는다. classic과 LT B1의 "배경 경기에서만 발화"는 stable 0.6.5에서 맞지 않는다 | 진단 세션 E1(10-28): 호출 108,805회 중 팀 id 108,027회, 내 경기 상대 AI 결정 14번 모두 훅 경유 |
+| 드래프트 AI는 자기 점수 1위를 고른다(93.7%). 1·2위 차가 0.02 이상이면 늘 1위이고, 접전에서만 1위보다 0.012 이내의 2·3위를 고른다. 순서는 밴 A·B·A·B, 픽 A·BB·AA·BB·AA·B. 내 차례 정보(상대의 직전 점수 + 같은 순번 리그 평균)만으로 상대 다음 수의 3위 안 적중은 밴 94%, 픽 74% | E1b(10-28): 보존한 훅 로그 287세트·결정 3,724번, 검토 문서 "E1b" |
 | `StableDraftContext`의 draft id는 `champion_briefs` 인덱스 — `champion_name(id)`로 이름을 바로 얻는다 | SDK `mod-api-stable` |
 | 챔피언 표시 이름은 `ctx.i18n(키)`로 게임 언어 그대로 받을 수 있다 | SDK `client_ctx.rs` (키 형식은 인게임 diag로 확정) |
 | `ClientSceneKindV1`: Main 0 · Lineup 1 · StadiumEntrance 2 · Match 3 · MatchResult 4 · LockerRoom 5 · InGame 6 · … · SetFeedback 14(세트 사이 화면). 경기 관전 화면 = InGame(6)으로 **추정**(번들 `ui/ingame/*` = 킬로그·카메라 HUD) — 인게임 diag로 확정 | SDK `values.rs` |
