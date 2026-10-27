@@ -3,10 +3,11 @@
 > 이 문서가 0.6+ 재가동 작업의 기준점이다. 알고리즘 규율은 그대로 `PLAN.md`·`ALGO-FIXES.md`를 따른다
 > (**점수 모델 변경 = 백테스트 수치 동반**). 이 문서는 "다시 동작하게" 만드는 Phase 1과 그 이후 순서를 정한다.
 >
-> **현재 상태 (2026-10-28): v4.2.0(게임 카드 UI, `docs/specs/2026-10-27-ingame-cards-design.md`) 인게임 카드 표시
-> 확인(사용자; 스왑 단계 진단도 계획 위치·아이콘 실패 0). 해설 색 문법·Tab 동작은 아직 미확인.** v4.2.1 = 콜드스타트 티어
+> **현재 상태 (2026-10-28): v4.2.0(게임 카드 UI, `docs/specs/2026-10-27-ingame-cards-design.md`) 인게임 확인 완료 —
+> 카드 표시·자리(사용자; 스왑 단계 진단도 계획 위치·아이콘 실패 0), 해설 색 문법, Tab 숨기기.** v4.2.1 = 콜드스타트 티어
 > 표시(전부 흐리게 + "티어 잠정") + 검토 실험 E1(훅이 내 밴픽에서 불리나, 진단 "7 prior")·E2(데이터 덤프, `probe/`)·
-> E3(리플레이 구성, 진단 "3 db") 계측. Phase 1 작업 P1-1~P1-7 완료.
+> E3(리플레이 구성, 진단 "3 db") 계측 → 진단 세션 완료, **E1 통과**(검토 문서 "2026-10-28 진단 세션 결과").
+> Phase 1 작업 P1-1~P1-8 완료.
 > **다음 작업 순서 = 고도화 검토 `docs/research/2026-10-28-advanced-directions.md`** (진단 세션 → 측정 기반·오프라인
 > 도구 → 0.7.0 대비 → 사전 등록 백테스트를 거친 점수 변경 → 표시 전용 기능 → 현지화·배포).
 
@@ -58,7 +59,7 @@
 | 패치노트: `Team.news[].ty.PatchNote{version, added_champion, champion_patch_data:[[champ,[{key, pre_value, after_value, is_buff, target_action}]]]}` | 이 세이브의 LT 내보내기 `player_team_news.json`으로 직접 확인 (10개 노트) |
 | 0.6.5 신규 8챔(alchemist, astrologer, crossbowman, harpooner, nightmare, sand_mage, spellbreaker, strongman)의 category·tags가 v4.0 T행과 일치 | `champion_brief` 값(LT 내보내기 `champion_metadata.json`) |
 | 신규 챔프 공식 한국어 이름: harpooner **작살잡이**, spellbreaker **스펠브레이커**, strongman **괴력사** (v4.0 표의 작살꾼·파법사·차력사는 오역). 나머지 5챔은 일치 | 번들 한국어 i18n `"<id>": { "name": … }` |
-| draft score hook은 배경 리그 시뮬레이션에서만 발화 — 플레이어 드래프트에 귀속 불가 | CLAUDE.md §2c(classic) + LT B1(stable) 재확인 |
+| draft score hook은 모든 AI 드래프트 결정에서 불린다 — 배경 리그 경기뿐 아니라 **내 경기의 상대 AI**도(코치 위임 세트면 내 팀 코치 AI도). 호출마다 `ally_team()`·`enemy_team()` id가 있어(99%) 누구의 드래프트인지 가린다. 내 수동 픽은 훅을 거치지 않는다. classic과 LT B1의 "배경 경기에서만 발화"는 stable 0.6.5에서 맞지 않는다 | 진단 세션 E1(10-28): 호출 108,805회 중 팀 id 108,027회, 내 경기 상대 AI 결정 14번 모두 훅 경유 |
 | `StableDraftContext`의 draft id는 `champion_briefs` 인덱스 — `champion_name(id)`로 이름을 바로 얻는다 | SDK `mod-api-stable` |
 | 챔피언 표시 이름은 `ctx.i18n(키)`로 게임 언어 그대로 받을 수 있다 | SDK `client_ctx.rs` (키 형식은 인게임 diag로 확정) |
 | `ClientSceneKindV1`: Main 0 · Lineup 1 · StadiumEntrance 2 · Match 3 · MatchResult 4 · LockerRoom 5 · InGame 6 · … · SetFeedback 14(세트 사이 화면). 경기 관전 화면 = InGame(6)으로 **추정**(번들 `ui/ingame/*` = 킬로그·카메라 HUD) — 인게임 diag로 확정 | SDK `values.rs` |
@@ -120,8 +121,8 @@ POS 폴백 행(16챔)은 출처가 약하다(분류별 추정) — 리플레이�
 - [x] P1-6 빌드: `build_mod.ps1` — 게임 폴더 `mod-sdk-stable`과 스탬프(`base_version.txt` + 계약 `lib.rs` 해시)가 다르거나
   repo 사본이 없으면 gitignored `sdk\mod-sdk-stable`로 자동 복사, `-Deploy`·`-CheckOnly`, 툴체인 고정 없음
 - [x] P1-7 `validate-terms.rs` 되돌림 (§3-13)
-- [~] P1-8 인게임 검증: v4.1 3회(10-27 — 창이 끌리지 않음 → v4.2 카드로 재설계), v4.2.0 카드 표시·자리·아이콘 확인(10-28).
-  남은 것: 해설 색 문법·Tab(카드 설계 "검증" 절)
+- [x] P1-8 인게임 검증: v4.1 3회(10-27 — 창이 끌리지 않음 → v4.2 카드로 재설계), v4.2.0 카드 표시·자리·아이콘 확인(10-28),
+  해설 색 문법·Tab 확인(10-28, 사용자 스크린샷 + 진단 `tab_presses=11`)
 
 ## 5. 인게임 검증 (사용자 1회 실행)
 
@@ -162,7 +163,7 @@ AI hook 호출 수(`7 prior`), 관전 화면의 `client_scene_kind`(`2 scene`), 
 
 | 질문 | 판정 | 근거 |
 |---|---|---|
-| draft score hook으로 플레이어 드래프트 읽기 | 불가 | classic 06-11 + LT stable 실측 모두 배경 심만 발화 |
+| draft score hook으로 플레이어 드래프트 읽기 | 불필요 | 보드는 밴픽 화면에서 읽는다. 내 수동 픽은 훅을 거치지 않는다. stable에서 훅이 주는 것은 상대 AI의 후보 점수다(§2, E1 10-28) — 쓸모는 '읽기'가 아니라 AI 점수 모델 |
 | 게임 노드 텍스트 덮어쓰기 (`header.desc` 등) | 금지 | LT 브리지가 그 텍스트로 단계 판정 |
 | 이미지 노드에서 챔피언 식별 (`ui_state_json`) | 불가 | 이미지 상태는 `{}` (LT B1) — 그리드 타일로 읽는다 |
 | 추천기 창을 빈 공간에 두기 | 불가 | 1920×1080 밴픽 화면에 빈 공간이 없다(전체 레이아웃 추출, §2) — 정보 영역 위 + 드래그로 해결 |
