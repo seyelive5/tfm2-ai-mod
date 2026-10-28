@@ -4,13 +4,17 @@
 //! its previous decision of the same phase (made before the current turn) and
 //! the league average for that draft slot — every AI decision the draft hook has
 //! scored, each centered on its own mean. E1b: top-3 hit 94% for bans, 74% for
-//! picks; a learned board-delta model added nothing. Shown only when the player
-//! turns it on (F2 or the note card's chip); the score model is untouched.
-//! `observe` runs on the hook's threads, everything else on the main thread.
+//! picks in AI-vs-AI drafts; a learned board-delta model added nothing. The
+//! player's own matches hit less (0.7.0, 10-28: 7 of 15 where those rates
+//! expected ~12), so the line shows the player's own record instead. Shown only
+//! when the player turns it on (F2 or the note card's chip); the score model is
+//! untouched. `observe` runs on the hook's threads, everything else on the main
+//! thread.
 
 use crate::diag;
 use crate::markup;
 use crate::recommender::Board;
+use mod_api_stable::{StableUiEvent, UiEventKindV1};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
@@ -20,8 +24,9 @@ const BANS: usize = 2;
 const PICKS: usize = 10;
 /// After the bans, true = the side that acts first: A BB AA BB AA B (E1b, 286/286 sets).
 const PICK_FIRST: [bool; PICKS] = [true, false, false, true, true, false, false, true, true, false];
-/// E1b top-3 hit rate (%) per draft slot with this module's ranking; the last
-/// pick had no later hook call to grade it with.
+/// E1b top-3 hit rate (%) per draft slot with this module's ranking, in
+/// AI-vs-AI drafts; the last pick had no later hook call to grade it with.
+/// Logged beside each grade of the player's matches, no longer shown.
 const TOP3_PCT: [Option<u8>; 2 * BANS + PICKS] = [
     Some(97),
     Some(88),
@@ -255,6 +260,7 @@ pub(crate) struct Guess {
     pub phase: char,
     pub slot: usize,
     pub top: Vec<String>,
+    /// E1b's league rate for this slot, when ranked the way E1b measured it
     pub top3_pct: Option<u8>,
     /// the opponent's own earlier scores took part (else the league alone)
     pub with_last: bool,
@@ -302,16 +308,83 @@ pub(crate) fn guess(b: &Board, pool: &[String], scans: &Scans) -> Option<Guess> 
     })
 }
 
-/// "상대 다음 밴: A·B·C (적중 94%)" — the game's names where known.
-pub(crate) fn line(g: &Guess, names: &HashMap<String, String>) -> String {
+/// "상대 다음 밴: A·B·C (내 경기 3/5)" — the game's names where known, and the
+/// player's own record for the phase (top-3 hits / decisions graded) once it
+/// has one (Record::shown).
+pub(crate) fn line(g: &Guess, names: &HashMap<String, String>, record: Option<(u32, u32)>) -> String {
     let who: Vec<String> =
         g.top.iter().map(|c| markup::name(names.get(c).map_or(c.as_str(), |n| n.as_str()))).collect();
-    let rate = match g.top3_pct {
-        // the measured rate is for a list of three
-        Some(p) if g.top.len() >= 3 => markup::dim(&format!(" (적중 {}%)", p)),
+    let rate = match record {
+        // the record counts lists of three
+        Some((graded, hits)) if g.top.len() >= 3 => markup::dim(&format!(" (내 경기 {}/{})", hits, graded)),
         _ => String::new(),
     };
     format!("상대 다음 {}: {}{}", if g.phase == 'B' { "밴" } else { "픽" }, who.join("·"), rate)
+}
+
+/// The player's own matches under one game version: [bans, picks] →
+/// (decisions graded, top-1 hits, top-3 hits). A game update may change the
+/// AI, so a new version starts over. Kept in RECORD_FILE across sessions.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Record {
+    pub game: String,
+    pub graded: [(u32, u32, u32); 2],
+}
+
+/// Graded decisions of a phase before its record is shown: fewer is noise.
+const MIN_RECORD: u32 = 5;
+
+impl Record {
+    pub fn add(&mut self, phase: char, top1: bool, top3: bool) {
+        let e = &mut self.graded[(phase == 'P') as usize];
+        *e = (e.0 + 1, e.1 + top1 as u32, e.2 + top3 as u32);
+    }
+
+    /// (decisions graded, top-3 hits) for the line, once there are enough.
+    pub fn shown(&self, phase: char) -> Option<(u32, u32)> {
+        let (n, _, hits) = self.graded[(phase == 'P') as usize];
+        (n >= MIN_RECORD).then_some((n, hits))
+    }
+}
+
+pub(crate) fn format_record(r: &Record) -> String {
+    let [(bn, b1, b3), (pn, p1, p3)] = r.graded;
+    format!("game {}\nB {} {} {}\nP {} {} {}\n", r.game, bn, b1, b3, pn, p1, p3)
+}
+
+/// The record for `game`: the file's counts if they are that version's, else
+/// none yet. A row that does not add up is dropped.
+pub(crate) fn parse_record(s: &str, game: &str) -> Record {
+    let mut r = Record { game: game.to_string(), ..Default::default() };
+    let mut same = false;
+    for l in s.lines() {
+        match l.split_whitespace().collect::<Vec<_>>().as_slice() {
+            ["game", v] => same = *v == game,
+            [ph @ ("B" | "P"), n, t1, t3] => {
+                if let (Ok(n), Ok(t1), Ok(t3)) = (n.parse::<u32>(), t1.parse::<u32>(), t3.parse::<u32>()) {
+                    if t1 <= t3 && t3 <= n {
+                        r.graded[(*ph == "P") as usize] = (n, t1, t3);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if same {
+        r
+    } else {
+        Record { game: game.to_string(), ..Default::default() }
+    }
+}
+
+/// One guess graded against the opponent's actual move.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Grade {
+    pub phase: char,
+    pub top1: bool,
+    pub top3: bool,
+    /// the board_log line
+    pub line: String,
 }
 
 /// Every guess against the opponent's actual move (diag "11 opp").
@@ -326,8 +399,8 @@ pub(crate) struct Live {
 
 impl Live {
     /// Grades the held guess once the opponent's list for its phase grows, then
-    /// holds `now`. Returns the board_log line of a grade.
-    pub fn step(&mut self, enemy_ban: &[String], enemy_pick: &[String], now: Option<&Guess>) -> Option<String> {
+    /// holds `now`.
+    pub fn step(&mut self, enemy_ban: &[String], enemy_pick: &[String], now: Option<&Guess>) -> Option<Grade> {
         let list = |phase: char| if phase == 'B' { enemy_ban } else { enemy_pick };
         let mut graded = None;
         if let Some((g, then)) = self.held.take() {
@@ -340,17 +413,18 @@ impl Live {
                     let e = &mut self.graded[(g.phase == 'P') as usize];
                     *e = (e.0 + 1, e.1 + top1 as u32, e.2 + top3 as u32);
                     self.last = format!(
-                        "opp_next {} slot={} with_last={} league_n={} top=[{}] actual={} top1={} top3={}",
+                        "opp_next {} slot={} with_last={} league_n={} league_pct={} top=[{}] actual={} top1={} top3={}",
                         g.phase,
                         g.slot + 1,
                         g.with_last as u8,
                         g.league_n,
+                        g.top3_pct.map_or_else(|| "-".to_string(), |p| p.to_string()),
                         g.top.join(","),
                         actual,
                         top1 as u8,
                         top3 as u8
                     );
-                    graded = Some(self.last.clone());
+                    graded = Some(Grade { phase: g.phase, top1, top3, line: self.last.clone() });
                 }
                 // shorter: a new set began, the guess goes ungraded
                 std::cmp::Ordering::Less => {}
@@ -385,6 +459,10 @@ static CLICKS: AtomicU32 = AtomicU32::new(0);
 static TICK: AtomicU32 = AtomicU32::new(0);
 /// "on" in %LOCALAPPDATA%/tfm2-overlay/opp_next.txt shows the line (default off)
 const SETTING: &str = "opp_next.txt";
+/// the player's own record (Record), next to SETTING
+const RECORD_FILE: &str = "opp_next_hits.txt";
+static RECORD: Mutex<Option<Record>> = Mutex::new(None);
+static CHIP_LOG: Mutex<ChipLog> = Mutex::new(ChipLog::new());
 
 /// The draft hook, any thread: one scored candidate.
 pub(crate) fn observe(c: &Call, board: impl FnOnce() -> Vec<String>) {
@@ -417,10 +495,34 @@ pub(crate) fn frame(b: Option<&Board>, pool: &[String], names: &HashMap<String, 
         );
         (g, graded)
     };
-    if let Some(l) = graded {
-        diag::log_line(&l);
+    if let Some(gr) = graded {
+        diag::log_line(&gr.line);
+        record_grade(&gr);
     }
-    g.map(|g| line(&g, names))
+    g.map(|g| line(&g, names, record_shown(g.phase)))
+}
+
+/// Mod init: this game version's record (a new version starts with none).
+pub(crate) fn load_record(game: &str) {
+    let s = std::fs::read_to_string(format!("{}/{}", diag::base(), RECORD_FILE)).unwrap_or_default();
+    if let Ok(mut r) = RECORD.lock() {
+        *r = Some(parse_record(&s, game));
+    }
+}
+
+fn record_grade(gr: &Grade) {
+    let body = {
+        let Ok(mut r) = RECORD.lock() else { return };
+        let Some(r) = r.as_mut() else { return };
+        r.add(gr.phase, gr.top1, gr.top3);
+        format_record(r)
+    };
+    let _ = std::fs::create_dir_all(diag::base());
+    diag::atomic_write(&format!("{}/{}", diag::base(), RECORD_FILE), &body);
+}
+
+fn record_shown(phase: char) -> Option<(u32, u32)> {
+    RECORD.lock().ok().and_then(|r| r.as_ref().and_then(|r| r.shown(phase)))
 }
 
 /// Each InGame frame: the diag section, every 30 frames.
@@ -428,16 +530,20 @@ pub(crate) fn tick() {
     if TICK.fetch_add(1, Ordering::Relaxed) % 30 != 0 {
         return;
     }
+    let record = RECORD.lock().ok().and_then(|r| r.as_ref().map(format_record)).unwrap_or_default();
+    let chip = CHIP_LOG.lock().map(|l| l.summary()).unwrap_or_default();
     let body = {
         let Ok(mut st) = STATE.lock() else { return };
         let st = st.get_or_insert_with(State::default);
         let [(bn, b1, b3), (pn, p1, p3)] = st.live.graded;
         format!(
-            "on={} toggles={} chip_clicks={} (F2 or the note card's chip; {})\nnow: {}\n\
-             graded bans n={} top1={} top3={} | picks n={} top1={} top3={}\nlast: {}\n{}",
+            "on={} toggles={} chip: register_click={} {} (F2 or the note card's chip; {})\nnow: {}\n\
+             graded this session: bans n={} top1={} top3={} | picks n={} top1={} top3={}\n\
+             record ({}, shown from {} a phase): {}\nlast: {}\n{}",
             on(),
             TOGGLES.load(Ordering::Relaxed),
             CLICKS.load(Ordering::Relaxed),
+            chip,
             SETTING,
             if st.now.is_empty() { "-" } else { &st.now },
             bn,
@@ -446,6 +552,9 @@ pub(crate) fn tick() {
             pn,
             p1,
             p3,
+            RECORD_FILE,
+            MIN_RECORD,
+            record.trim_end().replace('\n', " | "),
             if st.live.last.is_empty() { "-" } else { &st.live.last },
             st.scans.summary()
         )
@@ -502,6 +611,49 @@ pub(crate) fn toggle() {
 pub(crate) fn clicked() {
     CLICKS.fetch_add(1, Ordering::Relaxed);
     CLICKED.store(true, Ordering::Relaxed);
+}
+
+/// Every UI event that reached the chip's path (`ui_register_path_events`).
+/// 0.7.0 (10-28): nine toggles, all F2, and the click handler never ran — this
+/// shows whether a click arrives at all, and in what shape.
+pub(crate) struct ChipLog {
+    pub events: u32,
+    pub clicks: u32,
+    /// the first few, as the host described them
+    pub first: Vec<String>,
+}
+
+impl ChipLog {
+    pub const fn new() -> ChipLog {
+        ChipLog { events: 0, clicks: 0, first: Vec::new() }
+    }
+
+    /// Notes one event; true for a click.
+    pub fn note(&mut self, ev: Option<&StableUiEvent>) -> bool {
+        self.events += 1;
+        let click = ev.map_or(false, |e| e.kind == Some(UiEventKindV1::Click));
+        self.clicks += click as u32;
+        if self.first.len() < 4 {
+            self.first.push(ev.map_or_else(
+                || "-".to_string(),
+                |e| format!("{:?} {} {}", e.kind, e.path, e.payload_json.chars().take(80).collect::<String>()),
+            ));
+        }
+        click
+    }
+
+    fn summary(&self) -> String {
+        format!("path_events={} path_clicks={} first=[{}]", self.events, self.clicks, self.first.join(" ; "))
+    }
+}
+
+/// The chip's path-event handler (a reduced client context): a click toggles
+/// like the click handler does.
+pub(crate) fn chip_event(ev: Option<StableUiEvent>) {
+    let click = CHIP_LOG.lock().map_or(false, |mut l| l.note(ev.as_ref()));
+    if click {
+        CLICKED.store(true, Ordering::Relaxed);
+    }
 }
 
 /// One toggle per frame, however many handlers the chip has collected.
@@ -761,18 +913,58 @@ mod tests {
     }
 
     #[test]
-    fn the_line_names_three_and_the_measured_rate() {
+    fn the_line_names_three_and_my_matches_record() {
         let names: HashMap<String, String> =
             [("monk", "몽크"), ("executioner", "처형자"), ("knight", "기사")].iter().map(|&(a, b)| (a.to_string(), b.to_string())).collect();
-        let l = line(&guessed('B', 1, &["monk", "executioner", "knight"], Some(94)), &names);
-        assert_eq!(markup::plain(&l), "상대 다음 밴: 몽크·처형자·기사 (적중 94%)");
+        let l = line(&guessed('B', 1, &["monk", "executioner", "knight"], Some(94)), &names, Some((5, 3)));
+        assert_eq!(markup::plain(&l), "상대 다음 밴: 몽크·처형자·기사 (내 경기 3/5)");
     }
 
     #[test]
-    fn the_line_drops_a_rate_it_does_not_have() {
-        assert_eq!(markup::plain(&line(&guessed('P', 13, &["a", "b", "c"], None), &HashMap::new())), "상대 다음 픽: a·b·c");
-        // the rate is for a list of three
-        assert_eq!(markup::plain(&line(&guessed('P', 5, &["a", "b"], Some(70)), &HashMap::new())), "상대 다음 픽: a·b");
+    fn the_line_drops_a_record_it_does_not_have() {
+        let none = HashMap::new();
+        assert_eq!(markup::plain(&line(&guessed('P', 13, &["a", "b", "c"], None), &none, None)), "상대 다음 픽: a·b·c");
+        // the league's measured rate overstated the player's own matches: not shown
+        assert_eq!(markup::plain(&line(&guessed('P', 5, &["a", "b", "c"], Some(92)), &none, None)), "상대 다음 픽: a·b·c");
+        // the record counts lists of three
+        assert_eq!(markup::plain(&line(&guessed('P', 5, &["a", "b"], Some(70)), &none, Some((10, 4)))), "상대 다음 픽: a·b");
+    }
+
+    #[test]
+    fn the_record_shows_once_a_phase_has_five_grades() {
+        let mut r = Record { game: "0.7.0".to_string(), ..Default::default() };
+        for i in 0..4 {
+            r.add('P', false, i % 2 == 0);
+        }
+        assert_eq!(r.shown('P'), None);
+        r.add('P', true, true);
+        assert_eq!(r.shown('P'), Some((5, 3)));
+        assert_eq!(r.graded[1], (5, 1, 3));
+        assert_eq!(r.shown('B'), None, "bans count apart");
+    }
+
+    #[test]
+    fn the_record_round_trips_through_its_file() {
+        let r = Record { game: "0.7.0".to_string(), graded: [(5, 1, 3), (10, 1, 4)] };
+        assert_eq!(format_record(&r), "game 0.7.0\nB 5 1 3\nP 10 1 4\n");
+        assert_eq!(parse_record(&format_record(&r), "0.7.0"), r);
+    }
+
+    #[test]
+    fn a_new_game_version_starts_the_record_over() {
+        let r = Record { game: "0.7.0".to_string(), graded: [(5, 1, 3), (10, 1, 4)] };
+        let fresh = |game: &str| Record { game: game.to_string(), ..Default::default() };
+        assert_eq!(parse_record(&format_record(&r), "0.7.1"), fresh("0.7.1"));
+        assert_eq!(parse_record("", "0.7.0"), fresh("0.7.0"), "no file yet");
+        assert_eq!(parse_record("B 5 1 3\n", "0.7.0"), fresh("0.7.0"), "no version: whose counts?");
+    }
+
+    #[test]
+    fn a_damaged_record_row_is_dropped() {
+        let r = parse_record("game 0.7.0\nB 5 x 3\nP 4 1 9\nzz\n", "0.7.0");
+        assert_eq!(r.graded, [(0, 0, 0), (0, 0, 0)]);
+        // more hits than decisions, or a top-1 hit outside the top three
+        assert_eq!(parse_record("game 0.7.0\nB 5 4 3\n", "0.7.0").graded[0], (0, 0, 0));
     }
 
     #[test]
@@ -781,8 +973,11 @@ mod tests {
         let g = guessed('B', 1, &["a", "b", "c"], Some(88));
         assert_eq!(live.step(&[], &[], Some(&g)), None, "held");
         assert_eq!(live.step(&[], &[], Some(&g)), None, "the opponent still deciding");
-        let log = live.step(&s(&["b"]), &[], None).expect("graded");
-        assert!(log.contains("actual=b") && log.contains("top1=0") && log.contains("top3=1"), "{}", log);
+        let gr = live.step(&s(&["b"]), &[], None).expect("graded");
+        assert_eq!((gr.phase, gr.top1, gr.top3), ('B', false, true));
+        assert!(gr.line.contains("actual=b") && gr.line.contains("top1=0") && gr.line.contains("top3=1"), "{}", gr.line);
+        // the league's rate for that slot stays in the log, to set beside the record
+        assert!(gr.line.contains("league_pct=88"), "{}", gr.line);
         assert_eq!(live.graded[0], (1, 0, 1));
         assert_eq!(live.step(&s(&["b"]), &[], None), None, "graded once");
     }
@@ -793,8 +988,27 @@ mod tests {
         live.step(&[], &[], Some(&guessed('B', 1, &["a", "b", "c"], Some(88))));
         // my ban changed the board while the opponent waited
         live.step(&[], &[], Some(&guessed('B', 1, &["d", "e", "f"], Some(88))));
-        let log = live.step(&s(&["d"]), &[], None).expect("graded");
-        assert!(log.contains("top1=1"), "{}", log);
+        let gr = live.step(&s(&["d"]), &[], None).expect("graded");
+        assert!(gr.top1 && gr.line.contains("top1=1"), "{}", gr.line);
+    }
+
+    #[test]
+    fn a_click_reaching_the_chip_toggles_and_every_event_is_logged() {
+        let ev = |kind: Option<UiEventKindV1>, payload: &str| StableUiEvent {
+            kind,
+            path: "main.champion_info.tfm2dc_opp".to_string(),
+            payload_json: payload.to_string(),
+        };
+        let mut l = ChipLog::new();
+        assert!(l.note(Some(&ev(Some(UiEventKindV1::Click), "{\"item\":\"\"}"))));
+        assert!(!l.note(Some(&ev(Some(UiEventKindV1::Changed), "{}"))), "not a click");
+        assert!(!l.note(None), "the host described nothing");
+        assert_eq!((l.events, l.clicks), (3, 1));
+        assert!(l.first[0].contains("Click") && l.first[0].contains("tfm2dc_opp") && l.first[0].contains("item"), "{:?}", l.first);
+        for _ in 0..10 {
+            l.note(None);
+        }
+        assert_eq!((l.events, l.first.len()), (13, 4), "every event counted, the first few kept");
     }
 
     #[test]

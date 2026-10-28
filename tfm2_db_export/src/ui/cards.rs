@@ -762,6 +762,8 @@ fn chip_source((x, y): (i32, i32)) -> String {
 
 /// The chip under `place.parent` (spawned when missing, retried every 120
 /// frames), its click handler registered with each spawn — F2 does the same.
+/// A path-event handler too: on 0.7.0 the click handler never ran (10-28), and
+/// it logs whatever does reach the chip (foresee::ChipLog).
 fn ensure_chip(ctx: &mut StableClient, st: &mut UiState, place: &Place) -> bool {
     let path = format!("{}.{}", place.parent, OPP);
     if ctx.ui_exists(&path) {
@@ -779,6 +781,7 @@ fn ensure_chip(ctx: &mut StableClient, st: &mut UiState, place: &Place) -> bool 
     }
     st.chip_fail_at = None;
     st.chip_click = Some(ctx.ui_register_click(&path, "", |_| crate::foresee::clicked()));
+    st.chip_events = Some(ctx.ui_register_path_events(&path, |c| crate::foresee::chip_event(c.ui_current_event())));
     true
 }
 

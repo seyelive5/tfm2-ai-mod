@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub(crate) const MOD_TAG: &str = "tfm2_db_export v4.3.0";
+pub(crate) const MOD_TAG: &str = "tfm2_db_export v4.3.1";
 
 /// Numeric per-component version key ("2026.10.0" sorts above "2026.2.0").
 pub(crate) fn vkey(v: &str) -> Vec<u32> {
@@ -264,6 +264,7 @@ fn init(host: &StableHost) -> StableMod {
     );
     diag::log_line(&format!("init {} game {}.{}.{}", MOD_TAG, v.major, v.minor, v.patch));
     foresee::load_setting();
+    foresee::load_record(&format!("{}.{}.{}", v.major, v.minor, v.patch));
     let mut m = StableMod::new("tfm2_db_export");
     m.set_extension(Coach);
     m.add_draft_score_hook(prior::Hook);

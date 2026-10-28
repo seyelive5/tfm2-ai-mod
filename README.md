@@ -12,7 +12,8 @@
 > draws tier tags, pick/ban highlights and two game-style recommendation cards onto the game's own
 > ban/pick screen — no external window, no launcher.
 
-> **상태 (2026-10-28): v4.3.0 — 게임 카드 UI(인게임 확인) + 상대 다음 수 후보(새 기능, 인게임 확인 전)** (게임 0.6.5).
+> **상태 (2026-10-28): v4.3.1 — 게임 카드 UI(인게임 확인) + 상대 다음 수 후보(F2 인게임 확인, 버튼 클릭은 확인 전)**
+> (게임 0.7.0 확인, 클래식 UI. 새 UI 스타일은 아직 확인하지 않았습니다).
 > 게임 0.6부터 게임사가 classic 모드 SDK 지원을 끝내서, 게임 0.6.5+의 **stable 모드 API**로 다시 작성했습니다.
 > 카드 표시, 해설 글자 색, Tab 숨기기를 모두 게임에서 확인했습니다.
 > 계획·점검 결과: [`ROADMAP.md`](ROADMAP.md), 다음 단계: [고도화 검토](docs/research/2026-10-28-advanced-directions.md).
@@ -26,8 +27,11 @@
     "AI 분석관" 해설 카드. Tab으로 숨기기/보이기.
   - 표본이 적은 티어는 흐리게 그립니다. 세이브 초반처럼 전부 불확실하면 순위 카드에 "티어 잠정"이라고 표시합니다.
 - **상대 다음 수 후보 (옵트인, F2 또는 해설 카드의 `상대 수 · F2` 버튼)** — 해설 카드 첫 줄에 상대 AI의 다음 밴·픽
-  후보 셋을 보여 줍니다. 순번별 실측 적중률(3위 안: 밴 약 94%, 픽 약 74%)도 함께 나옵니다. 게임의 드래프트 AI가 매긴 점수(상대의
-  직전 점수 + 리그 평균)로 계산하며, 추천 점수에는 넣지 않습니다. 근거: [고도화 검토](docs/research/2026-10-28-advanced-directions.md) E1b.
+  후보 셋을 보여 줍니다. 게임의 드래프트 AI가 매긴 점수(상대의 직전 점수 + 리그 평균)로 계산하며, 추천 점수에는 넣지 않습니다.
+  - 후보 옆 숫자는 **내 경기에서 실제로 맞힌 기록**입니다. 예: `(내 경기 4/10)` = 상대의 결정 10번 중 4번이 후보 셋 안에
+    들었다는 뜻입니다. 밴·픽을 따로 세고, 5번 이상 채점된 뒤부터 보입니다.
+  - AI끼리 붙은 드래프트에서는 3위 안 적중이 밴 약 94%, 픽 약 74%였습니다. 사람을 상대로 한 판에서는 더 낮았습니다(게임 0.7.0
+    첫 측정 15번 중 7번). 근거: [고도화 검토](docs/research/2026-10-28-advanced-directions.md) E1b·E1c.
 - **게임 화면은 건드리지 않음** — 표시는 전부 모드가 만든 노드이고 클릭은 게임으로 그대로 통과합니다.
   LT AI Coach 등 다른 모드와 함께 켤 수 있습니다.
 - **점수 모델** (v3.0과 동일)
@@ -48,7 +52,7 @@
 
 | 폴더 | 내용 |
 |---|---|
-| `tfm2_db_export/` | **제품** — 추천기 모드 본체(v4.2, stable API): `db`(경기 기록 → 통계) · `board`(밴픽 읽기) · `recommender` · `prior`(게임 AI 사전) · `ui`(게임 카드·칸 태그) · `markup`(게임 글자 색 문법) · `diag`·`probe`(진단 파일·덤프) |
+| `tfm2_db_export/` | **제품** — 추천기 모드 본체(v4.3, stable API): `db`(경기 기록 → 통계) · `board`(밴픽 읽기) · `recommender` · `prior`(게임 AI 사전) · `foresee`(상대 다음 수 후보) · `ui`(게임 카드·칸 태그) · `markup`(게임 글자 색 문법) · `diag`·`probe`(진단 파일·덤프) |
 | `draft-overlay/` | 점수 엔진 `src/engine.rs`(`tfm2_db_export`가 `#[path]`로 공유) + 검증 하네스(`src/bin/validate-terms.rs`, `backtest.rs`) + 구 hudhook 오버레이 |
 | `draft-weights-gen/` | 구 가중치 생성기(구 오버레이용) |
 | `tfm2_bp_reader/` | 라이브 밴픽 읽기 프로토타입(classic) — `tfm2_db_export`에 통합됨 |

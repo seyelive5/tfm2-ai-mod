@@ -191,11 +191,12 @@ struct UiState {
     tabs: usize,
     keys: Vec<String>,
     /// the note card's chip: frame of a failed spawn (retried every 120 frames),
-    /// spawn counts, and whether the host took its click handler
+    /// spawn counts, and whether the host took its click and path-event handlers
     chip_fail_at: Option<u64>,
     chip_spawns: usize,
     chip_fails: usize,
     chip_click: Option<bool>,
+    chip_events: Option<bool>,
     /// frame of the last opponent-line toggle, and F2 presses seen
     opp_at: Option<u64>,
     f2s: usize,
@@ -285,7 +286,7 @@ pub(crate) fn stamp(ctx: &mut StableClient, view: &View) {
         diag::set(
             "6 ui",
             format!(
-                "cards parent={:?} mode={:?} hidden_by_tab={} yield_to={:?} tier_dim={:?} markup_on={}\nrank at={:?} rect={:?} vis={:?} | note at={:?} rect={:?} vis={:?}\ninfo_visible={:?} swap_visible={:?} my_blue={:?} step={:?}\ntiles on_screen={} with_nodes={} ranked={} tagged={} spawn_retry={}\nspawns={} spawn_fails={} set_fails={} icon_fails={} readback_bad={}\ntab_presses={} keys_seen={:?} search_state={:?}\nopp chip spawns={} fails={} click_registered={:?} vis={:?} f2_presses={}",
+                "cards parent={:?} mode={:?} hidden_by_tab={} yield_to={:?} tier_dim={:?} markup_on={}\nrank at={:?} rect={:?} vis={:?} | note at={:?} rect={:?} vis={:?}\ninfo_visible={:?} swap_visible={:?} my_blue={:?} step={:?}\ntiles on_screen={} with_nodes={} ranked={} tagged={} spawn_retry={}\nspawns={} spawn_fails={} set_fails={} icon_fails={} readback_bad={}\ntab_presses={} keys_seen={:?} search_state={:?}\nopp chip spawns={} fails={} click_registered={:?} events_registered={:?} vis={:?} f2_presses={}",
                 st.parent,
                 st.mode,
                 st.hidden,
@@ -318,6 +319,7 @@ pub(crate) fn stamp(ctx: &mut StableClient, view: &View) {
                 st.chip_spawns,
                 st.chip_fails,
                 st.chip_click,
+                st.chip_events,
                 ctx.ui_visible(&format!("{}.{}", place.parent, cards::OPP)),
                 st.f2s,
             ),
