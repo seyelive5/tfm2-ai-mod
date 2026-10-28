@@ -515,6 +515,356 @@ struct Terms {
     win: bool,
 }
 
+// ---------- E7a (2026-10-29): the tag theory where the engine actually uses it ----------
+// engine.rs adds 0.5·(1−conf)·(tag_synergy + tag_counter) to each pick and the
+// counter half to bans; conf = min(M/200, 1), and M = the CURRENT patch's
+// matches + a fading 0.35 share of the previous patch's (recommender.rs
+// patch_current). So the theory is live through a new save's first 200 matches
+// and briefly at each patch start. The S0-4 models assumed theory = 0 and never
+// scored it. Pre-registered in docs/research/2026-10-28-advanced-directions.md
+// (E7a) before the first run.
+const E7_COMP_UNIT: f64 = 0.12; // engine COMP_UNIT
+const E7_W_COMP: f64 = 0.2; // engine W_COMP
+const E7_CONF_FULL: f64 = 200.0; // engine FULL_CONF_MATCHES = recommender CONF_FULL
+const E7_CAP: f64 = 0.02; // variant (c): a champ's theory total at most this
+
+// E7-REPLICA-BEGIN — engine tag_synergy / tag_counter / comp_need (tags only).
+// Checked against the engine's own score_pick_in / score_ban before the first run.
+fn tx_has(taxon: &HashMap<String, Taxon>, c: &str, tag: &str) -> bool {
+    taxon.get(c).map_or(false, |t| t.tags.iter().any(|x| x == tag))
+}
+fn tx_cat<'a>(taxon: &'a HashMap<String, Taxon>, c: &str) -> &'a str {
+    taxon.get(c).map_or("", |t| t.category.as_str())
+}
+fn e7_tag_synergy(taxon: &HashMap<String, Taxon>, cand: &str, allies: &[&str]) -> f64 {
+    let team = |tag: &str| allies.iter().any(|a| tx_has(taxon, a, tag));
+    let has = |tag: &str| tx_has(taxon, cand, tag);
+    let mut s = 0.0;
+    if team("CC") && (has("AOE") || has("DOT")) {
+        s += 0.5;
+    }
+    if team("AOE") && has("CC") {
+        s += 0.5;
+    }
+    if (team("Backline") || allies.iter().any(|a| tx_cat(taxon, a) == "Range"))
+        && (has("Heal") || has("Shield") || has("CC"))
+    {
+        s += 0.5;
+    }
+    s * E7_COMP_UNIT
+}
+fn e7_tag_counter(taxon: &HashMap<String, Taxon>, cand: &str, enemies: &[&str]) -> f64 {
+    let cnt = |tag: &str| enemies.iter().filter(|e| tx_has(taxon, e, tag)).count() as f64;
+    let cat = |c: &str| enemies.iter().filter(|e| tx_cat(taxon, e) == c).count() as f64;
+    let has = |tag: &str| tx_has(taxon, cand, tag);
+    let mut s = 0.0;
+    let backline = cnt("Backline") + cat("Range");
+    if backline >= 2.0 && (has("Mobility") || tx_cat(taxon, cand) == "Assassin") {
+        s += 0.4 * (backline - 1.0).min(3.0);
+    }
+    let front = cnt("Tank") + cnt("Frontline");
+    if front >= 2.0 && (has("Poke") || has("DOT")) {
+        s += 0.4 * (front - 1.0).min(3.0);
+    }
+    if cnt("Poke") >= 2.0 && (has("Frontline") || has("Mobility")) {
+        s += 0.3;
+    }
+    if cnt("CC") >= 3.0 && (has("Mobility") || has("Shield")) {
+        s += 0.3;
+    }
+    s * E7_COMP_UNIT
+}
+fn e7_comp_need(taxon: &HashMap<String, Taxon>, cand: &str, allies: &[&str]) -> f64 {
+    if allies.is_empty() {
+        return 0.0;
+    }
+    let any = |tag: &str| allies.iter().any(|a| tx_has(taxon, a, tag));
+    let has = |tag: &str| tx_has(taxon, cand, tag);
+    let mut s = 0.0;
+    if !any("Tank") && has("Tank") {
+        s += E7_COMP_UNIT * 0.2;
+    } else if !any("Frontline") && has("Frontline") {
+        s += E7_COMP_UNIT * 0.2;
+    }
+    if !any("CC") && has("CC") {
+        s += E7_COMP_UNIT * 0.3;
+    }
+    if !(any("Heal") || any("Shield")) && (has("Heal") || has("Shield")) {
+        s += E7_COMP_UNIT * 0.85;
+    }
+    if !(any("Backline") || allies.iter().any(|a| tx_cat(taxon, a) == "Range"))
+        && (has("Backline") || tx_cat(taxon, cand) == "Range")
+    {
+        s += E7_COMP_UNIT * 0.3;
+    }
+    s * (allies.len() as f64 / 4.0).min(1.0)
+}
+// E7-REPLICA-END
+
+/// one scored match for E7a; every score is blue − red, each champ scored as
+/// the LAST pick (allies = its four teammates, enemies = the five opponents)
+struct E7Rec {
+    /// the product's evidence count at this match (theory weight = 1 − M/200)
+    m_ev: f64,
+    w: f64,
+    /// primary anchor: Σ(delta_for + patch nudge) + comp — the shipped pick score
+    /// minus the theory, the AI prior and af. The classic AI file is one late
+    /// snapshot, not the value at match time, and has no signal alone (50.2%).
+    anchor: f64,
+    /// Σ delta_for only
+    strength: f64,
+    /// Σ the shipped AI prior term (secondary anchor = anchor + this)
+    prior: f64,
+    syn: f64,    // Σ 0.5·w·tag_synergy
+    cnt: f64,    // Σ 0.5·w·tag_counter
+    capped: f64, // Σ min(0.5·w·(synergy + counter), E7_CAP)
+    win: bool,
+}
+
+/// `career` false: every patch replayed as a fresh save — patch-local tables,
+/// no previous patch, no notes (a player's first patch). true: the shipped
+/// career state — previous patch at 0.35, the notes' resets and nudges, and M
+/// with the previous patch's fading share.
+fn e7_records(
+    matches: &[Match],
+    groups: &[usize],
+    vsorted: &[Vec<u32>],
+    taxon: &HashMap<String, Taxon>,
+    ai_intr: &HashMap<String, f64>,
+    notes: &HashMap<String, Changed>,
+    career: bool,
+) -> Vec<E7Rec> {
+    let empty: Changed = HashMap::new();
+    let mut out = Vec::new();
+    for g in 0..vsorted.len() {
+        let mut prev_c: HashMap<&str, WL> = HashMap::new();
+        let mut prev_cp: HashMap<(&str, usize), WL> = HashMap::new();
+        let mut prev_total = 0.0;
+        let mut changed = &empty;
+        if career && g >= 1 {
+            for (i, m) in matches.iter().enumerate() {
+                if groups[i] != g - 1 {
+                    continue;
+                }
+                prev_total += 1.0;
+                for (team, won) in [(&m.blue, m.blue_win), (&m.red, !m.blue_win)] {
+                    for a in team {
+                        prev_c.entry(&a.champ).or_default().rec(won);
+                        if a.lane < 5 {
+                            prev_cp.entry((&a.champ, a.lane)).or_default().rec(won);
+                        }
+                    }
+                }
+            }
+            let label = vsorted[g].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".");
+            changed = notes.get(&label).unwrap_or(&empty);
+        }
+        let mut idx: Vec<usize> = (0..matches.len()).filter(|&i| groups[i] == g).collect();
+        idx.sort_by_key(|&i| matches[i].id);
+        let mut cur_c: HashMap<&str, WL> = HashMap::new();
+        let mut cur_cp: HashMap<(&str, usize), WL> = HashMap::new();
+        for (k, &i) in idx.iter().enumerate() {
+            let m = &matches[i];
+            let total = k as f64;
+            let m_ev = total + (PROD_PREV_W * (1.0 - (total / E7_CONF_FULL).min(1.0)) * prev_total).round();
+            let w = 1.0 - (m_ev / E7_CONF_FULL).min(1.0);
+            if w > 0.0 {
+                // engine chg_nudge: count-scaled ±(0.01 + 0.005·min(n,4)), '~' by its
+                // buff/nerf balance, fading over the champ's first 30 games
+                let nudge = |c: &str| -> f64 {
+                    let Some(&(dir, b, nrf)) = changed.get(c) else { return 0.0 };
+                    let n = b + nrf;
+                    let uni = 0.01 + 0.005 * (if n == 0 { 2 } else { n.min(4) }) as f64;
+                    let d = match dir {
+                        '+' => uni,
+                        '-' => -uni,
+                        '~' if n > 0 => 0.02 * (b as f64 - nrf as f64) / n as f64 * (n as f64 / 4.0).min(1.0),
+                        _ => return 0.0,
+                    };
+                    let gm = prod_games(c, &cur_c, &prev_c, changed);
+                    if gm <= 0.0 {
+                        return d;
+                    }
+                    d * (1.0 - (gm / 30.0).min(1.0)).max(0.0)
+                };
+                let prior = |c: &str| -> f64 {
+                    let Some(&p) = ai_intr.get(c) else { return 0.0 };
+                    let gm = prod_games(c, &cur_c, &prev_c, changed);
+                    let fresh = if gm <= 0.0 { 1.0 } else { (1.0 - gm / 15.0).max(0.0) };
+                    (0.4 * p * fresh).clamp(-0.024, 0.024)
+                };
+                let side = |team: &[Ath], opp: &[Ath]| -> [f64; 6] {
+                    let enemies: Vec<&str> = opp.iter().map(|a| a.champ.as_str()).collect();
+                    let mut s = [0.0; 6]; // anchor, strength, prior, syn, cnt, capped
+                    for (j, a) in team.iter().enumerate() {
+                        let allies: Vec<&str> =
+                            team.iter().enumerate().filter(|(x, _)| *x != j).map(|(_, b)| b.champ.as_str()).collect();
+                        let d = prod_delta_for(&a.champ, a.lane, &cur_c, &prev_c, &cur_cp, &prev_cp, changed);
+                        let sy = 0.5 * w * e7_tag_synergy(taxon, &a.champ, &allies);
+                        let cn = 0.5 * w * e7_tag_counter(taxon, &a.champ, &enemies);
+                        s[0] += d + nudge(&a.champ) + E7_W_COMP * e7_comp_need(taxon, &a.champ, &allies);
+                        s[1] += d;
+                        s[2] += prior(&a.champ);
+                        s[3] += sy;
+                        s[4] += cn;
+                        s[5] += (sy + cn).min(E7_CAP);
+                    }
+                    s
+                };
+                let (b, r) = (side(&m.blue, &m.red), side(&m.red, &m.blue));
+                out.push(E7Rec {
+                    m_ev,
+                    w,
+                    anchor: b[0] - r[0],
+                    strength: b[1] - r[1],
+                    prior: b[2] - r[2],
+                    syn: b[3] - r[3],
+                    cnt: b[4] - r[4],
+                    capped: b[5] - r[5],
+                    win: m.blue_win,
+                });
+            }
+            for (team, won) in [(&m.blue, m.blue_win), (&m.red, !m.blue_win)] {
+                for a in team {
+                    cur_c.entry(&a.champ).or_default().rec(won);
+                    if a.lane < 5 {
+                        cur_cp.entry((&a.champ, a.lane)).or_default().rec(won);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// accuracy (ties = 0.5) and the paired difference alt − base with a 95%
+/// bootstrap interval over `set` (1000 match resamples, fixed seed — the same
+/// draws for every comparison)
+fn e7_paired(recs: &[E7Rec], set: &[usize], base: &dyn Fn(&E7Rec) -> f64, alt: &dyn Fn(&E7Rec) -> f64) -> (f64, f64, f64, f64) {
+    let corr = |s: f64, win: bool| {
+        if s.abs() < 1e-12 {
+            0.5
+        } else if (s > 0.0) == win {
+            1.0
+        } else {
+            0.0
+        }
+    };
+    let d: Vec<f64> = set.iter().map(|&i| corr(alt(&recs[i]), recs[i].win) - corr(base(&recs[i]), recs[i].win)).collect();
+    let acc = set.iter().map(|&i| corr(alt(&recs[i]), recs[i].win)).sum::<f64>() / set.len().max(1) as f64 * 100.0;
+    let n = d.len();
+    if n == 0 {
+        return (acc, 0.0, 0.0, 0.0);
+    }
+    let mut rng: u64 = 20260705; // the S0-4 seed and percentile convention
+    let mut boot: Vec<f64> = (0..1000)
+        .map(|_| {
+            let mut s = 0.0;
+            for _ in 0..n {
+                rng ^= rng << 13;
+                rng ^= rng >> 7;
+                rng ^= rng << 17;
+                s += d[(rng % n as u64) as usize];
+            }
+            s / n as f64 * 100.0
+        })
+        .collect();
+    boot.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    (acc, d.iter().sum::<f64>() / n as f64 * 100.0, boot[25], boot[975])
+}
+
+fn e7_report(fresh: &[E7Rec], career: &[E7Rec]) {
+    let all: Vec<usize> = (0..fresh.len()).collect();
+    let moved = fresh.iter().filter(|r| (r.syn + r.cnt).abs() > 1e-12).count();
+    println!(
+        "\nE7a TAG THEORY (pre-registered) — each patch replayed as a fresh save: patch-local tables, no previous patch, no notes; M = matches already seen in that patch; scored while M < {:.0}:",
+        E7_CONF_FULL
+    );
+    println!(
+        "  scored {} matches · mean theory weight {:.2} · theory moves the match score in {:.0}% · mean |theory diff| {:.4}",
+        fresh.len(),
+        fresh.iter().map(|r| r.w).sum::<f64>() / fresh.len().max(1) as f64,
+        100.0 * moved as f64 / fresh.len().max(1) as f64,
+        fresh.iter().map(|r| (r.syn + r.cnt).abs()).sum::<f64>() / fresh.len().max(1) as f64
+    );
+    let anchor = |r: &E7Rec| r.anchor;
+    let (acc_a, ..) = e7_paired(fresh, &all, &anchor, &anchor);
+    println!("  anchor A = Σ(delta_for + patch nudge) + comp (shipped pick score minus theory, AI prior, af): {:.1}%", acc_a);
+    let (acc_t, ..) = e7_paired(fresh, &all, &anchor, &|r: &E7Rec| r.syn + r.cnt);
+    println!("  theory alone (sign of synergy + counter)          : {:.1}%", acc_t);
+    let line = |name: &str, set: &[usize], base: &dyn Fn(&E7Rec) -> f64, alt: &dyn Fn(&E7Rec) -> f64| -> f64 {
+        let (acc, d, lo, hi) = e7_paired(fresh, set, base, alt);
+        println!("  {:<50}: {:>5.1}%  Δ {:+.1} [{:+.1}, {:+.1}]", name, acc, d, lo, hi);
+        lo
+    };
+    line("A + shipped theory (synergy + counter)", &all, &anchor, &|r: &E7Rec| r.anchor + r.syn + r.cnt);
+    let lo_syn = line("A + synergy half", &all, &anchor, &|r: &E7Rec| r.anchor + r.syn);
+    let lo_cnt = line("A + counter half", &all, &anchor, &|r: &E7Rec| r.anchor + r.cnt);
+    let lo_full = {
+        let (_, _, lo, _) = e7_paired(fresh, &all, &anchor, &|r: &E7Rec| r.anchor + r.syn + r.cnt);
+        lo
+    };
+    line("A + (a) counter 0, synergy × 1/4", &all, &anchor, &|r: &E7Rec| r.anchor + 0.25 * r.syn);
+    line("A + (c) theory capped at 0.02 a champ", &all, &anchor, &|r: &E7Rec| r.anchor + r.capped);
+    println!("  other anchors (Δ of shipped theory / synergy / counter on top):");
+    for (name, base) in [
+        ("A0 = Σ delta_for only", (&|r: &E7Rec| r.strength) as &dyn Fn(&E7Rec) -> f64),
+        ("A + shipped AI prior", &|r: &E7Rec| r.anchor + r.prior),
+    ] {
+        let mut s = format!("    {:<22}: {:>5.1}%", name, e7_paired(fresh, &all, base, base).0);
+        for alt in [
+            (&|r: &E7Rec| base(r) + r.syn + r.cnt) as &dyn Fn(&E7Rec) -> f64,
+            &|r: &E7Rec| base(r) + r.syn,
+            &|r: &E7Rec| base(r) + r.cnt,
+        ] {
+            let (_, d, lo, hi) = e7_paired(fresh, &all, base, alt);
+            s += &format!("  {:+.1} [{:+.1}, {:+.1}]", d, lo, hi);
+        }
+        println!("{}", s);
+    }
+    println!("  by M (Δ of shipped theory / synergy / counter over A):");
+    for (lo_m, hi_m) in [(0.0, 50.0), (50.0, 100.0), (100.0, 200.0)] {
+        let set: Vec<usize> = all.iter().copied().filter(|&i| fresh[i].m_ev >= lo_m && fresh[i].m_ev < hi_m).collect();
+        let mut s = format!("    M {:>3.0}–{:<3.0} n={:<4} A {:>5.1}%", lo_m, hi_m - 1.0, set.len(), e7_paired(fresh, &set, &anchor, &anchor).0);
+        for alt in [
+            (&|r: &E7Rec| r.anchor + r.syn + r.cnt) as &dyn Fn(&E7Rec) -> f64,
+            &|r: &E7Rec| r.anchor + r.syn,
+            &|r: &E7Rec| r.anchor + r.cnt,
+        ] {
+            let (_, d, lo, hi) = e7_paired(fresh, &set, &anchor, alt);
+            s += &format!("  {:+.1} [{:+.1}, {:+.1}]", d, lo, hi);
+        }
+        println!("{}", s);
+    }
+    // both halves pass alone but the shipped sum does not → keep only the half
+    // with the higher lower bound
+    let clash = lo_syn > 0.0 && lo_cnt > 0.0 && lo_full <= 0.0;
+    let keep_syn = lo_syn > 0.0 && !(clash && lo_syn < lo_cnt);
+    let keep_cnt = lo_cnt > 0.0 && !(clash && lo_cnt <= lo_syn);
+    let word = |k: bool| if k { "KEEP" } else { "ZERO" };
+    println!(
+        "  VERDICT (pre-registered: a half keeps its shipped size only if its Δ CI lower bound > 0): synergy → {} · counter → {}",
+        word(keep_syn),
+        word(keep_cnt)
+    );
+    let call: Vec<usize> = (0..career.len()).collect();
+    let mut s = format!(
+        "E7a career replay (secondary — previous patch at 0.35, notes, the product's M): scored {} · mean weight {:.2} · A {:.1}%",
+        career.len(),
+        career.iter().map(|r| r.w).sum::<f64>() / career.len().max(1) as f64,
+        e7_paired(career, &call, &anchor, &anchor).0
+    );
+    for (name, alt) in [
+        ("shipped", (&|r: &E7Rec| r.anchor + r.syn + r.cnt) as &dyn Fn(&E7Rec) -> f64),
+        ("synergy", &|r: &E7Rec| r.anchor + r.syn),
+        ("counter", &|r: &E7Rec| r.anchor + r.cnt),
+    ] {
+        let (_, d, lo, hi) = e7_paired(career, &call, &anchor, alt);
+        s += &format!(" · {} {:+.1} [{:+.1}, {:+.1}]", name, d, lo, hi);
+    }
+    println!("{}", s);
+}
+
 fn main() {
     // --legacy = the old non-causal i%5 interleave (kept for comparison); default is
     // the causal rolling-origin split (train on strictly-earlier patches only).
@@ -1858,6 +2208,11 @@ fn main() {
                 }
             }
         }
+    }
+    if !legacy {
+        let fresh = e7_records(&matches, &groups, &vsorted, &taxon, &ai_intr, &notes, false);
+        let career = e7_records(&matches, &groups, &vsorted, &taxon, &ai_intr, &notes, true);
+        e7_report(&fresh, &career);
     }
     println!("\n>> A term EARNS engine weight only if it lifts base_lane beyond ~±{:.1}%p noise.", 50.0 / n.sqrt());
 }
