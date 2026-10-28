@@ -4,9 +4,12 @@
 //! its previous decision of the same phase (made before the current turn) and
 //! the league average for that draft slot — every AI decision the draft hook has
 //! scored, each centered on its own mean. E1b: top-3 hit 94% for bans, 74% for
-//! picks in AI-vs-AI drafts; a learned board-delta model added nothing. The
-//! player's own matches hit less (0.7.0, 10-28: 7 of 15 where those rates
-//! expected ~12), so the line shows the player's own record instead. Shown only
+//! picks in AI-vs-AI drafts; a learned board-delta model added nothing. E1c
+//! re-measured it the module's way: 0.7.0 82% / 70% (0.6.5 93% / 70%), and the
+//! side acting first ranks its second ban by its own first-ban scores alone
+//! (`league_helps`). The player's own matches hit less (0.7.0, 10-28: 15 of 29
+//! where the 0.7.0 rates expect ~21), so the line shows the player's own record
+//! instead. Shown only
 //! when the player turns it on (F2 or the note card's chip); the score model is
 //! untouched. `observe` runs on the hook's threads, everything else on the main
 //! thread.
@@ -24,23 +27,25 @@ const BANS: usize = 2;
 const PICKS: usize = 10;
 /// After the bans, true = the side that acts first: A BB AA BB AA B (E1b, 286/286 sets).
 const PICK_FIRST: [bool; PICKS] = [true, false, false, true, true, false, false, true, true, false];
-/// E1b top-3 hit rate (%) per draft slot with this module's ranking, in
-/// AI-vs-AI drafts; the last pick had no later hook call to grade it with.
-/// Logged beside each grade of the player's matches, no longer shown.
+/// E1c top-3 hit rate (%) per draft slot with this module's ranking, measured
+/// the module's way (candidates from the opponent's last scores, not the list
+/// it then scored — E1b's rates did that) in 0.7.0 AI-vs-AI drafts, 372 a slot;
+/// the last pick had no later hook call to grade it with. Logged beside each
+/// grade of the player's matches, no longer shown.
 const TOP3_PCT: [Option<u8>; 2 * BANS + PICKS] = [
-    Some(97),
-    Some(88),
-    Some(94),
-    Some(98),
-    Some(92),
+    Some(84),
+    Some(85),
+    Some(95),
+    Some(83),
+    Some(66),
+    Some(63),
+    Some(74),
     Some(70),
     Some(78),
-    Some(69),
-    Some(69),
-    Some(63),
-    Some(78),
-    Some(76),
-    Some(74),
+    Some(66),
+    Some(70),
+    Some(77),
+    Some(66),
     None,
 ];
 /// E1b: the league mean ranked well once a slot had ~10 decisions behind it
@@ -79,6 +84,13 @@ pub(crate) fn turn_start(slot: usize) -> usize {
 /// E1b ranked it with those scores (the blend), not the league mean alone.
 fn expects_last(slot: usize) -> bool {
     (0..turn_start(slot)).any(|s| actor(s) == actor(slot))
+}
+
+/// E1c: the side acting first ranks its second ban best by its own first-ban
+/// scores alone — top-3 at that slot 76→95% (0.7.0), 94→98% (0.6.5), AI vs AI;
+/// at every other slot the league mean adds to them.
+fn league_helps(slot: usize) -> bool {
+    slot != 2
 }
 
 /// One scored candidate, as the hook sees it.
@@ -228,9 +240,14 @@ impl Scans {
     }
 }
 
-/// Candidates by z(the opponent's last scores) + z(league mean), or by the
-/// league alone; ties by id.
-pub(crate) fn rank(open: &[String], last: Option<&HashMap<String, f32>>, league: &HashMap<String, f64>) -> Vec<String> {
+/// Candidates by z(the opponent's last scores) + z(league mean) — the last
+/// scores alone unless `blend` — or by the league alone; ties by id.
+pub(crate) fn rank(
+    open: &[String],
+    last: Option<&HashMap<String, f32>>,
+    league: &HashMap<String, f64>,
+    blend: bool,
+) -> Vec<String> {
     // the opponent scored every champ it could take then: one it did not score
     // is gone for it
     let cands: Vec<&String> = open.iter().filter(|c| last.map_or(true, |l| l.contains_key(*c))).collect();
@@ -238,7 +255,11 @@ pub(crate) fn rank(open: &[String], last: Option<&HashMap<String, f32>>, league:
     let score: Vec<f64> = match last {
         Some(l) => {
             let mine = z(&cands.iter().map(|c| l[*c] as f64).collect::<Vec<_>>());
-            mine.iter().zip(z(&lg)).map(|(a, b)| a + b).collect()
+            if blend {
+                mine.iter().zip(z(&lg)).map(|(a, b)| a + b).collect()
+            } else {
+                mine
+            }
         }
         None => lg,
     };
@@ -260,7 +281,8 @@ pub(crate) struct Guess {
     pub phase: char,
     pub slot: usize,
     pub top: Vec<String>,
-    /// E1b's league rate for this slot, when ranked the way E1b measured it
+    /// the measured AI-vs-AI rate for this slot (TOP3_PCT), when ranked the way
+    /// it was measured
     pub top3_pct: Option<u8>,
     /// the opponent's own earlier scores took part (else the league alone)
     pub with_last: bool,
@@ -293,7 +315,8 @@ pub(crate) fn guess(b: &Board, pool: &[String], scans: &Scans) -> Option<Guess> 
             .collect(),
         None => return None,
     };
-    let top: Vec<String> = rank(&open, last.map(|l| &l.scores), &league).into_iter().take(3).collect();
+    let top: Vec<String> =
+        rank(&open, last.map(|l| &l.scores), &league, league_helps(slot)).into_iter().take(3).collect();
     if top.is_empty() {
         return None;
     }
@@ -812,13 +835,15 @@ mod tests {
             [("a", 0.30), ("b", 0.29), ("c", 0.10), ("d", 0.00)].iter().map(|&(c, v)| (c.to_string(), v)).collect();
         let league: HashMap<String, f64> =
             [("a", -0.05), ("b", 0.05), ("c", 0.0), ("d", 0.0)].iter().map(|&(c, v)| (c.to_string(), v)).collect();
-        assert_eq!(rank(&open, Some(&last), &league), s(&["b", "a", "c", "d"]));
-        assert_eq!(rank(&open, None, &league)[0], "b");
+        assert_eq!(rank(&open, Some(&last), &league, true), s(&["b", "a", "c", "d"]));
+        assert_eq!(rank(&open, Some(&last), &league, false), s(&["a", "b", "c", "d"]), "the last scores alone");
+        assert_eq!(rank(&open, None, &league, true)[0], "b");
+        assert_eq!(rank(&open, None, &league, false)[0], "b", "no last scores: the league");
     }
 
     #[test]
     fn ties_rank_by_id() {
-        assert_eq!(rank(&s(&["c", "a", "b"]), None, &HashMap::new()), s(&["a", "b", "c"]));
+        assert_eq!(rank(&s(&["c", "a", "b"]), None, &HashMap::new(), true), s(&["a", "b", "c"]));
     }
 
     #[test]
@@ -831,7 +856,7 @@ mod tests {
         let g = guess(&b, &pool, &sc).unwrap();
         assert_eq!((g.slot, g.phase, g.with_last, g.league_n), (1, 'B', false, 10));
         assert_eq!(g.top, s(&["b", "c", "d"]));
-        assert_eq!(g.top3_pct, Some(88));
+        assert_eq!(g.top3_pct, Some(85));
     }
 
     #[test]
@@ -845,7 +870,22 @@ mod tests {
         let g = guess(&b, &s(&["a", "b", "c", "d", "x", "y"]), &sc).unwrap();
         assert_eq!((g.slot, g.with_last), (3, true));
         assert_eq!(g.top, s(&["b", "c", "d"]));
-        assert_eq!(g.top3_pct, Some(98));
+        assert_eq!(g.top3_pct, Some(83));
+    }
+
+    #[test]
+    fn the_first_sides_second_ban_ranks_by_its_first_ban_scores_alone() {
+        let mut sc = Scans::default();
+        // the opponent acts first: it scored its first ban on the empty board …
+        scan(&mut sc, 'B', 7, (7, 8), 0, true, &[], &[("a", 0.40), ("b", 0.30), ("c", 0.20), ("d", 0.10), ("e", 0.0)]);
+        // … and the league at its second ban lifts e (blended: b, e, c)
+        league(&mut sc, 'B', 2, 10, &[("b", 0.0), ("c", 0.1), ("d", 0.2), ("e", 0.6)]);
+        // it banned a, I banned y: its second ban is slot 2
+        let b = board(&["y"], &["a"], &[], &[], false);
+        let g = guess(&b, &s(&["a", "b", "c", "d", "e", "y"]), &sc).unwrap();
+        assert_eq!((g.slot, g.with_last), (2, true));
+        assert_eq!(g.top, s(&["b", "c", "d"]), "E1c: its own first-ban scores alone rank this ban best");
+        assert_eq!(g.top3_pct, Some(95));
     }
 
     #[test]
@@ -879,7 +919,7 @@ mod tests {
         let mut sc = Scans::default();
         league(&mut sc, 'B', 3, 10, &[("b", 0.3), ("c", 0.2), ("d", 0.1)]);
         // the opponent's second ban without its first ban's scores (missed: the
-        // mod's own team not yet known, say): E1b measured 98% WITH them
+        // mod's own team not yet known, say): E1c measured 83% WITH them
         let b = board(&["x", "y"], &["a"], &[], &[], true);
         let g = guess(&b, &s(&["a", "b", "c", "d", "e", "f", "g", "h", "x", "y"]), &sc).unwrap();
         assert_eq!((g.slot, g.with_last, g.top3_pct), (3, false, None));
@@ -894,7 +934,7 @@ mod tests {
         scan(&mut sc, 'P', 9, (7, 8), 5, true, &["w", "x", "y", "z", "f"], &[("a", 0.9), ("e", 0.8), ("b", 0.1), ("c", 0.0), ("d", 0.0)]);
         let b = board(&["w", "x"], &["y", "z"], &["f"], &["a"], true);
         let g = guess(&b, &s(&["a", "b", "c", "d", "e", "f", "w", "x", "y", "z"]), &sc).unwrap();
-        assert_eq!((g.slot, g.with_last, g.top3_pct), (6, false, Some(78)));
+        assert_eq!((g.slot, g.with_last, g.top3_pct), (6, false, Some(74)));
         assert_eq!(g.top, s(&["b", "c", "d"]), "the league's three, not e from the slot-5 scores");
     }
 

@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub(crate) const MOD_TAG: &str = "tfm2_db_export v4.3.1";
+pub(crate) const MOD_TAG: &str = "tfm2_db_export v4.3.2";
 
 /// Numeric per-component version key ("2026.10.0" sorts above "2026.2.0").
 pub(crate) fn vkey(v: &str) -> Vec<u32> {
