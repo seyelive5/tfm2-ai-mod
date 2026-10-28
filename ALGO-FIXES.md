@@ -30,7 +30,7 @@ cd C:\tmp\tfm2-ai-mod\draft-overlay; cargo run --release --bin validate-terms   
 
 ### A-3. 금지/주의
 - **MU direct·데이터 시너지/카운터 부활 금지** (BT τ≈0 — 표본 문제 아님 존재 문제. 리뷰 §4).
-- deny/steal ENEMY_VAL 부활 금지 (귀속 무효 — 종결).
+- deny/steal ENEMY_VAL 부활 금지 (귀속 무효 — 종결). stable API에서는 귀속이 풀렸지만, E9(2026-10-28)가 경기별 신호로도 이득이 없음을 쟀다.
 - **대칭 메타강함 deny 항 금지** (greedy가 이미 포함 — 이중계상 증명, 리뷰 F9).
 - 픽순서 램프류(cnt_ramp/power_ramp/base_mult)는 리플레이로 검증 불가(픽 순서 미저장) — 키우려면 T4 드래프트-리플레이 하네스 선행.
 - engine.rs 수정 시 draft-overlay 크레이트도 컴파일되는지 확인(`cargo check` in draft-overlay).
@@ -262,6 +262,7 @@ if let Some(cof) = &lane.counter_of {
 | 5픽 스왑 적-매치업 항 | no-op | 열상수 소거+클램프 비활성 증명 |
 | 0.35 블렌딩 "고정" 비판 | 전제 오류 | 이미 per-champ power prior |
 | deny/steal·enemy_intent (훅 소스) | 종결 | 귀속 무효 (CLAUDE.md §2c) |
+| 상대 수 선점·노림수 밴 (stable, 경기별 상대 신호) | 불가 — 이득이 측정 바닥 아래 (0.6.5·0.7.0, 2026-10-28) | E9: 선점 결정당 +0.09~0.20%p(상한), 예측 밴 ≤ 승률 1위 밴 (`docs/research/2026-10-28-advanced-directions.md` E9) |
 
 ## F → 작업 매핑
 

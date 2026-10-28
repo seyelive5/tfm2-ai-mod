@@ -217,6 +217,11 @@ pub struct Tables {
     // league sims, NOT the current-match enemy (the draft-score hook never sees
     // the player's opponent), so the signal was league-wide noise. Commented
     // out (not deleted) for revival if a real per-match enemy signal lands.
+    // That signal landed on the stable API (the opponent's hook scores, E1
+    // 2026-10-28) and E9 measured the revival case: taking contested champs
+    // first is worth ~0.1–0.2%p champion winrate a decision at most, and
+    // banning the predicted first pick is no better than banning by strength.
+    // Kept off (docs/research/2026-10-28-advanced-directions.md, E9).
     // enemy_valued: std::collections::HashMap<String, f32>,
     /// (a, b) -> (a_wins, games): same-lane head-to-head from match replays
     /// (`MU` rows; both directions emitted by the producer).
@@ -528,7 +533,8 @@ impl Tables {
     }
     // deny/steal DISABLED (code review 2026-06-20): the enemy_valued feed is
     // league-wide background-sim pick scores, not the current-match enemy.
-    // Commented out for revival.
+    // Commented out for revival; E9 (2026-10-28) measured it with the real
+    // per-match signal and kept it off — see the note on `enemy_valued`.
     /*
     pub fn set_enemy_valued(&mut self, v: std::collections::HashMap<String, f32>) {
         self.enemy_valued = v;
