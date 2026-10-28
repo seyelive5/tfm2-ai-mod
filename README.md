@@ -12,7 +12,7 @@
 > draws tier tags, pick/ban highlights and two game-style recommendation cards onto the game's own
 > ban/pick screen — no external window, no launcher.
 
-> **상태 (2026-10-28): v4.3.2 — 게임 카드 UI(인게임 확인) + 상대 다음 수 후보(F2·버튼 인게임 확인)**
+> **상태 (2026-10-29): v4.4.0 — 게임 카드 UI(인게임 확인) + 상대 다음 수 후보(F2·버튼 인게임 확인) + 근거 없던 태그 이론 끔**
 > (게임 0.7.0 확인, 클래식 UI. 새 UI 스타일은 아직 확인하지 않았습니다).
 > 게임 0.6부터 게임사가 classic 모드 SDK 지원을 끝내서, 게임 0.6.5+의 **stable 모드 API**로 다시 작성했습니다.
 > 카드 표시, 해설 글자 색, Tab 숨기기를 모두 게임에서 확인했습니다.
@@ -35,7 +35,7 @@
     근거: [고도화 검토](docs/research/2026-10-28-advanced-directions.md) E1b·E1c.
 - **게임 화면은 건드리지 않음** — 표시는 전부 모드가 만든 노드이고 클릭은 게임으로 그대로 통과합니다.
   LT AI Coach 등 다른 모드와 함께 켤 수 있습니다.
-- **점수 모델** (v3.0과 동일)
+- **점수 모델** (v3.0과 같음. v4.4.0에서 근거 없던 콜드스타트 태그 이론만 뺌)
   - 현재 패치 위주의 챔피언 승률(베타 사후평균 + 수축), 이전 패치는 감쇠 반영 — 세이브의 경기 기록에서 직접 집계
   - 패치 노트 버프/너프 — 게임 자체 `PatchNote`의 `is_buff`를 직접 읽어 반영
   - 선수의 챔피언 숙련(약하게), 챔피언 라인 배정, 선픽 감지·픽 순서별 밴 가중, 피어리스 대응
@@ -44,8 +44,9 @@
 
 - 시간순(rolling-origin) 홀드아웃 백테스트 + 부트스트랩 신뢰구간으로 모든 점수 항을 채택/기각합니다.
 - 5,274경기 기준 "점수 높은 팀이 이긴다" 예측 정확도 **약 60%** (게임 0.4.x 데이터; 0.6.5 데이터 재측정은 ROADMAP Phase 2).
-- 세이브 초반(콜드스타트) 구간과 확률 보정은 아직 측정하지 않았습니다 — [고도화 검토](docs/research/2026-10-28-advanced-directions.md) 참조.
-- 검증에서 **효과 없음**이 확인된 항(챔피언 시너지/카운터, 동라인 매치업, 상대 팀 성향, 포켓픽 밴 등)은 가중치 0으로 제거했습니다.
+- 세이브 초반(콜드스타트) 구간은 태그 이론(시너지·카운터)만 쟀습니다. 새 세이브 첫 200판에서 승자 신호가 없어 v4.4.0에서
+  껐습니다(E7a). 확률 보정은 아직 측정하지 않았습니다 — [고도화 검토](docs/research/2026-10-28-advanced-directions.md) 참조.
+- 검증에서 **효과 없음**이 확인된 항(챔피언 시너지/카운터, 태그 이론, 동라인 매치업, 상대 팀 성향, 포켓픽 밴 등)은 가중치 0으로 제거했습니다.
 - 상세: [`ALGO-FIXES.md`](ALGO-FIXES.md), [`analysis/recommender-algorithm-review.md`](analysis/recommender-algorithm-review.md),
   [`analysis/harness-causal-findings.md`](analysis/harness-causal-findings.md)
 
@@ -53,7 +54,7 @@
 
 | 폴더 | 내용 |
 |---|---|
-| `tfm2_db_export/` | **제품** — 추천기 모드 본체(v4.3, stable API): `db`(경기 기록 → 통계) · `board`(밴픽 읽기) · `recommender` · `prior`(게임 AI 사전) · `foresee`(상대 다음 수 후보) · `ui`(게임 카드·칸 태그) · `markup`(게임 글자 색 문법) · `diag`·`probe`(진단 파일·덤프) |
+| `tfm2_db_export/` | **제품** — 추천기 모드 본체(v4.4, stable API): `db`(경기 기록 → 통계) · `board`(밴픽 읽기) · `recommender` · `prior`(게임 AI 사전) · `foresee`(상대 다음 수 후보) · `ui`(게임 카드·칸 태그) · `markup`(게임 글자 색 문법) · `diag`·`probe`(진단 파일·덤프) |
 | `draft-overlay/` | 점수 엔진 `src/engine.rs`(`tfm2_db_export`가 `#[path]`로 공유) + 검증 하네스(`src/bin/validate-terms.rs`, `backtest.rs`) + 구 hudhook 오버레이 |
 | `draft-weights-gen/` | 구 가중치 생성기(구 오버레이용) |
 | `tfm2_bp_reader/` | 라이브 밴픽 읽기 프로토타입(classic) — `tfm2_db_export`에 통합됨 |

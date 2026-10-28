@@ -32,6 +32,7 @@ cd C:\tmp\tfm2-ai-mod\draft-overlay; cargo run --release --bin validate-terms   
 - **MU direct·데이터 시너지/카운터 부활 금지** (BT τ≈0 — 표본 문제 아님 존재 문제. 리뷰 §4).
 - deny/steal ENEMY_VAL 부활 금지 (귀속 무효 — 종결). stable API에서는 귀속이 풀렸지만, E9(2026-10-28)가 경기별 신호로도 이득이 없음을 쟀다.
 - **대칭 메타강함 deny 항 금지** (greedy가 이미 포함 — 이중계상 증명, 리뷰 F9).
+- **태그 이론(콜드스타트 시너지·카운터) 부활 금지** — E7a(2026-10-29)가 새 세이브 첫 200판에서 승자 신호가 없음을 쟀다. v4.4.0에서 `W_THEORY` = 0. 태그는 조합 가드레일(comp)에만 남는다.
 - 픽순서 램프류(cnt_ramp/power_ramp/base_mult)는 리플레이로 검증 불가(픽 순서 미저장) — 키우려면 T4 드래프트-리플레이 하네스 선행.
 - engine.rs 수정 시 draft-overlay 크레이트도 컴파일되는지 확인(`cargo check` in draft-overlay).
 
@@ -263,6 +264,7 @@ if let Some(cof) = &lane.counter_of {
 | 0.35 블렌딩 "고정" 비판 | 전제 오류 | 이미 per-champ power prior |
 | deny/steal·enemy_intent (훅 소스) | 종결 | 귀속 무효 (CLAUDE.md §2c) |
 | 상대 수 선점·노림수 밴 (stable, 경기별 상대 신호) | 불가 — 이득이 측정 바닥 아래 (0.6.5·0.7.0, 2026-10-28) | E9: 선점 결정당 +0.09~0.20%p(상한), 예측 밴 ≤ 승률 1위 밴 (`docs/research/2026-10-28-advanced-directions.md` E9) |
+| 콜드스타트 태그 이론(태그 시너지·카운터) 되살리기·키우기 | 불가 — 승자 신호 없음 (클래식 0.4.x, 2026-10-29) → v4.4.0 `W_THEORY` 0 | E7a 사전 등록: 새 세이브 첫 200판, 출하 이론 −0.4 [−1.7, +0.8], 시너지 +0.3 [−0.9, +1.6], 카운터 −0.6 [−1.9, +0.8] (`analysis/harness-e7a.txt`). 다시 잴 조건: 지금 게임의 `champion_brief`로 만든 새 분류표, 또는 0.6.5+ 데이터 |
 
 ## F → 작업 매핑
 

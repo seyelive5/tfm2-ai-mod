@@ -102,6 +102,13 @@ const W_FLEX_FEARLESS: f32 = 0.015;
 // ×1.5 branch was separately refuted by T1 (pick locks are per-team — my steal
 // never erases the enemy's series pool). Plumbing + "저격픽" label kept at 0.
 const W_PICK_DENY: f32 = 0.0; // was 0.35 for ~3 hours
+// tag THEORY (tag_synergy/tag_counter, faded by 1 − confidence) — ZEROED by E7a
+// (2026-10-29, validate-terms v3.8, pre-registered): each classic patch replayed
+// as a fresh save, first 200 matches, strength + comp as the anchor. Adding the
+// theory moved accuracy −0.4 [−1.7, +0.8] (synergy +0.3 [−0.9, +1.6], counter
+// −0.6 [−1.9, +0.8]); where it flipped the predicted winner (9%) it was right
+// 47.7%. Neither half cleared its CI gate. The tags still drive comp_need.
+const W_THEORY: f32 = 0.0; // was 0.5 (the "halved" theory)
 // confidence: full trust in DATA terms at this many matches (theory fully faded).
 const FULL_CONF_MATCHES: f32 = 200.0;
 // tier "?" gate: append "?" to a champ's tier letter when its 95% half-CI (1.96·sd,
@@ -412,7 +419,8 @@ pub fn parse_tables_from_str(tsv: &str) -> Tables {
 
 impl Tables {
     pub fn len(&self) -> usize { self.champ_delta.len() }
-    /// 0.0 (no data → pure theory) .. 1.0 (rich data → pure stats).
+    /// 0.0 (no data) .. 1.0 (rich data): fades the pairwise DATA terms in and
+    /// the tag theory out (W_THEORY, 0 since E7a).
     pub fn confidence(&self) -> f32 { (self.matches as f32 / FULL_CONF_MATCHES).min(1.0) }
     fn delta(&self, c: &str) -> f32 { *self.champ_delta.get(c).unwrap_or(&0.0) }
     /// the single highest-delta champ in the tables (S3-4: the champ I expect to
@@ -770,13 +778,13 @@ impl Tables {
         }
     }
     /// counter advantage of `cand` over `enemy`: real lane-matchup data (laning
-    /// dominance + head-to-head) at the enemy's expected lane, plus a faded,
-    /// halved tag term (cold-start only).
+    /// dominance + head-to-head) at the enemy's expected lane, plus a faded tag
+    /// term (cold-start only; W_THEORY, 0 since E7a).
     fn counters(&self, cand: &str, enemy: &str) -> f32 {
         let data = self.matchup(cand, enemy, self.primary(enemy))
             + self.cnt(cand, enemy)
             - self.cnt(enemy, cand);
-        let theory = 0.5 * (1.0 - self.confidence()) * self.tag_counter(cand, &[enemy]);
+        let theory = W_THEORY * (1.0 - self.confidence()) * self.tag_counter(cand, &[enemy]);
         data + theory
     }
 
@@ -836,7 +844,8 @@ impl Tables {
     }
 
     /// Tag-based SYNERGY (no match data): engage→follow-up, peel-for-carry.
-    /// Cold-start proxy for the data-driven `syn`; faded out by confidence.
+    /// Cold-start proxy for the data-driven `syn`; faded out by confidence and
+    /// weighted by W_THEORY (0 since E7a — no winner signal).
     fn tag_synergy(&self, cand: &str, allies: &[&str]) -> f32 {
         let team = |tag: &str| allies.iter().any(|a| self.has_tag(a, tag));
         let mut s = 0.0;
@@ -857,7 +866,8 @@ impl Tables {
     }
 
     /// Tag-based COUNTER vs the enemy comp (no match data). Cold-start proxy for
-    /// the data-driven `cnt`; faded out by confidence.
+    /// the data-driven `cnt`; faded out by confidence and weighted by W_THEORY
+    /// (0 since E7a — no winner signal).
     fn tag_counter(&self, cand: &str, enemies: &[&str]) -> f32 {
         let cnt = |tag: &str| enemies.iter().filter(|e| self.has_tag(e, tag)).count() as f32;
         let cat = |c: &str| enemies.iter().filter(|e| self.category(e) == c).count() as f32;
@@ -884,8 +894,9 @@ impl Tables {
     }
 
     /// PICK desirability. DATA terms mirror tfm2_draft_ai::score_pick; the tag
-    /// THEORY terms (tag_synergy/tag_counter) are added, scaled by (1-confidence),
-    /// so they fold into the synergy/counter buckets and drive cold-start ranking.
+    /// THEORY terms (tag_synergy/tag_counter) fold into the synergy/counter
+    /// buckets, scaled by W_THEORY·(1-confidence). They drove cold-start ranking
+    /// until E7a zeroed W_THEORY (2026-10-29).
     pub fn score_pick(&self, cand: &str, allies: &[&str], enemies: &[&str]) -> (f32, &'static str) {
         self.score_pick_in(cand, allies, enemies, None, 0)
     }
@@ -920,7 +931,8 @@ impl Tables {
         // theory = tag-based cold-start terms; confidence() is GLOBAL (matches/200), so
         // in a mature career (≥200 matches) theory == 0 and the tag_synergy/tag_counter
         // paths below contribute nothing — they are strictly a cold-start scaffold
-        // (2026-07-05 review F8). Kept for fresh careers; do not rely on them mid-career.
+        // (2026-07-05 review F8). E7a (2026-10-29) then measured that scaffold in
+        // fresh careers and found no signal → W_THEORY = 0 there too.
         let theory = 1.0 - data;
 
         // split so the commentary can attribute honestly (2026-07-05 review F10): the
@@ -934,15 +946,15 @@ impl Tables {
         for a in allies {
             syn += data * W_SYN * self.syn(cand, a);
         }
-        // theory tag terms HALVED: unvalidated tag rules must not outrank the
-        // measured winrate signal mid-career (raw they reach 0.18 ≈ 3 tier steps).
-        syn += 0.5 * theory * self.tag_synergy(cand, allies);
+        // theory tag terms: HALVED first (raw they reach 0.18 ≈ 3 tier steps), then
+        // zeroed by E7a — see W_THEORY.
+        syn += W_THEORY * theory * self.tag_synergy(cand, allies);
         let mut cnt = 0.0;
         for e in enemies {
             cnt += data * W_CNT * cnt_ramp * self.cnt(cand, e);
             cnt -= data * W_WEAK * cnt_ramp * self.cnt(e, cand);
         }
-        cnt += 0.5 * theory * self.tag_counter(cand, enemies);
+        cnt += W_THEORY * theory * self.tag_counter(cand, enemies);
         // ── lane-matchup term (the real counter-pick axis): how does this champ
         // do INTO the enemy expected in this lane? Reveal-scaled per PICK: the
         // more enemy picks are on the board, the harder we counter-weight.
@@ -989,7 +1001,7 @@ impl Tables {
     }
 
     /// BAN desirability. DATA terms mirror tfm2_draft_ai::score_ban; at cold-start
-    /// add a faded tag term for champs that counter our picks / fit the meta.
+    /// a faded tag term for champs that counter our picks (W_THEORY, 0 since E7a).
     /// `enemy_team` (0 = unknown) keys the opponent model (OPP rows): champs THIS
     /// enemy actually relies on outrank generically-strong champs. In fearless,
     /// `enemy_strong_left` (the ENEMY's remaining S/A depth per lane) marks champs
@@ -1032,8 +1044,9 @@ impl Tables {
                 cnt += 0.5 * self.matchup(cand, a, Some(l)).max(0.0);
             }
         }
-        // cold-start: ban champs whose tags counter OUR picks (allies)
-        cnt += 0.5 * theory * self.tag_counter(cand, allies);
+        // cold-start: ban champs whose tags counter OUR picks (allies) — W_THEORY,
+        // 0 since E7a
+        cnt += W_THEORY * theory * self.tag_counter(cand, allies);
         let mut syn = 0.0;
         for e in enemies {
             syn += data * W_BAN_SYN * self.syn(cand, e);
@@ -1086,10 +1099,15 @@ impl Tables {
     // opponent-aware ban consumer.)
 }
 
+/// the largest POSITIVE part's label, or "" when no part lifted the score —
+/// max_by returns the LAST of equal maxima, so an all-zero candidate used to be
+/// tagged with the zero-weight "저격픽"/"저격" (common at cold start once
+/// W_THEORY went to 0).
 fn dominant(parts: &[(&'static str, f32)]) -> &'static str {
     parts
         .iter()
         .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .filter(|(_, v)| *v > 0.0)
         .map(|(l, _)| *l)
         .unwrap_or("")
 }
@@ -1496,7 +1514,7 @@ pub fn recommend_lanes(
             // off-meta candidate at −0.01 instead of the old hard cliff. A champ
             // with NO position data at all (just released, zero games anywhere,
             // no baked row) stays a candidate in EVERY lane — its rank then
-            // comes from the AI prior / theory terms instead of vanishing.
+            // comes from the AI prior / comp terms instead of vanishing.
             if !tables.lane_eligible(id, lane) {
                 continue;
             }

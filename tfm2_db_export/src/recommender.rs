@@ -6,7 +6,8 @@
 //! The engine itself is shared source with the old overlay (single source of
 //! truth via #[path]). The data-S/K (synergy/counter) rows the old gen.exe
 //! computed are intentionally DROPPED: backtests showed they add ~nothing over
-//! winrate; the engine's tag-based theory terms (T rows, baked) remain.
+//! winrate. The baked T rows (tags) remain for comp; the engine's tag-theory
+//! synergy/counter terms are weighted 0 since E7a (2026-10-29, no winner signal).
 
 #[path = "../../draft-overlay/src/engine.rs"]
 #[allow(dead_code)] // shared source: the retired overlay's surface stays in-tree
@@ -968,7 +969,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
     parts.push(markup::dim(&format!(
         "데이터: 유효 표본 {}판(직전 패치 블렌드 포함){}",
         tables.matches,
-        if tables.matches < 50 { " — 콜드스타트 구간, 이론 비중이 큽니다." } else { "." }
+        if tables.matches < 50 { " — 콜드스타트 구간, 순위 근거가 약합니다." } else { "." }
     )));
 
     // ── tier labels for the grid
@@ -1007,7 +1008,7 @@ mod tests {
     use super::*;
     use crate::markup;
 
-    /// Empty stats + the baked theory rows: the engine still ranks (cold start).
+    /// Empty stats + the baked T rows: the engine still ranks (cold start).
     /// Each test owns its `teams` key — update() keeps series state across calls.
     fn run(teams: &str, b: Board, matches: usize) -> Arc<Output> {
         let mut t = build_tables("", &[], &ChgInfo::default(), "");
@@ -1094,5 +1095,59 @@ mod tests {
     fn swap_notes_skip_the_ranking_caveat() {
         let n = plain_notes(&run("t-swap-caveat", swap_board(), 0));
         assert!(!n.iter().any(|x| x.contains("이 순위는")), "{:?}", n);
+    }
+
+    /// E7a (2026-10-29): the tag theory showed no winner signal in a new save's
+    /// first 200 matches, so it moves no score. The synthetic tags make each rule
+    /// fire at full theory weight (0 matches): ogre is a ranged backliner that is
+    /// also a tank (counter rules), archer brings CC for monk's AOE (synergy rule).
+    fn theory_tables() -> engine::Tables {
+        engine::parse_tables_from_str(
+            "T\tvampire\tAssassin\tAD\tMobility,Poke\n\
+             T\togre\tRange\tAD\tBackline,Tank,Frontline\n\
+             T\tarcher\tRange\tAD\tCC\n\
+             T\tmonk\tFighter\tAD\tAOE\n\
+             POS\tvampire\t0\t0\n\
+             POS\togre\t0\t0",
+        )
+    }
+
+    #[test]
+    fn tag_theory_moves_no_pick_score() {
+        let t = theory_tables();
+        assert_eq!(t.score_pick("vampire", &[], &["ogre"]).0, 0.0);
+        assert_eq!(t.score_pick("monk", &["archer"], &[]).0, 0.0);
+    }
+
+    #[test]
+    fn tag_theory_moves_no_ban_score() {
+        assert_eq!(theory_tables().score_ban("vampire", &["ogre"], &[], 0, 0, None).0, 0.0);
+    }
+
+    #[test]
+    fn tag_theory_raises_no_lane_counter_flag() {
+        let s = engine::DraftState { enemy_pick: ids(&["ogre"]), ..Default::default() };
+        let v = engine::recommend_lanes(&theory_tables(), &s, false, None, false);
+        assert_eq!(v.lanes[0].counter_of, None);
+    }
+
+    /// the reason tag names the part that lifted the score; with no positive part
+    /// there is none (ties at 0 used to fall to the LAST label, the zero-weight
+    /// "저격픽" — more common at cold start once the theory went to 0)
+    #[test]
+    fn no_reason_tag_without_a_positive_part() {
+        let t = theory_tables();
+        assert_eq!(t.score_pick("monk", &[], &[]).1, "");
+        assert_eq!(t.score_ban("monk", &[], &[], 0, 0, None).1, "");
+        let s = engine::parse_tables_from_str("C\tmonk\t0.050\t30\t0.02");
+        assert_eq!(s.score_pick("monk", &[], &[]).1, "강챔");
+        assert_eq!(s.score_ban("monk", &[], &[], 0, 0, None).1, "강챔");
+    }
+
+    #[test]
+    fn cold_start_data_line_does_not_credit_the_theory() {
+        let text = markup::plain(run("t-data-cold", Board::default(), 0).notes.last().unwrap());
+        assert!(text.contains("콜드스타트 구간"), "{}", text);
+        assert!(!text.contains("이론"), "{}", text);
     }
 }

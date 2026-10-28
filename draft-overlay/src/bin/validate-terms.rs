@@ -520,13 +520,14 @@ struct Terms {
 }
 
 // ---------- E7a (2026-10-29): the tag theory where the engine actually uses it ----------
-// engine.rs adds 0.5·(1−conf)·(tag_synergy + tag_counter) to each pick and the
+// engine.rs added 0.5·(1−conf)·(tag_synergy + tag_counter) to each pick and the
 // counter half to bans; conf = min(M/200, 1), and M = the CURRENT patch's
 // matches + a fading 0.35 share of the previous patch's (recommender.rs
-// patch_current). So the theory is live through a new save's first 200 matches
+// patch_current). So the theory was live through a new save's first 200 matches
 // and briefly at each patch start. The S0-4 models assumed theory = 0 and never
 // scored it. Pre-registered in docs/research/2026-10-28-advanced-directions.md
-// (E7a) before the first run.
+// (E7a) before the first run. Its verdict set the engine's W_THEORY to 0
+// (v4.4.0); this bench scores the theory at its old 0.5, not that constant.
 const E7_COMP_UNIT: f64 = 0.12; // engine COMP_UNIT
 const E7_W_COMP: f64 = 0.2; // engine W_COMP
 const E7_CONF_FULL: f64 = 200.0; // engine FULL_CONF_MATCHES = recommender CONF_FULL
