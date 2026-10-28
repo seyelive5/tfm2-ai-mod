@@ -12,6 +12,10 @@
 //! (replay `id`, verified monotone with version) so what gets validated is the
 //! model we actually ship, not the harness's pooled-history approximation.
 //!
+//! v3.8 (2026-10-29, E7a): cold-start bench for the tag theory — each patch
+//! replayed as a fresh save (patch-local tables, theory weight 1 − M/200) plus
+//! a career replay; pre-registered in docs/research/2026-10-28-advanced-directions.md.
+//!
 //! Usage: validate-terms [--legacy] [--notes=patch_notes_dump.txt] <match_replays.debug.txt> [draft_weights.tsv] [champion_patch_statistics.tsv] [ai_intrinsic.tsv]
 //!   draft_weights.tsv               → T rows (taxonomy) for the comp term
 //!   champion_patch_statistics.tsv   → LP (gold_line_phase z) — CAVEAT: career-
@@ -846,6 +850,24 @@ fn e7_report(fresh: &[E7Rec], career: &[E7Rec]) {
         "  VERDICT (pre-registered: a half keeps its shipped size only if its Δ CI lower bound > 0): synergy → {} · counter → {}",
         word(keep_syn),
         word(keep_cnt)
+    );
+    // post-hoc (added after the first run, descriptive only): the matches where
+    // the shipped theory changes the predicted winner, and how often it is right there
+    let call = |s: f64| if s.abs() < 1e-12 { 0 } else if s > 0.0 { 1 } else { -1 };
+    let (mut flips, mut right) = (0u32, 0.0f64);
+    for r in fresh {
+        let after = call(r.anchor + r.syn + r.cnt);
+        if after != call(r.anchor) {
+            flips += 1;
+            right += if after == 0 { 0.5 } else if (after > 0) == r.win { 1.0 } else { 0.0 };
+        }
+    }
+    println!(
+        "  post-hoc: the shipped theory changes the predicted winner in {} of {} matches ({:.0}%) and is right in {:.1}% of those",
+        flips,
+        fresh.len(),
+        100.0 * flips as f64 / fresh.len().max(1) as f64,
+        100.0 * right / (flips.max(1)) as f64
     );
     let call: Vec<usize> = (0..career.len()).collect();
     let mut s = format!(
