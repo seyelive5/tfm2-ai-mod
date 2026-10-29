@@ -1034,14 +1034,17 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         // NOTE(2026-07-05 review F10): don't flatly say "아껴두세요" — it contradicts the
         // ★ guidance (which urges securing a thin lane NOW before the enemy takes it).
         // Frame the thin lanes as a per-set allocation call, not a blanket "save".
+        // The counts are one card line even at two digits (≤ 48 units): a fearless
+        // set's card often has a single line left, and the advice gives way first.
         parts.push(format!(
-            "남은 강챔(S/A) ▶ 탑 {} · 정글 {} · 미드 {} · 바텀 {} · 서폿 {} — 적은 라인은 세트 배분에 주의(이번 세트 확보 vs 다음 세트 보존).",
+            "남은 강챔(S/A): 탑{} 정글{} 미드{} 바텀{} 서폿{}",
             depth(d[0]),
             depth(d[1]),
             depth(d[2]),
             depth(d[3]),
             depth(d[4])
         ));
+        parts.push("적은 라인은 세트 배분에 주의(이번 세트 확보 vs 다음 세트 보존).".to_string());
     }
     // last: the first line a full card gives up (the card's pill keeps the count)
     parts.push(markup::dim(&format!(
@@ -1434,6 +1437,33 @@ mod tests {
         let o = run("t-swap-headline", swap_board(), 0);
         let w = markup::width(&o.notes[0]);
         assert!(w <= 48, "{} units: {}", w, markup::plain(&o.notes[0]));
+    }
+
+    fn fearless_board() -> Board {
+        Board {
+            my_locked: ids(&["fighter", "swordman"]),
+            enemy_locked: ids(&["ogre"]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn fearless_lane_depth_fits_one_card_line() {
+        // a fearless set's card often has one line left for it (10-30 game): all
+        // five lane counts must be on that line
+        let n = plain_notes(&run("t-fearless-depth", fearless_board(), 0));
+        let line = n.iter().find(|x| x.starts_with("남은 강챔")).expect("depth line");
+        assert!(markup::width(line) <= 48, "{} units: {}", markup::width(line), line);
+        for lane in ["탑", "정글", "미드", "바텀", "서폿"] {
+            assert!(line.contains(lane), "{}", line);
+        }
+    }
+
+    #[test]
+    fn fearless_allocation_advice_follows_the_depth_line() {
+        let n = plain_notes(&run("t-fearless-advice", fearless_board(), 0));
+        let at = n.iter().position(|x| x.starts_with("남은 강챔")).expect("depth line");
+        assert!(n.get(at + 1).map_or(false, |x| x.starts_with("적은 라인은 세트 배분에 주의")), "{:?}", n);
     }
 
     #[test]
