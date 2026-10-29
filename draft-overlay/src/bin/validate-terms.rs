@@ -26,6 +26,8 @@
 //! v3.11 (2026-10-29, E7c): calibrated win probability — the strength diff mapped
 //! by σ(α + β·conf·Δ) fitted on earlier patches only, against reading the score
 //! as %p; career bench + E7a's fresh-save replay for the cold start.
+//! v3.12 (2026-10-30, E10): team tactics — each team's replay `Strategy` against
+//! the E7c map's expected win, compared within the same team and patch.
 //!
 //! Usage: validate-terms [--legacy] [--notes=patch_notes_dump.txt] <match_replays.debug.txt> [draft_weights.tsv] [champion_patch_statistics.tsv] [ai_intrinsic.tsv]
 //!   draft_weights.tsv               → T rows (taxonomy) for the comp term
@@ -136,6 +138,8 @@ struct Match {
     /// team ids (T-ban behavioral grader: per-team usage history).
     blue_tid: u32,
     red_tid: u32,
+    /// both teams' tactics (E10), blue then red; None = no block or an unknown option
+    strat: [Option<[u8; 12]>; 2],
 }
 
 /// plain string array (`["a", "b"]`) → items (quote-delimited).
@@ -198,7 +202,8 @@ fn parse_matches(text: &str) -> Vec<Match> {
         bans.extend(parse_str_array(extract_array(block, "red_ban")));
         let blue_tid = num_field(block, "blue_team_id").unwrap_or(0.0) as u32;
         let red_tid = num_field(block, "red_team_id").unwrap_or(0.0) as u32;
-        out.push(Match { blue, red, blue_win, version, id, bans, blue_tid, red_tid });
+        let strat = [parse_strategy(block, "blue_strategy"), parse_strategy(block, "red_strategy")];
+        out.push(Match { blue, red, blue_win, version, id, bans, blue_tid, red_tid, strat });
     }
     out
 }
@@ -1697,6 +1702,235 @@ fn e7c_report(career: &[CalRec], fresh: &[CalRec], vsorted: &[Vec<u32>]) {
     }
 }
 
+// ---------- E10: team tactics (pre-registered 2026-10-30) ----------
+
+/// the replay `Strategy` fields E10 reads, in this order, with each one's options
+/// (the dump's enum names); morgard_use keeps the split shape, not its lanes
+const E10_FIELDS: [(&str, &[&str]); 12] = [
+    ("focused", &["Top", "Bottom", "All"]),
+    ("early_jungle", &["GrowthAndCover", "Ganking", "CounterJungle"]),
+    ("early_serpen", &["Must", "Flexible", "Giveup"]),
+    ("early_serpen_top", &["Must", "Flexible", "Giveup"]),
+    ("object_buildup", &["Split", "Flexible", "Gather"]),
+    ("object_battle", &["Initiating", "Poking"]),
+    ("morgard_use", &["Gather", "Split14", "Split131"]),
+    ("tower_press", &["Poking", "Dive"]),
+    ("morgard_defense", &["Gather", "Battle"]),
+    ("object_finish", &["KillPriority", "BattlePriority"]),
+    ("minion_wave", &["WavePriority", "JoinPriority"]),
+    ("game_finish", &["Stable", "Flexible", "Aggressive"]),
+];
+/// Bonferroni over the 26 contrasts, two-sided 5%: Φ⁻¹(1 − 0.025/26)
+const E10_Z: f64 = 3.10;
+
+/// a replay's `<name>: Strategy { .. }` → each E10 field's option index; None
+/// when the block is missing or holds an option E10 does not know
+fn parse_strategy(block: &str, name: &str) -> Option<[u8; 12]> {
+    let key = format!("{}: Strategy {{", name);
+    let brace = block.find(&key)? + key.len() - 1;
+    let (s, e) = read_balanced(block.as_bytes(), brace, b'{', b'}')?;
+    let blk = &block[s..=e];
+    let mut out = [0u8; 12];
+    for (k, (field, opts)) in E10_FIELDS.iter().enumerate() {
+        let v = raw_field(blk, field)?;
+        let word = v.split_whitespace().next()?;
+        out[k] = opts.iter().position(|o| *o == word)? as u8;
+    }
+    Some(out)
+}
+
+/// one team in one E10 match: the match (numbered densely — the bootstrap draws
+/// matches, both sides together), team, patch group, tactics, the result minus
+/// the E7c map's expected win, and the result
+struct E10Side {
+    m: usize,
+    team: u32,
+    g: usize,
+    strat: [u8; 12],
+    r: f64,
+    won: bool,
+}
+
+/// dense cell ids by `key` (team × patch, or team)
+fn e10_cells<K: std::hash::Hash + Eq>(sides: &[E10Side], key: impl Fn(&E10Side) -> K) -> (Vec<usize>, usize) {
+    let mut ids: HashMap<K, usize> = HashMap::new();
+    let cell = sides
+        .iter()
+        .map(|s| {
+            let next = ids.len();
+            *ids.entry(key(s)).or_insert(next)
+        })
+        .collect();
+    (cell, ids.len())
+}
+
+/// each option's within-cell effect Σ(r − r̄_c)(d − d̄_c) / Σ(d − d̄_c)², d = 1 when
+/// the side picked it (the fixed-effects slope): a cell that kept one option adds
+/// nothing. `w` weighs each side (1, or its match's bootstrap draws). None: no
+/// cell mixes that option with another.
+fn e10_within(sides: &[E10Side], cell: &[usize], n_cells: usize, w: &[f64]) -> [[Option<f64>; 3]; 12] {
+    let mut n = vec![0.0f64; n_cells];
+    let mut sr = vec![0.0f64; n_cells];
+    let mut no = vec![[[0.0f64; 3]; 12]; n_cells];
+    let mut sro = vec![[[0.0f64; 3]; 12]; n_cells];
+    for (i, s) in sides.iter().enumerate() {
+        let (c, wi) = (cell[i], w[i]);
+        n[c] += wi;
+        sr[c] += wi * s.r;
+        for f in 0..12 {
+            let o = s.strat[f] as usize;
+            no[c][f][o] += wi;
+            sro[c][f][o] += wi * s.r;
+        }
+    }
+    let mut out = [[None; 3]; 12];
+    for f in 0..12 {
+        for o in 0..E10_FIELDS[f].1.len() {
+            let (mut num, mut den) = (0.0, 0.0);
+            for c in (0..n_cells).filter(|&c| n[c] > 0.0) {
+                num += sro[c][f][o] - sr[c] * no[c][f][o] / n[c];
+                den += no[c][f][o] - no[c][f][o] * no[c][f][o] / n[c];
+            }
+            if den > 1e-9 {
+                out[f][o] = Some(num / den);
+            }
+        }
+    }
+    out
+}
+
+/// the effects' match-bootstrap standard errors (1,000 draws, the S0-4 seed — the
+/// same draws for every cell scheme)
+fn e10_se(sides: &[E10Side], cell: &[usize], n_cells: usize) -> [[f64; 3]; 12] {
+    let n_m = sides.iter().map(|s| s.m + 1).max().unwrap_or(0);
+    let mut rng: u64 = 20260705;
+    let mut draws = vec![0.0f64; n_m];
+    let mut acc = [[(0.0f64, 0.0f64, 0.0f64); 3]; 12]; // draws with a value, Σx, Σx²
+    for _ in 0..1000 {
+        draws.iter_mut().for_each(|d| *d = 0.0);
+        for _ in 0..n_m {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            draws[(rng % n_m as u64) as usize] += 1.0;
+        }
+        let w: Vec<f64> = sides.iter().map(|s| draws[s.m]).collect();
+        let e = e10_within(sides, cell, n_cells, &w);
+        for f in 0..12 {
+            for o in 0..3 {
+                if let Some(x) = e[f][o] {
+                    acc[f][o].0 += 1.0;
+                    acc[f][o].1 += x;
+                    acc[f][o].2 += x * x;
+                }
+            }
+        }
+    }
+    let mut se = [[0.0f64; 3]; 12];
+    for f in 0..12 {
+        for o in 0..3 {
+            let (k, s1, s2) = acc[f][o];
+            if k > 1.0 {
+                se[f][o] = ((s2 - s1 * s1 / k) / (k - 1.0)).max(0.0).sqrt();
+            }
+        }
+    }
+    se
+}
+
+/// the pre-registered pass: the Bonferroni interval clear of 0 and the team-only
+/// estimate on the same side
+fn e10_pass(e: f64, se: f64, team_e: f64) -> bool {
+    (e - E10_Z * se > 0.0 || e + E10_Z * se < 0.0) && e * team_e > 0.0
+}
+
+/// E10 (pre-registered, docs/research/2026-10-28-advanced-directions.md): does a
+/// team tactic move the result beyond the E7c map, within the same team and patch?
+fn e10_report(sides: &[E10Side], a: f64, b: f64, scored: usize) {
+    let (tp, n_tp) = e10_cells(sides, |s| (s.team, s.g));
+    let (tm, n_tm) = e10_cells(sides, |s| s.team);
+    let ones = vec![1.0; sides.len()];
+    let (e, se) = (e10_within(sides, &tp, n_tp, &ones), e10_se(sides, &tp, n_tp));
+    let et = e10_within(sides, &tm, n_tm, &ones);
+    // a plain contrast of `v` between the sides that picked o and the rest (no cells)
+    let gap = |f: usize, o: usize, v: &dyn Fn(&E10Side) -> f64| {
+        let (mut s1, mut n1, mut s0, mut n0) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        for s in sides {
+            if s.strat[f] as usize == o {
+                s1 += v(s);
+                n1 += 1.0;
+            } else {
+                s0 += v(s);
+                n0 += 1.0;
+            }
+        }
+        s1 / n1.max(1.0) - s0 / n0.max(1.0)
+    };
+    // the share of sides whose team × patch cell used two or more options of f
+    let mixed = |f: usize| {
+        let mut seen = vec![[false; 3]; n_tp];
+        for (i, s) in sides.iter().enumerate() {
+            seen[tp[i]][s.strat[f] as usize] = true;
+        }
+        let k = (0..sides.len()).filter(|&i| seen[tp[i]].iter().filter(|&&x| x).count() >= 2).count();
+        k as f64 / sides.len().max(1) as f64
+    };
+    println!(
+        "\nE10 TEAM TACTICS (pre-registered) — r = result − E7c map (α {:+.4}, β {:.3}, every scored match); e = the option vs the field's others within the same team × patch, %p; interval ±{:.2}·se (Bonferroni over 26), 1000× match bootstrap:",
+        a, b, E10_Z
+    );
+    println!(
+        "  sides {} (matches {} of {} scored, {} without both tactics) · team × patch cells {} · teams {}",
+        sides.len(),
+        sides.len() / 2,
+        scored,
+        scored - sides.len() / 2,
+        n_tp,
+        n_tm
+    );
+    println!(
+        "  {:<17} {:<26} {:>6} {:>6}  {:<21} {:<15} {:>5} {:>6} {:>6} {:>6}",
+        "field", "option (vs the rest)", "share", "mixed", "e [±3.10·se]", "95%", "limit", "team", "raw", "map"
+    );
+    let mut passed: Vec<String> = Vec::new();
+    for (f, (field, opts)) in E10_FIELDS.iter().enumerate() {
+        for o in 0..(if opts.len() == 2 { 1 } else { opts.len() }) {
+            let name = if opts.len() == 2 { format!("{} vs {}", opts[0], opts[1]) } else { opts[o].to_string() };
+            let share = sides.iter().filter(|s| s.strat[f] as usize == o).count() as f64 / sides.len().max(1) as f64;
+            let mut line = format!("  {:<17} {:<26} {:>5.1}% {:>5.1}%  ", field, name, 100.0 * share, 100.0 * mixed(f));
+            match (e[f][o], et[f][o]) {
+                (Some(x), Some(xt)) => {
+                    let s = se[f][o];
+                    let pass = e10_pass(x, s, xt);
+                    line += &format!(
+                        "{:<21} {:<15} {:>5.1} {:>+6.1} {:>+6.1} {:>+6.1}{}",
+                        format!("{:+.1} [{:+.1}, {:+.1}]", 100.0 * x, 100.0 * (x - E10_Z * s), 100.0 * (x + E10_Z * s)),
+                        format!("[{:+.1}, {:+.1}]", 100.0 * (x - 1.96 * s), 100.0 * (x + 1.96 * s)),
+                        100.0 * E10_Z * s,
+                        100.0 * xt,
+                        100.0 * gap(f, o, &|s| if s.won { 1.0 } else { 0.0 }),
+                        100.0 * gap(f, o, &|s| s.r),
+                        if pass { "  PASS" } else { "" }
+                    );
+                    if pass {
+                        passed.push(format!("{} {} {:+.1}", field, name, 100.0 * x));
+                    }
+                }
+                _ => line += "— (no team mixed this option)",
+            }
+            println!("{}", line);
+        }
+    }
+    println!(
+        "  VERDICT (pre-registered: the interval clear of 0 and the team-only estimate on the same side): {}",
+        if passed.is_empty() {
+            "NO TACTIC PASSES — show no tactic advice".to_string()
+        } else {
+            format!("{} pass — tactic-card candidates after a 0.7.0 check and user approval: {}", passed.len(), passed.join(" · "))
+        }
+    );
+}
+
 fn main() {
     // --legacy = the old non-causal i%5 interleave (kept for comparison); default is
     // the causal rolling-origin split (train on strictly-earlier patches only).
@@ -1811,6 +2045,8 @@ fn main() {
     let mut t4_v: Vec<(f64, f64)> = Vec::new();
     // E7c calibration bench (rolling only): the strength diff and M per scored match
     let mut cal_v: Vec<CalRec> = Vec::new();
+    // E10: each cal_v record's match
+    let mut cal_mi: Vec<usize> = Vec::new();
     // champ universe for the T4 pool (sorted — deterministic iteration).
     let universe: Vec<&str> = {
         let mut s: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
@@ -2264,6 +2500,7 @@ fn main() {
                 // E7c: k matches of this patch are already in the tables
                 let m_ev = prod_m_ev(k as f64, prev_total);
                 cal_v.push(CalRec { g, d: t.dfor_prod, m: m_ev, x: t.aip_prod + t.comp_prod, win: m.blue_win });
+                cal_mi.push(i);
             }
             recs.push(t);
             if !legacy {
@@ -3061,6 +3298,21 @@ fn main() {
         let fresh_cal: Vec<CalRec> =
             fresh.iter().map(|r| CalRec { g: r.g, d: r.strength, m: r.m_ev, x: 0.0, win: r.win }).collect();
         e7c_report(&cal_v, &fresh_cal, &vsorted);
+        // E10: both teams' tactics against the E7c map fitted on every scored match
+        // (the v4.6.0 constants)
+        let (a, b) = e7b_logit(&cal_v.iter().map(|r| (e7c_conf(r.m) * r.d, r.win)).collect::<Vec<_>>());
+        let mut sides: Vec<E10Side> = Vec::new();
+        for (r, &i) in cal_v.iter().zip(&cal_mi) {
+            let mt = &matches[i];
+            if let [Some(bs), Some(rs)] = mt.strat {
+                let p = 1.0 / (1.0 + (-(a + b * e7c_conf(r.m) * r.d)).exp());
+                let y = if r.win { 1.0 } else { 0.0 };
+                let k = sides.len() / 2;
+                sides.push(E10Side { m: k, team: mt.blue_tid, g: r.g, strat: bs, r: y - p, won: r.win });
+                sides.push(E10Side { m: k, team: mt.red_tid, g: r.g, strat: rs, r: p - y, won: !r.win });
+            }
+        }
+        e10_report(&sides, a, b, cal_v.len());
     }
     println!("\n>> A term EARNS engine weight only if it lifts base_lane beyond ~±{:.1}%p noise.", 50.0 / n.sqrt());
 }
@@ -3254,5 +3506,89 @@ mod tests {
         assert!((bins[0].0 - 0.05).abs() < 1e-12, "{:?}", bins[0]);
         assert!((bins[0].1 - 0.5).abs() < 1e-12, "{:?}", bins[0]);
         assert!((bins[9].0 - 0.95).abs() < 1e-12, "{:?}", bins[9]);
+    }
+
+    const STRAT: &str = "blue_strategy: Strategy {
+            focused: Bottom,
+            early_jungle: Ganking,
+            early_serpen: Flexible,
+            early_serpen_top: Must,
+            object_buildup: Flexible,
+            object_battle: Initiating,
+            morgard_use: Split131 {
+                position1: Top,
+                position2: Bottom,
+            },
+            tower_press: Poking,
+            morgard_defense: Gather,
+            object_finish: BattlePriority,
+            minion_wave: JoinPriority,
+            game_finish: Aggressive,
+        },";
+
+    #[test]
+    fn strategy_block_reads_every_tactic() {
+        assert_eq!(parse_strategy(STRAT, "blue_strategy"), Some([1, 1, 1, 0, 1, 0, 2, 0, 0, 1, 1, 2]));
+    }
+
+    #[test]
+    fn strategy_with_an_unknown_option_is_left_out() {
+        assert_eq!(parse_strategy(&STRAT.replace("Aggressive", "Reckless"), "blue_strategy"), None);
+        assert_eq!(parse_strategy(STRAT, "red_strategy"), None);
+    }
+
+    /// one side whose first tactic is `o` (the rest 0)
+    fn side(m: usize, team: u32, o: u8, r: f64) -> E10Side {
+        let mut strat = [0u8; 12];
+        strat[0] = o;
+        E10Side { m, team, g: 0, strat, r, won: r > 0.0 }
+    }
+
+    /// team 1 never switched and beat the map by 0.3; team 2 switched, and its
+    /// option-1 games beat its option-0 games by 0.2
+    fn confounded() -> Vec<E10Side> {
+        let mut v: Vec<E10Side> = (0..4).map(|m| side(m, 1, 0, 0.3)).collect();
+        v.extend([side(4, 2, 1, 0.1), side(5, 2, 1, 0.1), side(6, 2, 0, -0.1), side(7, 2, 0, -0.1)]);
+        v
+    }
+
+    #[test]
+    fn within_effect_ignores_a_team_that_never_switched() {
+        let s = confounded();
+        let (cell, n) = e10_cells(&s, |x| (x.team, x.g));
+        let e = e10_within(&s, &cell, n, &vec![1.0; s.len()]);
+        // pooled, option 1 would look 0.07 WORSE (team 1's strength sits in option 0)
+        assert!((e[0][1].unwrap() - 0.2).abs() < 1e-12, "{:?}", e[0]);
+        assert!((e[0][0].unwrap() + 0.2).abs() < 1e-12, "{:?}", e[0]);
+        // a tactic nobody switched tells nothing
+        assert_eq!(e[1][0], None);
+    }
+
+    #[test]
+    fn bootstrap_weight_counts_a_side_that_many_times() {
+        let s = confounded();
+        let (cell, n) = e10_cells(&s, |x| (x.team, x.g));
+        let mut w = vec![1.0; s.len()];
+        w[4] = 2.0;
+        let mut dup = confounded();
+        dup.push(side(4, 2, 1, 0.1));
+        let (dcell, dn) = e10_cells(&dup, |x| (x.team, x.g));
+        let (a, b) = (e10_within(&s, &cell, n, &w), e10_within(&dup, &dcell, dn, &vec![1.0; dup.len()]));
+        assert!((a[0][1].unwrap() - b[0][1].unwrap()).abs() < 1e-12, "{:?} {:?}", a[0], b[0]);
+    }
+
+    #[test]
+    fn contrast_family_is_the_registered_26() {
+        // E10_Z is Bonferroni for this count — a new option needs a new z
+        let n: usize = E10_FIELDS.iter().map(|(_, o)| if o.len() == 2 { 1 } else { o.len() }).sum();
+        assert_eq!(n, 26);
+    }
+
+    #[test]
+    fn verdict_needs_the_interval_clear_of_zero_and_the_team_estimate_agreeing() {
+        assert!(e10_pass(0.08, 0.02, 0.05));
+        assert!(e10_pass(-0.08, 0.02, -0.03));
+        assert!(!e10_pass(0.05, 0.02, 0.05), "interval reaches 0");
+        assert!(!e10_pass(0.08, 0.02, -0.01), "team-only estimate disagrees");
     }
 }

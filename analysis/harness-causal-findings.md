@@ -186,7 +186,7 @@ S0-4 점수에서는 넛지 항을 뺐다. E7a와 E7b의 P2 비교군은 정의�
 ```
 cd draft-overlay; cargo run --release --bin validate-terms -- <match_replays.debug.txt> src/draft_weights.tsv <champion_patch_statistics.tsv>
 #   --legacy 붙이면 구 i%5. 전체 출력: analysis/harness-rolling-origin.txt, analysis/harness-legacy-i5.txt
-# 현재 기준 실행(2026-10-29, v3.10 → analysis/harness-v450.txt; v3.11은 같은 명령에 E7c 절이 끝에 붙는다 → analysis/harness-e7c.txt). <probe> = 진단 덤프 폴더:
+# 현재 기준 실행(2026-10-29, v3.10 → analysis/harness-v450.txt; v3.11은 같은 명령에 E7c 절이 끝에 붙는다 → analysis/harness-e7c.txt; v3.12는 그 뒤, 끝 안내 줄 앞에 E10 절이 붙는다 → analysis/harness-e10.txt). <probe> = 진단 덤프 폴더:
 #   validate-terms --notes=../analysis/patch_notes_real.txt --e7b-holdout=2026.4.0,2026.4.1 --solo=<probe>/solo_rank_matches.debug.txt
 #     <probe>/match_replays.debug.txt src/draft_weights.tsv <probe>/champion_patch_statistics.classic-0706.tsv <probe>/ai_intrinsic.tsv
 ```
