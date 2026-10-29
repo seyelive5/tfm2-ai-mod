@@ -16,6 +16,10 @@
 //! replayed as a fresh save (patch-local tables, theory weight 1 − M/200) plus
 //! a career replay; pre-registered in docs/research/2026-10-28-advanced-directions.md.
 //!
+//! v3.9 (2026-10-29, E7b): changed champions carried by patch size — log loss
+//! with a per-arm logistic map fit on earlier patches only; pre-registered in
+//! the same doc.
+//!
 //! Usage: validate-terms [--legacy] [--notes=patch_notes_dump.txt] <match_replays.debug.txt> [draft_weights.tsv] [champion_patch_statistics.tsv] [ai_intrinsic.tsv]
 //!   draft_weights.tsv               → T rows (taxonomy) for the comp term
 //!   champion_patch_statistics.tsv   → LP (gold_line_phase z) — CAVEAT: career-
@@ -886,6 +890,415 @@ fn e7_report(fresh: &[E7Rec], career: &[E7Rec]) {
         s += &format!(" · {} {:+.1} [{:+.1}, {:+.1}]", name, d, lo, hi);
     }
     println!("{}", s);
+}
+
+// ---------- E7b (2026-10-29): changed champions carried by patch size ----------
+// The shipped state drops a changed champ's previous patch and adds a count
+// nudge (P2). E7b starts it from the previous posterior moved by a + b·size
+// instead (P3 κ40, P4 κ80), with a and b fit on earlier patches only.
+// Pre-registered in docs/research/2026-10-28-advanced-directions.md (E7b)
+// before the first run.
+const E7B_FIT_MIN: usize = 8; // fewer earlier points → the shipped nudge stands in for the shift
+const E7B_FIT_GAMES: f64 = 10.0; // a fit point needs this many games in both patches
+const E7B_FRESH: f64 = 30.0; // primary: a changed champ under this many current games
+const E7B_ARMS: [&str; 5] = [
+    "P2 shipped (reset + count nudge)",
+    "P3 size carry κ40",
+    "P4 size carry κ80",
+    "r1 = P4 without the shift",
+    "r2 = P4 without kept lanes",
+];
+
+/// per version: (the section has real before/after values, champ → signed size
+/// Σ±min(100, |after − pre|/|pre|·100)). The 4.0/4.1 sections of the extended
+/// notes are synthesized direction-only tokens, so they read as not real.
+fn e7b_sizes(text: &str) -> HashMap<String, (bool, HashMap<String, f64>)> {
+    let mut out: HashMap<String, (bool, HashMap<String, f64>)> = HashMap::new();
+    let mut cur: Option<String> = None;
+    for line in text.lines() {
+        let lt = line.trim();
+        if let Some(rest) = lt.strip_prefix("=== version ") {
+            let v = rest.split_whitespace().next().unwrap_or("").to_string();
+            out.entry(v.clone()).or_default();
+            cur = Some(v);
+        } else if let (Some(v), Some(rest)) = (cur.as_ref(), lt.strip_prefix('[')) {
+            let Some(end) = rest.find(']') else { continue };
+            let e = out.get_mut(v).unwrap();
+            let mut s = 0.0;
+            for tok in rest[end + 1..].split_whitespace() {
+                let buff = match tok.as_bytes().last() {
+                    Some(b'+') => true,
+                    Some(b'-') => false,
+                    _ => continue,
+                };
+                let body = &tok[..tok.len() - 1];
+                let Some((pre, after)) = body.rfind(':').and_then(|k| body[k + 1..].split_once("->")) else { continue };
+                let num = |x: &str| x.trim().trim_end_matches('%').parse::<f64>().ok();
+                if let (Some(p), Some(a)) = (num(pre), num(after)) {
+                    e.0 = true;
+                    if p.abs() > 1e-9 {
+                        let rel = (((a - p) / p).abs() * 100.0).min(100.0);
+                        s += if buff { rel } else { -rel };
+                    }
+                }
+            }
+            e.1.insert(rest[..end].to_string(), s);
+        }
+    }
+    out
+}
+
+/// the shipped chg_nudge before its 30-game fade (engine chg_nudge)
+fn e7b_nudge(changed: &Changed, c: &str) -> f64 {
+    let Some(&(dir, b, nrf)) = changed.get(c) else { return 0.0 };
+    let n = b + nrf;
+    let uni = 0.01 + 0.005 * (if n == 0 { 2 } else { n.min(4) }) as f64;
+    match dir {
+        '+' => uni,
+        '-' => -uni,
+        '~' if n > 0 => 0.02 * (b as f64 - nrf as f64) / n as f64 * (n as f64 / 4.0).min(1.0),
+        _ => 0.0,
+    }
+}
+
+/// a changed champ's lane delta when it starts from prior mean `mu` at strength
+/// `kappa`: current rows only, the lane cell's prior is the new champ posterior
+/// (κ20); `keep` = the lanes it played last patch keep their cell
+fn e7b_carry_delta(
+    c: &str,
+    lane: usize,
+    mu: f64,
+    kappa: f64,
+    keep: bool,
+    cur_c: &HashMap<&str, WL>,
+    cur_cp: &HashMap<(&str, usize), WL>,
+    prev_cp: &HashMap<(&str, usize), WL>,
+) -> f64 {
+    let cu = cur_c.get(c).copied().unwrap_or_default();
+    let cp = beta_mean(cu.w, cu.g, mu, kappa);
+    if lane < 5 {
+        let cell = cur_cp.get(&(c, lane)).copied().unwrap_or_default();
+        if cell.g > 0.0 {
+            return beta_mean(cell.w, cell.g, cp, PROD_KAPPA_LANE) - 0.5;
+        }
+        if keep && prev_cp.get(&(c, lane)).map_or(false, |w| w.g > 0.0) {
+            return cp - 0.5;
+        }
+        return 0.25 * (cp - 0.5);
+    }
+    cp - 0.5
+}
+
+/// one E7b match (career replay); scores are blue − red, in E7B_ARMS order
+struct E7bRec {
+    g: usize,
+    /// match index within its patch (id order)
+    k: usize,
+    /// a changed champ under E7B_FRESH current-patch games is on the board
+    fresh: bool,
+    s: [f64; 5],
+    win: bool,
+}
+
+/// one patch of the replay: (label, changed champs, earlier fit points, the
+/// shift fit a + b·size if any, the note has real sizes)
+struct E7bPatch {
+    label: String,
+    changed: usize,
+    points: usize,
+    fit: Option<(f64, f64)>,
+    real: bool,
+}
+
+fn e7b_records(
+    matches: &[Match],
+    groups: &[usize],
+    vsorted: &[Vec<u32>],
+    taxon: &HashMap<String, Taxon>,
+    notes: &HashMap<String, Changed>,
+    sizes: &HashMap<String, (bool, HashMap<String, f64>)>,
+) -> (Vec<E7bRec>, Vec<E7bPatch>) {
+    let empty: Changed = HashMap::new();
+    let no_sizes: HashMap<String, f64> = HashMap::new();
+    let mut out = Vec::new();
+    let mut patches = Vec::new();
+    // (size, new-patch winrate − previous posterior) from COMPLETED patches only
+    let mut pts: Vec<(f64, f64)> = Vec::new();
+    let mut prev_c: HashMap<&str, WL> = HashMap::new();
+    let mut prev_cp: HashMap<(&str, usize), WL> = HashMap::new();
+    for g in 0..vsorted.len() {
+        let label = vsorted[g].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".");
+        let changed = if g >= 1 { notes.get(&label).unwrap_or(&empty) } else { &empty };
+        let (real, size) = sizes.get(&label).map_or((false, &no_sizes), |(r, s)| (*r, s));
+        let fit = if real && pts.len() >= E7B_FIT_MIN { Some(e7b_ols(&pts)) } else { None };
+        patches.push(E7bPatch { label, changed: changed.len(), points: pts.len(), fit, real });
+        // prior means for this patch's changed champs: [P3/P4 shifted, r1 unshifted]
+        let mu: HashMap<&str, [f64; 2]> = changed
+            .keys()
+            .map(|c| {
+                let pv = prev_c.get(c.as_str()).copied().unwrap_or_default();
+                let post = if pv.g > 0.0 { beta_mean(pv.w, pv.g, 0.5, PROD_KAPPA_CHAMP) } else { 0.5 };
+                let shift = match fit {
+                    Some((a, b)) => a + b * size.get(c).copied().unwrap_or(0.0),
+                    None => e7b_nudge(changed, c),
+                };
+                (c.as_str(), [(post + shift).clamp(0.2, 0.8), post.clamp(0.2, 0.8)])
+            })
+            .collect();
+        let mut idx: Vec<usize> = (0..matches.len()).filter(|&i| groups[i] == g).collect();
+        idx.sort_by_key(|&i| matches[i].id);
+        let mut cur_c: HashMap<&str, WL> = HashMap::new();
+        let mut cur_cp: HashMap<(&str, usize), WL> = HashMap::new();
+        for (k, &i) in idx.iter().enumerate() {
+            let m = &matches[i];
+            let mut fresh = false;
+            let side = |team: &[Ath], fresh: &mut bool| -> [f64; 5] {
+                let mut s = [0.0; 5];
+                for (j, a) in team.iter().enumerate() {
+                    let allies: Vec<&str> =
+                        team.iter().enumerate().filter(|(x, _)| *x != j).map(|(_, b)| b.champ.as_str()).collect();
+                    let comp = E7_W_COMP * e7_comp_need(taxon, &a.champ, &allies);
+                    let d = prod_delta_for(&a.champ, a.lane, &cur_c, &prev_c, &cur_cp, &prev_cp, changed);
+                    let Some(&[shifted, unshifted]) = mu.get(a.champ.as_str()) else {
+                        for x in s.iter_mut() {
+                            *x += d + comp;
+                        }
+                        continue;
+                    };
+                    let cg = cur_c.get(a.champ.as_str()).map_or(0.0, |w| w.g);
+                    *fresh |= cg < E7B_FRESH;
+                    let carry = |prior: f64, kappa: f64, keep: bool| {
+                        e7b_carry_delta(&a.champ, a.lane, prior, kappa, keep, &cur_c, &cur_cp, &prev_cp) + comp
+                    };
+                    s[0] += d + e7b_nudge(changed, &a.champ) * (1.0 - (cg / 30.0).min(1.0)) + comp;
+                    s[1] += carry(shifted, 40.0, true);
+                    s[2] += carry(shifted, 80.0, true);
+                    s[3] += carry(unshifted, 80.0, true);
+                    s[4] += carry(shifted, 80.0, false);
+                }
+                s
+            };
+            let (b, r) = (side(&m.blue, &mut fresh), side(&m.red, &mut fresh));
+            out.push(E7bRec { g, k, fresh, s: core::array::from_fn(|j| b[j] - r[j]), win: m.blue_win });
+            for (team, won) in [(&m.blue, m.blue_win), (&m.red, !m.blue_win)] {
+                for a in team {
+                    cur_c.entry(&a.champ).or_default().rec(won);
+                    if a.lane < 5 {
+                        cur_cp.entry((&a.champ, a.lane)).or_default().rec(won);
+                    }
+                }
+            }
+        }
+        // patch complete → its changed champs join the fit (sorted: fixed summation order)
+        if g >= 1 && real {
+            let mut cs: Vec<&String> = changed.keys().collect();
+            cs.sort();
+            for c in cs {
+                let cu = cur_c.get(c.as_str()).copied().unwrap_or_default();
+                let pv = prev_c.get(c.as_str()).copied().unwrap_or_default();
+                if cu.g >= E7B_FIT_GAMES && pv.g >= E7B_FIT_GAMES {
+                    let post = beta_mean(pv.w, pv.g, 0.5, PROD_KAPPA_CHAMP);
+                    pts.push((size.get(c).copied().unwrap_or(0.0), cu.w / cu.g - post));
+                }
+            }
+        }
+        prev_c = cur_c;
+        prev_cp = cur_cp;
+    }
+    // what the product would ship: the fit over every real-size patch
+    patches.push(E7bPatch {
+        label: "(all)".to_string(),
+        changed: 0,
+        points: pts.len(),
+        fit: (pts.len() >= E7B_FIT_MIN).then(|| e7b_ols(&pts)),
+        real: true,
+    });
+    (out, patches)
+}
+
+/// unweighted least squares y = a + b·x → (a, b)
+fn e7b_ols(pts: &[(f64, f64)]) -> (f64, f64) {
+    let n = pts.len() as f64;
+    let (mx, my) = (pts.iter().map(|p| p.0).sum::<f64>() / n, pts.iter().map(|p| p.1).sum::<f64>() / n);
+    let sxx: f64 = pts.iter().map(|p| (p.0 - mx) * (p.0 - mx)).sum();
+    let sxy: f64 = pts.iter().map(|p| (p.0 - mx) * (p.1 - my)).sum();
+    let b = if sxx > 1e-12 { sxy / sxx } else { 0.0 };
+    (my - b * mx, b)
+}
+
+/// logistic maximum likelihood for P(blue) = σ(α + β·x), Newton from (0, 0)
+fn e7b_logit(data: &[(f64, bool)]) -> (f64, f64) {
+    let (mut a, mut b) = (0.0f64, 0.0f64);
+    for _ in 0..100 {
+        let (mut g0, mut g1, mut h00, mut h01, mut h11) = (0.0, 0.0, 0.0, 0.0, 0.0);
+        for &(x, y) in data {
+            let p = 1.0 / (1.0 + (-(a + b * x)).exp());
+            let r = if y { 1.0 - p } else { -p };
+            let w = p * (1.0 - p);
+            g0 += r;
+            g1 += r * x;
+            h00 += w;
+            h01 += w * x;
+            h11 += w * x * x;
+        }
+        let det = h00 * h11 - h01 * h01;
+        if det.abs() < 1e-12 {
+            break;
+        }
+        let (da, db) = ((h11 * g0 - h01 * g1) / det, (h00 * g1 - h01 * g0) / det);
+        a += da;
+        b += db;
+        if da.abs() + db.abs() < 1e-12 {
+            break;
+        }
+    }
+    (a, b)
+}
+
+/// mean and 95% paired bootstrap interval of `d` (the S0-4 seed and convention)
+fn e7b_boot(d: &[f64]) -> (f64, f64, f64) {
+    let n = d.len();
+    if n == 0 {
+        return (0.0, 0.0, 0.0);
+    }
+    let mut rng: u64 = 20260705;
+    let mut boot: Vec<f64> = (0..1000)
+        .map(|_| {
+            let mut s = 0.0;
+            for _ in 0..n {
+                rng ^= rng << 13;
+                rng ^= rng >> 7;
+                rng ^= rng << 17;
+                s += d[(rng % n as u64) as usize];
+            }
+            s / n as f64
+        })
+        .collect();
+    boot.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    (d.iter().sum::<f64>() / n as f64, boot[25], boot[975])
+}
+
+fn e7b_report(recs: &[E7bRec], patches: &[E7bPatch]) {
+    let (all_fit, patches) = patches.split_last().expect("the (all) entry");
+    println!(
+        "\nE7b PATCH-SIZE CARRY (pre-registered) — career replay; a changed champ starts from the previous posterior + a + b·size (P3 κ40, P4 κ80) instead of the shipped reset + count nudge (P2); P(blue) = σ(α + β·score), fit per arm on earlier patches only:"
+    );
+    for (j, name) in E7B_ARMS.iter().enumerate() {
+        println!("  arm {}: {}", j, name);
+    }
+    println!("  patch      changed  sizes  points  shift");
+    for p in patches {
+        let shift = match (p.fit, p.changed) {
+            (_, 0) => "— (no note: all arms equal)".to_string(),
+            (Some((a, b)), _) => format!("{:+.4} {:+.5}·size", a, b),
+            (None, _) if !p.real => "the shipped nudge (no sizes in the note)".to_string(),
+            (None, _) => format!("the shipped nudge (fewer than {} points)", E7B_FIT_MIN),
+        };
+        println!("  {:<10} {:>7}  {:>5}  {:>6}  {}", p.label, p.changed, if p.real { "yes" } else { "no" }, p.points, shift);
+    }
+    if let Some((a, b)) = all_fit.fit {
+        println!("  product fit (all {} points of the real-size patches): shift = {:+.4} {:+.5}·size", all_fit.points, a, b);
+    }
+    // per-arm logistic map, refit before each patch on that arm's earlier patches
+    let ng = patches.len();
+    let mut ll = vec![[0.0f64; 5]; recs.len()];
+    let mut br = vec![[0.0f64; 5]; recs.len()];
+    let mut maps = vec![[(0.0f64, 0.0f64); 5]; ng];
+    for j in 0..5 {
+        for g in 1..ng {
+            let train: Vec<(f64, bool)> = recs.iter().filter(|r| r.g < g).map(|r| (r.s[j], r.win)).collect();
+            let (a, b) = e7b_logit(&train);
+            maps[g][j] = (a, b);
+            for (i, r) in recs.iter().enumerate().filter(|(_, r)| r.g == g) {
+                let p = (1.0 / (1.0 + (-(a + b * r.s[j])).exp())).clamp(1e-6, 1.0 - 1e-6);
+                let y = if r.win { 1.0 } else { 0.0 };
+                ll[i][j] = -(y * p.ln() + (1.0 - y) * (1.0 - p).ln());
+                br[i][j] = (p - y) * (p - y);
+            }
+        }
+    }
+    let acc = |r: &E7bRec, j: usize| {
+        let s = r.s[j];
+        if s.abs() < 1e-12 {
+            0.5
+        } else if (s > 0.0) == r.win {
+            1.0
+        } else {
+            0.0
+        }
+    };
+    // Δ is signed so that + = the arm beats P2 (lower loss, higher accuracy)
+    let line = |name: &str, set: &[usize], verdict: bool| -> [(f64, f64); 5] {
+        let mut ci = [(0.0, 0.0); 5];
+        println!("  {} n={}:", name, set.len());
+        let mean = |f: &dyn Fn(usize) -> f64| set.iter().map(|&i| f(i)).sum::<f64>() / set.len().max(1) as f64;
+        let mut s_ll = format!("    log loss ×1000  P2 {:.1}", 1000.0 * mean(&|i| ll[i][0]));
+        let mut s_br = format!("    Brier ×1000     P2 {:.1}", 1000.0 * mean(&|i| br[i][0]));
+        let mut s_ac = format!("    accuracy        P2 {:.1}%", 100.0 * mean(&|i| acc(&recs[i], 0)));
+        for j in 1..5 {
+            let (d, lo, hi) = e7b_boot(&set.iter().map(|&i| 1000.0 * (ll[i][0] - ll[i][j])).collect::<Vec<_>>());
+            ci[j] = (lo, hi);
+            s_ll += &format!("  | {} {:.1} Δ {:+.1} [{:+.1}, {:+.1}]", &E7B_ARMS[j][..2], 1000.0 * mean(&|i| ll[i][j]), d, lo, hi);
+            let (d, lo, hi) = e7b_boot(&set.iter().map(|&i| 1000.0 * (br[i][0] - br[i][j])).collect::<Vec<_>>());
+            s_br += &format!("  | {} {:.1} Δ {:+.1} [{:+.1}, {:+.1}]", &E7B_ARMS[j][..2], 1000.0 * mean(&|i| br[i][j]), d, lo, hi);
+            let (d, lo, hi) =
+                e7b_boot(&set.iter().map(|&i| 100.0 * (acc(&recs[i], j) - acc(&recs[i], 0))).collect::<Vec<_>>());
+            s_ac += &format!("  | {} {:.1}% Δ {:+.1} [{:+.1}, {:+.1}]", &E7B_ARMS[j][..2], 100.0 * mean(&|i| acc(&recs[i], j)), d, lo, hi);
+        }
+        println!("{}", s_ll);
+        if !verdict {
+            println!("{}", s_br);
+            println!("{}", s_ac);
+        }
+        ci
+    };
+    let scored: Vec<usize> = (0..recs.len()).filter(|&i| patches[recs[i].g].fit.is_some()).collect();
+    let primary: Vec<usize> = scored.iter().copied().filter(|&i| recs[i].fresh).collect();
+    let names: Vec<&str> =
+        patches.iter().filter(|p| p.fit.is_some()).map(|p| p.label.as_str()).collect();
+    println!(
+        "  scored patches (real sizes, ≥ {} earlier points): {} · Δ = P2 − arm for losses, arm − P2 for accuracy (+ = arm better), 95% paired bootstrap",
+        E7B_FIT_MIN,
+        names.join(" ")
+    );
+    let pci = line(&format!("PRIMARY — a changed champ under {:.0} current games on the board", E7B_FRESH), &primary, false);
+    let aci = line("ALL matches of the scored patches", &scored, false);
+    println!("  secondary (not used for the verdict):");
+    let first50: Vec<usize> = scored.iter().copied().filter(|&i| recs[i].k < 50).collect();
+    line("first 50 matches of each scored patch", &first50, true);
+    let fallback: Vec<usize> =
+        (0..recs.len()).filter(|&i| recs[i].g >= 1 && patches[recs[i].g].real && patches[recs[i].g].fit.is_none()).collect();
+    line("patches where the nudge stands in (too few points)", &fallback, true);
+    let synth: Vec<usize> = (0..recs.len()).filter(|&i| recs[i].g >= 1 && !patches[recs[i].g].real).collect();
+    line("synthesized-note patches (direction only → nudge)", &synth, true);
+    for g in 1..patches.len() {
+        if patches[g].fit.is_none() {
+            continue;
+        }
+        let set: Vec<usize> = primary.iter().copied().filter(|&i| recs[i].g == g).collect();
+        line(&format!("primary in {}", patches[g].label), &set, true);
+    }
+    // pre-registered rule: primary lower bound > 0 and the all-match upper bound > 0;
+    // both pass → the higher primary lower bound
+    let pass = |j: usize| pci[j].0 > 0.0 && aci[j].1 > 0.0;
+    let pick = match (pass(1), pass(2)) {
+        (true, true) => Some(if pci[1].0 > pci[2].0 { 1 } else { 2 }),
+        (true, false) => Some(1),
+        (false, true) => Some(2),
+        (false, false) => None,
+    };
+    let word = |j: usize| if pass(j) { "PASS" } else { "FAIL" };
+    println!(
+        "  VERDICT (pre-registered: primary Δ lower bound > 0 and all-match Δ upper bound > 0): P3 → {} · P4 → {} → {}",
+        word(1),
+        word(2),
+        pick.map_or("keep the shipped reset + count nudge".to_string(), |j| format!("adopt {}", E7B_ARMS[j]))
+    );
+    // post-hoc (added after the first run, descriptive only): the maps the losses used
+    let s: Vec<String> = (1..ng)
+        .map(|g| format!("{} {:+.3}/{:.2}/{:.2}", patches[g].label, maps[g][0].0, maps[g][0].1, maps[g][2].1))
+        .collect();
+    println!("  post-hoc: logistic maps per patch (α / β of P2 / β of P4): {}", s.join(" · "));
 }
 
 fn main() {
@@ -2236,6 +2649,11 @@ fn main() {
         let fresh = e7_records(&matches, &groups, &vsorted, &taxon, &ai_intr, &notes, false);
         let career = e7_records(&matches, &groups, &vsorted, &taxon, &ai_intr, &notes, true);
         e7_report(&fresh, &career);
+        if let Some(p) = notes_path.as_deref() {
+            let sizes = e7b_sizes(&std::fs::read_to_string(p).unwrap_or_default());
+            let (recs, patches) = e7b_records(&matches, &groups, &vsorted, &taxon, &notes, &sizes);
+            e7b_report(&recs, &patches);
+        }
     }
     println!("\n>> A term EARNS engine weight only if it lifts base_lane beyond ~±{:.1}%p noise.", 50.0 / n.sqrt());
 }
