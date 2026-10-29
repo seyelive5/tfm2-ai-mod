@@ -825,7 +825,8 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         ));
     }
     if !swap.is_empty() {
-        parts.push("픽이 끝났습니다. 전체 승률이 가장 높아지는 배치는 위 추천 배치입니다.".to_string());
+        // one card line (48 units): the note card shows 6 lines in all
+        parts.push("픽 완료 — 위 배치가 전체 승률이 가장 높습니다.".to_string());
         // E7c: calibrated on champion strength alone (AI prior, comp, familiarity unproven)
         let mine: Vec<&str> = board.my_pick.iter().map(|x| x.as_str()).collect();
         let theirs: Vec<&str> = board.enemy_pick.iter().map(|x| x.as_str()).collect();
@@ -1424,6 +1425,15 @@ mod tests {
         let b = Board { my_blue: Some(true), ..swap_board() };
         let n = plain_notes(&run("t-swap-winp", b, 0));
         assert!(n.iter().any(|x| x == "예상 승률(챔피언 강도 기준) 약 52%"), "{:?}", n);
+    }
+
+    #[test]
+    fn swap_headline_fits_one_card_line() {
+        // the note card wraps at 48 units (ui::cards NOTE_UNITS); a two-line headline
+        // pushed a fearless set's remaining-champs note off the card (10-30 game)
+        let o = run("t-swap-headline", swap_board(), 0);
+        let w = markup::width(&o.notes[0]);
+        assert!(w <= 48, "{} units: {}", w, markup::plain(&o.notes[0]));
     }
 
     #[test]
