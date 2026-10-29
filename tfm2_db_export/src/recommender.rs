@@ -814,6 +814,45 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         None => Vec::new(),
     };
 
+    // ── fearless lane depth: STRONG (S/A) champs still pickable per lane — don't
+    // burn a thin lane's only strong champ in an early set (ported back from the
+    // retired overlay; the display was lost in the v3.0 port). One card line even
+    // at two-digit counts (≤ 48 units). A draft lists it right after the #1 and
+    // its alternatives (10-30: the memo and lock lines had filled the 6-line card
+    // before it); the swap card keeps it after the lock line.
+    let mut depth_line: Option<String> = if fearless_on {
+        let taken: HashSet<&str> = board
+            .my_ban
+            .iter()
+            .chain(board.enemy_ban.iter())
+            .chain(board.my_pick.iter())
+            .chain(board.enemy_pick.iter())
+            .map(|s| s.as_str())
+            .collect();
+        let avail: HashSet<String> = CHAMPS
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .filter(|id| {
+                (base_pool.is_empty() || base_pool.contains(id))
+                    && !my_locked.contains(id)
+                    && !taken.contains(id.as_str())
+            })
+            .collect();
+        let d = tables.strong_per_lane(&avail);
+        // an empty lane in the warning color: the thin lanes are the point
+        let depth = |n: u32| if n == 0 { markup::warn("0") } else { markup::num(&n.to_string()) };
+        Some(format!(
+            "남은 강챔(S/A): 탑{} 정글{} 미드{} 바텀{} 서폿{}",
+            depth(d[0]),
+            depth(d[1]),
+            depth(d[2]),
+            depth(d[3]),
+            depth(d[4])
+        ))
+    } else {
+        None
+    };
+
     // ── commentary, in the game's label markup (names / scores / warnings)
     let mut parts: Vec<String> = Vec::new();
     // the runner-up list restates detail_rows → kept out of `notes`
@@ -874,6 +913,9 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                         .join(", ")
                 ));
             }
+            if let Some(l) = depth_line.take() {
+                parts.push(l);
+            }
             if let Some(cof) = &lane.counter_of {
                 // counters() is driven by laning-dominance (LP z) + cold-start tags;
                 // the head-to-head record (MU direct) is weight-0 in the mod (BT
@@ -932,6 +974,9 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
+        }
+        if let Some(l) = depth_line.take() {
+            parts.push(l);
         }
     }
     if !board.enemy_pick.is_empty() {
@@ -1008,42 +1053,14 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                 markup::num(&enemy_locked.len().to_string())
             ));
         }
-        // depletion: STRONG (S/A) champs still pickable per lane — don't burn a
-        // thin lane's only strong champ in an early set (ported back from the
-        // retired overlay; the display was lost in the v3.0 port).
-        let taken: HashSet<&str> = board
-            .my_ban
-            .iter()
-            .chain(board.enemy_ban.iter())
-            .chain(board.my_pick.iter())
-            .chain(board.enemy_pick.iter())
-            .map(|s| s.as_str())
-            .collect();
-        let avail: HashSet<String> = CHAMPS
-            .iter()
-            .map(|(id, _)| id.to_string())
-            .filter(|id| {
-                (base_pool.is_empty() || base_pool.contains(id))
-                    && !my_locked.contains(id)
-                    && !taken.contains(id.as_str())
-            })
-            .collect();
-        let d = tables.strong_per_lane(&avail);
-        // an empty lane in the warning color: the thin lanes are the point
-        let depth = |n: u32| if n == 0 { markup::warn("0") } else { markup::num(&n.to_string()) };
+        // the swap card's place for the counts (a draft listed them up top)
+        if let Some(l) = depth_line.take() {
+            parts.push(l);
+        }
         // NOTE(2026-07-05 review F10): don't flatly say "아껴두세요" — it contradicts the
         // ★ guidance (which urges securing a thin lane NOW before the enemy takes it).
         // Frame the thin lanes as a per-set allocation call, not a blanket "save".
-        // The counts are one card line even at two digits (≤ 48 units): a fearless
-        // set's card often has a single line left, and the advice gives way first.
-        parts.push(format!(
-            "남은 강챔(S/A): 탑{} 정글{} 미드{} 바텀{} 서폿{}",
-            depth(d[0]),
-            depth(d[1]),
-            depth(d[2]),
-            depth(d[3]),
-            depth(d[4])
-        ));
+        // The last fearless line: the first a full card gives up.
         parts.push("적은 라인은 세트 배분에 주의(이번 세트 확보 vs 다음 세트 보존).".to_string());
     }
     // last: the first line a full card gives up (the card's pill keeps the count)
@@ -1460,10 +1477,36 @@ mod tests {
     }
 
     #[test]
-    fn fearless_allocation_advice_follows_the_depth_line() {
+    fn fearless_allocation_advice_gives_way_before_the_lane_depth() {
+        // a full card drops its last notes first: the advice sits after the
+        // counts, right before the closing data line
         let n = plain_notes(&run("t-fearless-advice", fearless_board(), 0));
         let at = n.iter().position(|x| x.starts_with("남은 강챔")).expect("depth line");
-        assert!(n.get(at + 1).map_or(false, |x| x.starts_with("적은 라인은 세트 배분에 주의")), "{:?}", n);
+        let advice = n.iter().position(|x| x.starts_with("적은 라인은 세트 배분에 주의")).expect("advice");
+        assert!(at < advice && advice == n.len() - 2, "{:?}", n);
+    }
+
+    #[test]
+    fn fearless_draft_lists_lane_depth_after_the_alternatives() {
+        // in a draft the memo and lock lines filled the 6-line card before the
+        // counts (10-30): they now come right after the #1 and its alternatives
+        let n = plain_notes(&run("t-fearless-draft", fearless_board(), 0));
+        let alt = n.iter().position(|x| x.starts_with("같은 라인 대안: ")).expect("alternatives");
+        assert!(n.get(alt + 1).map_or(false, |x| x.starts_with("남은 강챔")), "{:?}", n);
+    }
+
+    #[test]
+    fn fearless_ban_lists_lane_depth_after_the_first_choice() {
+        let n = plain_notes(&run("t-fearless-ban", Board { ban_count: 3, ..fearless_board() }, 0));
+        assert!(n[0].starts_with("밴 1순위는 ") && n[1].starts_with("남은 강챔"), "{:?}", n);
+    }
+
+    #[test]
+    fn fearless_swap_keeps_lane_depth_after_the_lock_line() {
+        let b = Board { my_locked: ids(&["gunner"]), enemy_locked: ids(&["bomber"]), ..swap_board() };
+        let n = plain_notes(&run("t-fearless-swap", b, 0));
+        let lock = n.iter().position(|x| x.starts_with("피어리스 ")).expect("lock line");
+        assert!(n.get(lock + 1).map_or(false, |x| x.starts_with("남은 강챔")), "{:?}", n);
     }
 
     #[test]
