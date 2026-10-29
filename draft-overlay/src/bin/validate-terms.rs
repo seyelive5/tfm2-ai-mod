@@ -20,6 +20,10 @@
 //! with a per-arm logistic map fit on earlier patches only; pre-registered in
 //! the same doc.
 //!
+//! v3.10 (2026-10-29): the production replica follows v4.5.0 — changed champs
+//! start from their carry (E7b P4) and the patch nudge left the S0-4 score;
+//! E7a and E7b's P2 arm still score the pre-4.5.0 reset.
+//!
 //! Usage: validate-terms [--legacy] [--notes=patch_notes_dump.txt] <match_replays.debug.txt> [draft_weights.tsv] [champion_patch_statistics.tsv] [ai_intrinsic.tsv]
 //!   draft_weights.tsv               → T rows (taxonomy) for the comp term
 //!   champion_patch_statistics.tsv   → LP (gold_line_phase z) — CAVEAT: career-
@@ -335,11 +339,14 @@ impl WL {
     }
 }
 
-// ---------- production scoring math (S0-3) — mirrors tfm2_db_export/src/recommender.rs:23-151 ----------
+// ---------- production scoring math (S0-3) — mirrors tfm2_db_export/src/recommender.rs patch_current ----------
 const PROD_PREV_W: f64 = 0.35; // PREV_PATCH_WEIGHT
 const PROD_CONF_CHAMP: f64 = 40.0; // per-champ current-patch matches at which the prev blend fades out
 const PROD_KAPPA_CHAMP: f64 = 40.0; // KAPPA_CHAMP
 const PROD_KAPPA_LANE: f64 = 20.0; // KAPPA_LANE
+const PROD_CARRY_A: f64 = -0.0041; // CARRY_A (E7b-H product fit)
+const PROD_CARRY_B: f64 = 0.00072; // CARRY_B
+const PROD_KAPPA_CARRY: f64 = 80.0; // KAPPA_CARRY
 
 fn beta_mean(w: f64, m: f64, prior_mean: f64, kappa: f64) -> f64 {
     let pm = prior_mean.clamp(0.001, 0.999);
@@ -350,8 +357,31 @@ fn beta_mean(w: f64, m: f64, prior_mean: f64, kappa: f64) -> f64 {
 
 /// champ posterior MEAN under the shipped patch-local state: current-version WL
 /// + previous-version WL at 0.35·(1−cm/40) (cm = champ's current games so far);
-/// champs in this version's patch note drop the prev blend (stale — restart).
+/// champs in this version's patch note drop the prev blend (stale) and, since
+/// v4.5.0, start from their carry instead of neutral.
 type Changed = HashMap<String, (char, u32, u32)>;
+
+/// v4.5.0: changed champ → its carried prior mean μ (`prod_carry`). Empty = the
+/// pre-4.5.0 reset, which E7a and E7b's P2 arm keep.
+type Carry = HashMap<String, f64>;
+
+/// the carry the product builds for a patch (recommender build_tables +
+/// patch_current): μ = clamp(previous-version posterior κ40 + shift, 0.2, 0.8),
+/// shift = A + B·size when the note has numbers, else the count nudge
+/// (product count_shift ≡ e7b_nudge)
+fn prod_carry(changed: &Changed, sizes: Option<&(bool, HashMap<String, f64>)>, prev_c: &HashMap<&str, WL>) -> Carry {
+    changed
+        .keys()
+        .map(|c| {
+            let pv = prev_c.get(c.as_str()).copied().unwrap_or_default();
+            let shift = match sizes {
+                Some((true, s)) => PROD_CARRY_A + PROD_CARRY_B * s.get(c).copied().unwrap_or(0.0),
+                _ => e7b_nudge(changed, c),
+            };
+            (c.clone(), (beta_mean(pv.w, pv.g, 0.5, PROD_KAPPA_CHAMP) + shift).clamp(0.2, 0.8))
+        })
+        .collect()
+}
 
 /// blended (current ×1 + prev ×0.35·fade) pseudo-counts for a champ under the
 /// shipped patch-local state; changed champs drop the prev blend entirely.
@@ -362,21 +392,28 @@ fn prod_blend(c: &str, cur: &HashMap<&str, WL>, prev: &HashMap<&str, WL>, change
     (cu.w + pw * pv.w, cu.g + pw * pv.g)
 }
 
-fn prod_champ_post(c: &str, cur: &HashMap<&str, WL>, prev: &HashMap<&str, WL>, changed: &Changed) -> f64 {
+fn prod_champ_post(c: &str, cur: &HashMap<&str, WL>, prev: &HashMap<&str, WL>, changed: &Changed, carry: &Carry) -> f64 {
+    if let Some(&mu) = carry.get(c) {
+        // carried: this patch's games update the carry at κ80
+        let cu = cur.get(c).copied().unwrap_or_default();
+        return beta_mean(cu.w, cu.g, mu, PROD_KAPPA_CARRY);
+    }
     let (w, m) = prod_blend(c, cur, prev, changed);
     beta_mean(w, m, 0.5, PROD_KAPPA_CHAMP)
 }
 
 /// blended (current + faded prev) match count for a champ — the harness twin of
-/// engine `games()` (drives the chg-nudge 30-game and ai-prior 15-game fades).
-/// 0.0 = no table row at all (engine's u32::MAX regime → full nudge/prior).
+/// engine `games()` (drives the ai-prior 15-game fade, and the pre-4.5.0 nudge's
+/// 30-game fade in E7a/E7b). 0.0 = no table row at all (engine's u32::MAX
+/// regime → full prior; a carried champ's 0-game row fades the same).
 fn prod_games(c: &str, cur: &HashMap<&str, WL>, prev: &HashMap<&str, WL>, changed: &Changed) -> f64 {
     prod_blend(c, cur, prev, changed).1
 }
 
 /// lane delta under the shipped state: κ20 beta with the champ's own posterior
 /// mean as prior; the prev fade uses CHAMP-level current games (recommender.rs
-/// keys cur_m by champ, not (champ,lane)); an empty lane cell falls back to champ.
+/// keys cur_m by champ, not (champ,lane)); an empty lane cell falls back to champ
+/// (for a carried champ this equals its kept-lane cell).
 fn prod_lane_delta(
     a: &Ath,
     cur_c: &HashMap<&str, WL>,
@@ -384,8 +421,9 @@ fn prod_lane_delta(
     cur_cp: &HashMap<(&str, usize), WL>,
     prev_cp: &HashMap<(&str, usize), WL>,
     changed: &Changed,
+    carry: &Carry,
 ) -> f64 {
-    let cmean = prod_champ_post(&a.champ, cur_c, prev_c, changed);
+    let cmean = prod_champ_post(&a.champ, cur_c, prev_c, changed, carry);
     if a.lane < 5 {
         let cu = cur_cp.get(&(a.champ.as_str(), a.lane)).copied().unwrap_or_default();
         let pv = if changed.contains_key(a.champ.as_str()) {
@@ -403,11 +441,12 @@ fn prod_lane_delta(
     cmean - 0.5
 }
 
-/// EXACT `delta_for` replica (engine.rs:424-432) on the production state: the
+/// EXACT `delta_for` replica (engine delta_for) on the production state: the
 /// lane cell posterior when the cell exists (m_eff > 0), else the champ delta
 /// SHRUNK HARD (×0.25 — a POS-playable lane with zero games must not inherit the
 /// main-lane-inflated overall delta). Differs from `prod_lane_delta` (S0-3 anchor)
-/// only in that fallback; this is the one the shipped score actually uses.
+/// only in that fallback; this is the one the shipped score actually uses. A
+/// carried champ's lanes from last patch keep a 0-game cell at its carry.
 fn prod_delta_for(
     c: &str,
     lane: usize,
@@ -416,8 +455,13 @@ fn prod_delta_for(
     cur_cp: &HashMap<(&str, usize), WL>,
     prev_cp: &HashMap<(&str, usize), WL>,
     changed: &Changed,
+    carry: &Carry,
 ) -> f64 {
-    let cd = prod_champ_post(c, cur_c, prev_c, changed) - 0.5;
+    if let Some(&mu) = carry.get(c) {
+        // v4.5.0 ships E7b's P4 arm: κ80, the lanes it played last patch keep a cell
+        return e7b_carry_delta(c, lane, mu, PROD_KAPPA_CARRY, true, cur_c, cur_cp, prev_cp);
+    }
+    let cd = prod_champ_post(c, cur_c, prev_c, changed, carry) - 0.5;
     if lane < 5 {
         let cu = cur_cp.get(&(c, lane)).copied().unwrap_or_default();
         let pv = if changed.contains_key(c) {
@@ -487,8 +531,7 @@ struct Terms {
     /// production-math lane base — the SHIPPED model's true causal anchor.
     base_lane_prod: f64,
     // ---- S0-4: the shipped pick score's board-independent terms, replicated ----
-    dfor_prod: f64, // Σ delta_for (engine :424 exact: lane cell else 0.25·champ) diff
-    chg_n: f64,     // Σ chg_nudge (±0.02, 30-game fade, authored dir) diff
+    dfor_prod: f64, // Σ delta_for (engine exact: lane cell else 0.25·champ; changed champs carried) diff
     aip_prod: f64,  // Σ ai_prior_term (0.4·p·15-game-fade, clamp ±0.024) diff
     lp_prod: f64,   // Σ matchup LP (0.008·zdiff, clamp ±0.05, actual same-lane opp) diff
     comp_prod: f64, // Σ W_COMP·comp_need (tags-only; retrospective last-pick) diff
@@ -644,6 +687,8 @@ fn e7_records(
     career: bool,
 ) -> Vec<E7Rec> {
     let empty: Changed = HashMap::new();
+    // E7a scored the theory on the pre-4.5.0 product: changed champs reset
+    let no_carry: Carry = HashMap::new();
     let mut out = Vec::new();
     for g in 0..vsorted.len() {
         let mut prev_c: HashMap<&str, WL> = HashMap::new();
@@ -708,7 +753,7 @@ fn e7_records(
                     for (j, a) in team.iter().enumerate() {
                         let allies: Vec<&str> =
                             team.iter().enumerate().filter(|(x, _)| *x != j).map(|(_, b)| b.champ.as_str()).collect();
-                        let d = prod_delta_for(&a.champ, a.lane, &cur_c, &prev_c, &cur_cp, &prev_cp, changed);
+                        let d = prod_delta_for(&a.champ, a.lane, &cur_c, &prev_c, &cur_cp, &prev_cp, changed, &no_carry);
                         let sy = 0.5 * w * e7_tag_synergy(taxon, &a.champ, &allies);
                         let cn = 0.5 * w * e7_tag_counter(taxon, &a.champ, &enemies);
                         s[0] += d + nudge(&a.champ) + E7_W_COMP * e7_comp_need(taxon, &a.champ, &allies);
@@ -897,8 +942,9 @@ fn e7_report(fresh: &[E7Rec], career: &[E7Rec]) {
 // nudge (P2). E7b starts it from the previous posterior moved by a + b·size
 // instead (P3 κ40, P4 κ80), with a and b fit on earlier patches only.
 // Pre-registered in docs/research/2026-10-28-advanced-directions.md (E7b)
-// before the first run. v4.5.0 ships P4; the prod_* replicas above still model
-// changed champs the P2 way.
+// before the first run. v4.5.0 ships P4 and the prod_* replicas above follow it
+// (`prod_carry`, fixed product a and b); this bench's P2 arm and E7a keep the
+// reset through an empty carry.
 const E7B_FIT_MIN: usize = 8; // fewer earlier points → the shipped nudge stands in for the shift
 const E7B_FIT_GAMES: f64 = 10.0; // a fit point needs this many games in both patches
 const E7B_FRESH: f64 = 30.0; // primary: a changed champ under this many current games
@@ -1021,6 +1067,8 @@ fn e7b_records(
 ) -> (Vec<E7bRec>, Vec<E7bPatch>) {
     let empty: Changed = HashMap::new();
     let no_sizes: HashMap<String, f64> = HashMap::new();
+    // the P2 arm is the pre-4.5.0 product: changed champs reset
+    let no_carry: Carry = HashMap::new();
     let mut out = Vec::new();
     let mut patches = Vec::new();
     // (size, new-patch winrate − previous posterior) from COMPLETED patches only
@@ -1059,7 +1107,7 @@ fn e7b_records(
                     let allies: Vec<&str> =
                         team.iter().enumerate().filter(|(x, _)| *x != j).map(|(_, b)| b.champ.as_str()).collect();
                     let comp = E7_W_COMP * e7_comp_need(taxon, &a.champ, &allies);
-                    let d = prod_delta_for(&a.champ, a.lane, &cur_c, &prev_c, &cur_cp, &prev_cp, changed);
+                    let d = prod_delta_for(&a.champ, a.lane, &cur_c, &prev_c, &cur_cp, &prev_cp, changed, &no_carry);
                     let Some(&[shifted, unshifted]) = mu.get(a.champ.as_str()) else {
                         for x in s.iter_mut() {
                             *x += d + comp;
@@ -1377,6 +1425,11 @@ fn main() {
         .as_deref()
         .map(|p| parse_patch_notes(&std::fs::read_to_string(p).unwrap_or_default()))
         .unwrap_or_default();
+    // per version: the note has numbers, champ → signed size (the carry's shift, E7b)
+    let sizes: HashMap<String, (bool, HashMap<String, f64>)> = notes_path
+        .as_deref()
+        .map(|p| e7b_sizes(&std::fs::read_to_string(p).unwrap_or_default()))
+        .unwrap_or_default();
     let solo: Vec<SoloM> = solo_path
         .as_deref()
         .map(|p| parse_solo(&std::fs::read_to_string(p).unwrap_or_default()))
@@ -1597,11 +1650,13 @@ fn main() {
             }
         }
         let empty_changed: Changed = HashMap::new();
-        let changed: &Changed = if legacy {
-            &empty_changed
+        let (changed, carry): (&Changed, Carry) = if legacy {
+            (&empty_changed, HashMap::new())
         } else {
             let label = vsorted[g].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".");
-            notes.get(&label).unwrap_or(&empty_changed)
+            let changed = notes.get(&label).unwrap_or(&empty_changed);
+            // v4.5.0: the changed champs start from last patch's posterior moved by the patch
+            (changed, prod_carry(changed, sizes.get(&label), &prev_c))
         };
         let mut cur_c: HashMap<&str, WL> = HashMap::new();
         let mut cur_cp: HashMap<(&str, usize), WL> = HashMap::new();
@@ -1680,26 +1735,15 @@ fn main() {
                 m.blue.iter().map(lane_delta40).sum::<f64>() - m.red.iter().map(lane_delta40).sum::<f64>();
             if !legacy {
                 let prod_c = |team: &[Ath]| -> f64 {
-                    team.iter().map(|a| prod_champ_post(&a.champ, &cur_c, &prev_c, changed) - 0.5).sum()
+                    team.iter().map(|a| prod_champ_post(&a.champ, &cur_c, &prev_c, changed, &carry) - 0.5).sum()
                 };
                 let prod_l = |team: &[Ath]| -> f64 {
-                    team.iter().map(|a| prod_lane_delta(a, &cur_c, &prev_c, &cur_cp, &prev_cp, changed)).sum()
+                    team.iter().map(|a| prod_lane_delta(a, &cur_c, &prev_c, &cur_cp, &prev_cp, changed, &carry)).sum()
                 };
                 t.base_prod = prod_c(&m.blue) - prod_c(&m.red);
                 t.base_lane_prod = prod_l(&m.blue) - prod_l(&m.red);
                 // ---- S0-4: shipped pick-score terms (retrospective full-board) ----
-                let chg_nudge = |c: &str| -> f64 {
-                    let d = match changed.get(c) {
-                        Some(('+', _, _)) => 0.02,
-                        Some(('-', _, _)) => -0.02,
-                        _ => return 0.0,
-                    };
-                    let gm = prod_games(c, &cur_c, &prev_c, changed);
-                    if gm <= 0.0 {
-                        return d; // no table row yet → full nudge (engine u32::MAX regime)
-                    }
-                    d * (1.0 - (gm / 30.0).min(1.0)).max(0.0)
-                };
+                // (the patch nudge left the score in v4.5.0: the carry is in delta_for)
                 let ai_term = |c: &str| -> f64 {
                     let p = match ai_intr.get(c) {
                         Some(v) => *v,
@@ -1774,9 +1818,8 @@ fn main() {
                     m.blue.iter().map(|a| f(a)).sum::<f64>() - m.red.iter().map(|a| f(a)).sum::<f64>()
                 };
                 t.dfor_prod = sum_d(&|a| {
-                    prod_delta_for(&a.champ, a.lane, &cur_c, &prev_c, &cur_cp, &prev_cp, changed)
+                    prod_delta_for(&a.champ, a.lane, &cur_c, &prev_c, &cur_cp, &prev_cp, changed, &carry)
                 });
-                t.chg_n = sum_d(&|a| chg_nudge(&a.champ));
                 t.aip_prod = sum_d(&|a| ai_term(&a.champ));
                 t.af = sum_d(&af_of);
                 t.lp_prod = m.blue.iter().map(|a| lp_of(a, &m.red)).sum::<f64>()
@@ -1818,9 +1861,13 @@ fn main() {
                 t.c_heal = has_team(&m.blue, &healf) - has_team(&m.red, &healf);
                 t.c_cc = has_team(&m.blue, &ccf) - has_team(&m.red, &ccf);
                 t.c_back = has_team(&m.blue, &back) - has_team(&m.red, &back);
+                // the sweep varies the blend's κ; a carried champ keeps its carry, so κ40 ≡ base_prod
                 let kp = |kappa: f64, team: &[Ath]| -> f64 {
                     team.iter()
                         .map(|a| {
+                            if carry.contains_key(a.champ.as_str()) {
+                                return prod_champ_post(&a.champ, &cur_c, &prev_c, changed, &carry) - 0.5;
+                            }
                             let (w, mm) = prod_blend(&a.champ, &cur_c, &prev_c, changed);
                             beta_mean(w, mm, 0.5, kappa) - 0.5
                         })
@@ -1834,7 +1881,7 @@ fn main() {
                 let solo_side = |k: usize| -> f64 {
                     let f = |team: &[Ath]| -> f64 {
                         team.iter()
-                            .map(|a| prod_champ_post(&a.champ, &cur_c, &prev_c_s[k], changed) - 0.5)
+                            .map(|a| prod_champ_post(&a.champ, &cur_c, &prev_c_s[k], changed, &carry) - 0.5)
                             .sum()
                     };
                     f(&m.blue) - f(&m.red)
@@ -1861,8 +1908,7 @@ fn main() {
                     let mut sum_p = 0.0;
                     for a in team {
                         let sc = |c: &str| -> f64 {
-                            0.85 * prod_delta_for(c, a.lane, &cur_c, &prev_c, &cur_cp, &prev_cp, changed)
-                                + chg_nudge(c)
+                            0.85 * prod_delta_for(c, a.lane, &cur_c, &prev_c, &cur_cp, &prev_cp, changed, &carry)
                                 + ai_term(c)
                                 + af_c(a.aid, c)
                         };
@@ -2094,8 +2140,8 @@ fn main() {
 
     if !legacy {
         println!(
-            "\nPRODUCTION-MATH BASE (S0-3) — patch-local: current(expanding, play order) + prev·0.35·(1−cm/40), changed-champ prev-drop, κ40/κ20 beta_post [notes: {}]:",
-            if notes.is_empty() { "MISSING — no resets applied".to_string() } else { format!("{} versions", notes.len()) }
+            "\nPRODUCTION-MATH BASE (S0-3) — patch-local: current(expanding, play order) + prev·0.35·(1−cm/40), κ40/κ20 beta_post; changed champs carried (v4.5.0: prev posterior + a + b·size, κ80) [notes: {}]:",
+            if notes.is_empty() { "MISSING — no carry applied".to_string() } else { format!("{} versions", notes.len()) }
         );
         println!("  base_prod      (champ, production state)     : {:.1}%", acc(&|t: &Terms| t.base_prod));
         println!("  base_lane_prod (lane,  production state)     : {:.1}%", acc(&|t: &Terms| t.base_lane_prod));
@@ -2120,7 +2166,7 @@ fn main() {
             }
             println!("{}", line);
         }
-        println!("  PER-ORIGIN (Δ over base_lane_prod; chg = champs reset by that version's note):");
+        println!("  PER-ORIGIN (Δ over base_lane_prod; chg = champs changed by that version's note):");
         println!("    {:<9} {:>4} | {:>8} {:>8} {:>8} {:>8}", "origin", "chg", "bl_prod", "Δ.25*fc", "Δ.5*fc", "Δ.08*fg");
         for &g in &scored_groups {
             let label = vsorted[g].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".");
@@ -2142,16 +2188,14 @@ fn main() {
         // scoring (every champ as the LAST pick: power_ramp 0.85, mu_ramp 1, comp
         // ramp allies/4; mature career ⇒ data=1/theory=0; in-mod syn/cnt rows
         // absent ⇒ 0; RP-role OR-branch unavailable ⇒ tags-only comp).
-        let m4 = |t: &Terms| {
-            0.85 * t.dfor_prod + t.chg_n + t.aip_prod + t.lp_prod + t.comp_prod + t.af
-        };
+        let m4 = |t: &Terms| 0.85 * t.dfor_prod + t.aip_prod + t.lp_prod + t.comp_prod + t.af;
         let models: [(&str, &dyn Fn(&Terms) -> f64); 6] = [
             ("① always-first-side", &|_t: &Terms| 1.0),
             ("② base_lane (pooled κ8 harness anchor)", &|t: &Terms| t.base_lane),
             ("③ ② + shipped af (.020·lng+.15·cwr cap .05)", &|t: &Terms| t.base_lane + t.af),
             ("④ shipped pick score (board-independent)", &m4),
-            ("⑤ ④ − comp", &|t: &Terms| 0.85 * t.dfor_prod + t.chg_n + t.aip_prod + t.lp_prod + t.af),
-            ("⑥ ④ − LP", &|t: &Terms| 0.85 * t.dfor_prod + t.chg_n + t.aip_prod + t.comp_prod + t.af),
+            ("⑤ ④ − comp", &|t: &Terms| 0.85 * t.dfor_prod + t.aip_prod + t.lp_prod + t.af),
+            ("⑥ ④ − LP", &|t: &Terms| 0.85 * t.dfor_prod + t.aip_prod + t.comp_prod + t.af),
         ];
         let corr: Vec<Vec<f64>> = models
             .iter()
@@ -2683,11 +2727,107 @@ fn main() {
         let fresh = e7_records(&matches, &groups, &vsorted, &taxon, &ai_intr, &notes, false);
         let career = e7_records(&matches, &groups, &vsorted, &taxon, &ai_intr, &notes, true);
         e7_report(&fresh, &career);
-        if let Some(p) = notes_path.as_deref() {
-            let sizes = e7b_sizes(&std::fs::read_to_string(p).unwrap_or_default());
+        if notes_path.is_some() {
             let (recs, patches) = e7b_records(&matches, &groups, &vsorted, &taxon, &notes, &sizes);
             e7b_report(&recs, &patches, &e7b_holdout);
         }
     }
     println!("\n>> A term EARNS engine weight only if it lifts base_lane beyond ~±{:.1}%p noise.", 50.0 / n.sqrt());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wl(w: f64, g: f64) -> WL {
+        WL { w, g }
+    }
+
+    /// last patch: archer won 36 of 60, all at Bottom (lane 3) — κ40 posterior 0.56
+    fn last_patch() -> (HashMap<&'static str, WL>, HashMap<(&'static str, usize), WL>) {
+        (HashMap::from([("archer", wl(36.0, 60.0))]), HashMap::from([(("archer", 3), wl(36.0, 60.0))]))
+    }
+
+    fn archer_changed() -> Changed {
+        HashMap::from([("archer".to_string(), ('+', 2, 0))])
+    }
+
+    #[test]
+    fn carry_moves_the_last_posterior_by_the_patch_size() {
+        let (prev_c, _) = last_patch();
+        let sized = (true, HashMap::from([("archer".to_string(), 50.0)]));
+        let carry = prod_carry(&archer_changed(), Some(&sized), &prev_c);
+        // 0.56 − 0.0041 + 0.00072·50
+        assert!((carry["archer"] - 0.5919).abs() < 1e-12, "{:?}", carry);
+    }
+
+    #[test]
+    fn carry_without_numbers_moves_by_the_count_nudge() {
+        let (prev_c, _) = last_patch();
+        let unsized_note = (false, HashMap::from([("archer".to_string(), 0.0)]));
+        for sizes in [Some(&unsized_note), None] {
+            let carry = prod_carry(&archer_changed(), sizes, &prev_c);
+            // 0.56 + (0.01 + 0.005·2) for a 2-line buff
+            assert!((carry.get("archer").copied().unwrap_or(0.0) - 0.58).abs() < 1e-12, "{:?}", carry);
+        }
+    }
+
+    #[test]
+    fn carry_stays_inside_the_clamp() {
+        let prev_c = HashMap::from([("archer", wl(95.0, 100.0))]);
+        let sized = (true, HashMap::from([("archer".to_string(), 100.0)]));
+        let carry = prod_carry(&archer_changed(), Some(&sized), &prev_c);
+        assert_eq!(carry.get("archer").copied(), Some(0.8));
+    }
+
+    #[test]
+    fn carried_champ_starts_from_its_carry() {
+        let (prev_c, prev_cp) = last_patch();
+        let (cur_c, cur_cp) = (HashMap::new(), HashMap::new());
+        let carry: Carry = HashMap::from([("archer".to_string(), 0.6)]);
+        let ch = archer_changed();
+        let d = |lane| prod_delta_for("archer", lane, &cur_c, &prev_c, &cur_cp, &prev_cp, &ch, &carry);
+        assert!((prod_champ_post("archer", &cur_c, &prev_c, &ch, &carry) - 0.6).abs() < 1e-12);
+        assert!((d(3) - 0.1).abs() < 1e-12, "kept lane {}", d(3));
+        assert!((d(0) - 0.025).abs() < 1e-12, "unplayed lane ×0.25 {}", d(0));
+        assert!((d(9) - 0.1).abs() < 1e-12, "no lane {}", d(9));
+        let top = Ath { champ: "archer".to_string(), lane: 0, aid: 1, fit: 0.0 };
+        let l = prod_lane_delta(&top, &cur_c, &prev_c, &cur_cp, &prev_cp, &ch, &carry);
+        assert!((l - 0.1).abs() < 1e-12, "S0-3 lane falls back to the champ {}", l);
+    }
+
+    #[test]
+    fn carried_champ_updates_at_strength_80() {
+        let (prev_c, prev_cp) = last_patch();
+        let cur_c = HashMap::from([("archer", wl(8.0, 10.0))]);
+        let cur_cp = HashMap::from([(("archer", 3), wl(8.0, 10.0))]);
+        let carry: Carry = HashMap::from([("archer".to_string(), 0.6)]);
+        let ch = archer_changed();
+        let champ = (8.0 + 0.6 * 80.0) / (10.0 + 80.0);
+        let lane = (8.0 + champ * 20.0) / (10.0 + 20.0) - 0.5;
+        assert!((prod_champ_post("archer", &cur_c, &prev_c, &ch, &carry) - champ).abs() < 1e-12);
+        let d = prod_delta_for("archer", 3, &cur_c, &prev_c, &cur_cp, &prev_cp, &ch, &carry);
+        assert!((d - lane).abs() < 1e-12, "{} vs {}", d, lane);
+    }
+
+    #[test]
+    fn empty_carry_keeps_the_pre_450_reset() {
+        // E7a and E7b's P2 arm: a changed champ drops last patch → neutral at no games
+        let (prev_c, prev_cp) = last_patch();
+        let (cur_c, cur_cp) = (HashMap::new(), HashMap::new());
+        let d = prod_delta_for("archer", 3, &cur_c, &prev_c, &cur_cp, &prev_cp, &archer_changed(), &HashMap::new());
+        assert!(d.abs() < 1e-12, "{}", d);
+    }
+
+    #[test]
+    fn carry_leaves_unchanged_champs_alone() {
+        let prev_c = HashMap::from([("monk", wl(30.0, 50.0))]);
+        let prev_cp = HashMap::from([(("monk", 4), wl(30.0, 50.0))]);
+        let (cur_c, cur_cp) = (HashMap::new(), HashMap::new());
+        let carry: Carry = HashMap::from([("archer".to_string(), 0.6)]);
+        let ch = archer_changed();
+        let with = prod_delta_for("monk", 4, &cur_c, &prev_c, &cur_cp, &prev_cp, &ch, &carry);
+        let without = prod_delta_for("monk", 4, &cur_c, &prev_c, &cur_cp, &prev_cp, &ch, &HashMap::new());
+        assert_eq!(with, without);
+    }
 }
