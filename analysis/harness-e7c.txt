@@ -1,0 +1,240 @@
+=== term validation v3 (rolling-origin — causal, deployment-realistic) ===
+matches scored: 5274 of 5809 (5809 with full position data) · 10 patch origins · noise 1sd ≈ ±0.7%p
+baseline always-blue: 51.7%
+
+STANDALONE:
+  base      (champ winrate)             : 58.2%
+  base_lane (per-lane winrate)          : 58.1%
+  syn       (legacy pair)               : 57.9%
+  cnt       (legacy all-vs-all)         : 58.6%
+  mu        (same-lane h2h) ★new        : 55.5%
+  lp        (laning z) ★new/caveat      : 50.3%
+  comp      (taxonomy)                  : 52.0%
+  fam       (athlete-champ) ★ph2        : 55.1%
+  fam_c     (centered, no team confound): 56.2%
+  fam_g     (games-only familiarity)    : 52.7%
+  fam_gc    (career-centered comfort)   : 51.6%
+  fit       (athlete lane stat) ★ph2    : 53.3%
+  aip       (game-AI intrinsic) ★caveat : 50.2%
+
+INCREMENTAL over base_lane (scale sweep; >noise lift = earns weight):
+  base_lane alone                  : 58.1%
+  base_lane + s*mu    s=0.25 : 58.1%  s=0.5  : 58.0%  s=1    : 57.2%  s=2    : 56.9%
+  base_lane + s*lp    s=0.004: 58.0%  s=0.008: 58.0%  s=0.016: 58.3%  s=0.032: 58.6%
+  base_lane + s*cnt   s=0.05 : 58.2%  s=0.1  : 58.5%  s=0.15 : 58.6%  s=0.3  : 58.5%
+  base_lane + s*syn   s=0.05 : 58.1%  s=0.1  : 58.3%  s=0.15 : 58.5%  s=0.3  : 58.2%
+  base_lane + s*comp  s=0.01 : 58.2%  s=0.02 : 58.1%  s=0.04 : 58.0%  s=0.08 : 58.5%
+  base_lane + s*fam   s=0.25 : 59.1%  s=0.5  : 58.6%  s=1    : 57.8%  s=2    : 57.1%
+  base_lane + s*famc  s=0.25 : 59.5%  s=0.5  : 59.0%  s=1    : 58.3%  s=2    : 57.0%
+  base_lane + s*famg  s=0.02 : 58.4%  s=0.04 : 58.6%  s=0.08 : 57.8%  s=0.16 : 56.6%
+  base_lane + s*famgc  s=0.02 : 58.1%  s=0.04 : 57.9%  s=0.08 : 57.1%  s=0.16 : 55.3%
+  base_lane + s*fit   s=0.02 : 58.2%  s=0.05 : 58.4%  s=0.1  : 58.4%  s=0.2  : 58.9%
+  base_lane + s*aip   s=0.25 : 58.1%  s=0.5  : 58.6%  s=1    : 58.8%  s=2    : 58.9%
+
+COMBOS (base anchor too — base beat base_lane standalone):
+  base_lane + 0.5*mu                              : 58.0%
+  base_lane + 0.5*fam                             : 58.6%
+  base      + 0.5*fam                             : 58.5%
+  base      + 0.5*fam_c                           : 58.7%
+  base      + 0.5*fam + 0.15*syn                  : 59.1%
+  base      + 0.5*fam + 0.05*fit                  : 58.6%
+  base+blend(0.5*lane) + 0.5*fam                  : 58.7%
+  base + 0.5*fam + 0.15*syn + 0.05*fit + 0.008*lp : 59.5%
+  base_lane + 0.08*famg                           : 57.8%
+  base_lane + 0.08*famgc                          : 57.1%
+  base_lane + 0.08*famg + 0.25*fam_c              : 58.6%
+  base_lane + 0.08*famg + 0.25*famc + 0.05*fit    : 58.8%
+  base_lane + 0.5*aip                             : 58.6%
+  base_lane + 0.08*famg + 0.5*aip                 : 57.9%
+  aip + 0.08*famg (AI + athlete only)             : 52.9%
+  kitchen sink (yesterday's engine shape)         : 59.5%
+
+PER-ORIGIN (Δ = accuracy minus base_lane, within that origin's test set):
+  origin    train  test | base_ln    famg  Δ.02*fg  Δ.08*fg  Δ.25*fc |  ±1sd
+  2026.0.1    535   889 |   59.8%   54.8%     +1.2     +0.7     +0.1 |   1.7
+  2026.1.0   1424   591 |   60.2%   56.1%     +1.2     +1.4     +4.4 |   2.1
+  2026.1.1   2015   651 |   62.2%   56.1%     -0.8     -1.1     +2.9 |   2.0
+  2026.1.2   2666   355 |   56.9%   50.7%     +0.0     -0.6     +2.0 |   2.7
+  2026.2.0   3021   270 |   53.7%   48.3%     -2.2     -3.7     -0.4 |   3.0
+  2026.3.0   3291   541 |   55.5%   47.3%     -1.3     -4.8     -1.3 |   2.1
+  2026.3.1   3832   892 |   58.0%   49.3%     +0.1     -1.8     +0.7 |   1.7
+  2026.4.0   4724   608 |   55.6%   54.4%     +0.0     +2.0     -0.5 |   2.0
+  2026.4.1   5332   477 |   56.6%   53.8%     +2.7     +4.2     +5.5 |   2.3
+  EARLY-POOLED (6 origins) n=3297 | base_lane  58.8%  Δ.08*famg  -0.9  Δ.25*famc  +1.4  (±0.9%p)
+  LATE-POOLED  (3 origins, train≥3832) n=1977 | base_lane  56.9%  Δ.08*famg  +0.8  Δ.25*famc  +1.5  (±1.1%p)
+  → leakage: Δfamg ≈0/negative in BOTH pools · data starvation: negative early, POSITIVE late.
+
+PRODUCTION-MATH BASE (S0-3) — patch-local: current(expanding, play order) + prev·0.35·(1−cm/40), κ40/κ20 beta_post; changed champs carried (v4.5.0: prev posterior + a + b·size, κ80) [notes: 10 versions]:
+  base_prod      (champ, production state)     : 60.6%
+  base_lane_prod (lane,  production state)     : 59.8%
+  pooled-history comparison: base κ8 58.2% / κ40 58.0%  ·  base_lane κ8 58.1% / κ40 58.1%
+  INCREMENTAL over base_lane_prod (does each athlete term earn weight on the SHIPPED base?):
+    base_lane_prod + s*famc  s=0.25 : 61.8%  s=0.5  : 60.6%  s=1    : 59.2%  s=2    : 57.7%
+    base_lane_prod + s*fam   s=0.25 : 61.7%  s=0.5  : 60.9%  s=1    : 59.2%  s=2    : 57.8%
+    base_lane_prod + s*famg  s=0.02 : 59.7%  s=0.04 : 59.4%  s=0.08 : 58.8%  s=0.16 : 57.3%
+    base_lane_prod + s*fit   s=0.02 : 59.9%  s=0.05 : 60.0%  s=0.1  : 60.3%  s=0.2  : 60.5%
+  PER-ORIGIN (Δ over base_lane_prod; chg = champs changed by that version's note):
+    origin     chg |  bl_prod  Δ.25*fc   Δ.5*fc  Δ.08*fg
+    2026.0.1     4 |    58.9%     +0.2     +1.2     +1.1
+    2026.1.0     8 |    55.3%     +9.1     +6.3     +3.9
+    2026.1.1     8 |    61.1%     +3.7     +2.9     -2.0
+    2026.1.2     9 |    65.1%     +0.0     -3.4     -1.1
+    2026.2.0    11 |    58.1%     -2.2     -1.1     -3.0
+    2026.3.0    11 |    59.0%     -0.6     -0.9     -0.4
+    2026.3.1     9 |    63.0%     -0.6     -1.0     -4.5
+    2026.4.0    11 |    63.2%     +1.8     -3.3     -5.1
+    2026.4.1     9 |    52.8%     +6.3     +4.6     +2.5
+
+PRE-REGISTERED 6-MODEL COMPARISON + BOOTSTRAP CI (S0-4; 1000× match resample, xorshift64 seed 20260705):
+  ① always-first-side                           :  51.7%  [ 50.4,  52.9]
+  ② base_lane (pooled κ8 harness anchor)        :  58.1%  [ 56.8,  59.4]
+  ③ ② + shipped af (.020·lng+.15·cwr cap .05)   :  58.4%  [ 57.2,  59.7]
+  ④ shipped pick score (board-independent)      :  60.5%  [ 59.2,  61.9]
+  ⑤ ④ − comp                                    :  60.5%  [ 59.2,  61.9]
+  ⑥ ④ − LP                                      :  60.3%  [ 59.0,  61.6]
+  PAIRED DELTAS (adoption gate: bootstrap CI lower bound > 0):
+    ②−① base_lane vs coin (sanity)    :  +6.4  [ +4.6,  +8.3]  PASS
+    ③−② shipped af contribution       :  +0.3  [ -0.5,  +1.1]  FAIL (미입증 — 예산 항목, 키우기 금지)
+    ④−② shipped bundle vs base_lane   :  +2.4  [ +0.7,  +4.0]  PASS
+    ④−⑤ comp contribution             :  +0.0  [ -0.4,  +0.4]  FAIL (미입증 — 예산 항목, 키우기 금지)
+    ④−⑥ LP contribution               :  +0.2  [ -0.4,  +0.8]  FAIL (미입증 — 예산 항목, 키우기 금지)
+
+POST-HOC S2 DIAGNOSTICS (not pre-registered; paired bootstrap, same seed):
+  af_new over base_lane (F15 verify)  : 58.1% → 58.5%  Δ +0.4 [ -0.4,  +1.0]  
+  af_new over prod anchor (F15 verify): 59.8% → 60.4%  Δ +0.5 [ -0.1,  +1.2]  
+  0.01·stack (S2-7)                   : 59.8% → 59.8%  Δ -0.0 [ -0.3,  +0.3]  REJECT (미입증)
+  0.02·heal_gap (S2-8)                : 59.8% → 59.7%  Δ -0.1 [ -0.3,  +0.1]  REJECT (미입증)
+  0.02·cc_gap (S2-8)                  : 59.8% → 59.8%  Δ +0.0 [ +0.0,  +0.0]  REJECT (미입증)
+  0.02·front_gap (S2-8)               : 59.8% → 59.8%  Δ -0.0 [ -0.2,  +0.1]  REJECT (미입증)
+  0.02·backline_gap (S2-8)            : 59.8% → 60.0%  Δ +0.2 [ -0.2,  +0.5]  REJECT (미입증)
+  S2-3 κ sweep (champ prod state): κ20 60.6% · κ40 60.6% (ship) · κ80 60.6% · κ150 60.6%
+
+S2-5/S2-6 EXPERIMENTS (post-hoc; solo file: 1019 matches):
+  S2-5 w_solo=0.10 (prev-ver solo)  : 60.6% vs base_prod 60.6%  Δ +0.0 [ -0.0,  +0.1] · thin(n=2637) Δ +0.1 · thick Δ +0.0  REJECT (미입증)
+  S2-5 w_solo=0.25 (prev-ver solo)  : 60.6% vs base_prod 60.6%  Δ +0.0 [ -0.1,  +0.2] · thin(n=2637) Δ +0.0 · thick Δ +0.0  REJECT (미입증)
+  S2-6 BT θ standalone              : 58.6% vs base_prod 60.6%  Δ -2.0 [ -3.5,  -0.5] · thin(n=2637) Δ -3.1 · thick Δ -0.9  REJECT (미입증)
+  (θ̂ 비교 축: pooled base κ8 58.2% · base_lane 58.1% — BT는 base 대체 후보로만 평가, 스케일이 달라 블렌드는 무의미)
+
+T4 ADVICE BENCH (post-hoc; shipped board-independent score, comp/LP omitted; pool = champs − bans − other picks):
+  winner-team mean pick percentile 0.681 vs loser 0.627 · Δ+0.054 [+0.047, +0.060] · winner-higher 58.6%
+  (Δ>0 = 승팀의 실픽이 우리 랭킹에서 더 상위 — 픽 랭킹 축이 승리와 정합. 가중 변경 시의 회귀 기준선.)
+
+T-BAN BEHAVIORAL GRADER (post-hoc; chronological, enemy history ≥20 champ-games; 11138 preds, 480 skipped):
+  recall@5 of the enemy's actual picks: global-pickrate 0.185 · team-usage OPP 0.184 · OPP+pocket 0.162
+    OPP − global  : Δ-0.002 [-0.005, +0.001]  미입증
+    +pocket − OPP : Δ-0.021 [-0.024, -0.019]  미입증
+  S2-2 T-nudge: realized Δdelta vs signed change-count — slope +0.0131/chg, r +0.69, n 62  → count-scaling has signal → adopt S2-2 sizes
+  S2-1 T-amnesia n≤2 (small tweaks): n=2   MAE reset 0.175 · full-0.35prev 0.165 · count-scaled 0.169  → scaled beats reset → S2-1 adopt candidate
+  S2-1 T-amnesia n≥3 (big changes) : n=66  MAE reset 0.105 · full-0.35prev 0.104 · count-scaled 0.105  → reset fine
+
+E7a TAG THEORY (pre-registered) — each patch replayed as a fresh save: patch-local tables, no previous patch, no notes; M = matches already seen in that patch; scored while M < 200:
+  scored 2000 matches · mean theory weight 0.50 · theory moves the match score in 98% · mean |theory diff| 0.0550
+  anchor A = Σ(delta_for + patch nudge) + comp (shipped pick score minus theory, AI prior, af): 55.7%
+  theory alone (sign of synergy + counter)          : 48.4%
+  A + shipped theory (synergy + counter)            :  55.2%  Δ -0.4 [-1.7, +0.8]
+  A + synergy half                                  :  56.0%  Δ +0.3 [-0.9, +1.6]
+  A + counter half                                  :  55.1%  Δ -0.6 [-1.9, +0.8]
+  A + (a) counter 0, synergy × 1/4                  :  55.9%  Δ +0.2 [-0.4, +0.9]
+  A + (c) theory capped at 0.02 a champ             :  55.7%  Δ +0.0 [-0.2, +0.2]
+  other anchors (Δ of shipped theory / synergy / counter on top):
+    A0 = Σ delta_for only :  55.9%  -0.7 [-1.9, +0.6]  -0.4 [-1.6, +0.9]  -0.7 [-2.0, +0.8]
+    A + shipped AI prior  :  55.9%  -0.5 [-1.8, +0.7]  +0.1 [-1.1, +1.3]  -0.9 [-2.2, +0.6]
+  by M (Δ of shipped theory / synergy / counter over A):
+    M   0–49  n=500  A  46.1%  +1.1 [-2.4, +4.6]  +2.1 [-1.5, +5.6]  +1.9 [-2.1, +6.0]
+    M  50–99  n=500  A  58.8%  -0.6 [-3.8, +2.2]  +0.0 [-2.8, +2.8]  -3.0 [-6.0, +0.2]
+    M 100–199 n=1000 A  58.9%  -1.1 [-2.3, +0.0]  -0.4 [-1.5, +0.7]  -0.6 [-1.9, +0.8]
+  VERDICT (pre-registered: a half keeps its shipped size only if its Δ CI lower bound > 0): synergy → ZERO · counter → ZERO
+  post-hoc: the shipped theory changes the predicted winner in 176 of 2000 matches (9%) and is right in 47.7% of those
+E7a career replay (secondary — previous patch at 0.35, notes, the product's M): scored 983 · mean weight 0.21 · A 57.5% · shipped -0.8 [-1.9, +0.3] · synergy -0.2 [-1.3, +0.8] · counter -0.7 [-1.8, +0.5]
+
+E7b PATCH-SIZE CARRY (pre-registered) — career replay; a changed champ starts from the previous posterior + a + b·size (P3 κ40, P4 κ80) instead of the shipped reset + count nudge (P2); P(blue) = σ(α + β·score), fit per arm on earlier patches only:
+  arm 0: P2 shipped (reset + count nudge)
+  arm 1: P3 size carry κ40
+  arm 2: P4 size carry κ80
+  arm 3: r1 = P4 without the shift
+  arm 4: r2 = P4 without kept lanes
+  patch      changed  sizes  points  shift
+  2026.0.0         0     no       0  — (no note: all arms equal)
+  2026.0.1         4    yes       0  the shipped nudge (fewer than 8 points)
+  2026.1.0         8    yes       3  the shipped nudge (fewer than 8 points)
+  2026.1.1         8    yes       8  -0.0262 +0.00086·size
+  2026.1.2         9    yes      16  -0.0538 +0.00080·size
+  2026.2.0        11    yes      24  -0.0269 +0.00101·size
+  2026.3.0        11    yes      32  -0.0354 +0.00091·size
+  2026.3.1         9    yes      40  -0.0245 +0.00079·size
+  2026.4.0        11    yes      46  -0.0183 +0.00077·size
+  2026.4.1         9    yes      54  -0.0091 +0.00075·size
+  product fit (all 62 points of the real-size patches): shift = -0.0041 +0.00072·size
+  scored patches (real sizes, ≥ 8 earlier points): 2026.1.1 2026.1.2 2026.2.0 2026.3.0 2026.3.1 · Δ = P2 − arm for losses, arm − P2 for accuracy (+ = arm better), 95% paired bootstrap
+  PRIMARY — a changed champ under 30 current games on the board n=635:
+    log loss ×1000  P2 668.8  | P3 666.3 Δ +2.6 [-0.0, +5.3]  | P4 665.7 Δ +3.1 [+0.4, +6.0]  | r1 670.1 Δ -1.3 [-6.2, +4.0]  | r2 666.3 Δ +2.5 [-0.3, +5.2]
+    Brier ×1000     P2 238.0  | P3 236.8 Δ +1.2 [-0.0, +2.6]  | P4 236.5 Δ +1.5 [+0.1, +2.9]  | r1 238.6 Δ -0.6 [-3.0, +1.9]  | r2 236.9 Δ +1.1 [-0.2, +2.5]
+    accuracy        P2 60.0%  | P3 60.5% Δ +0.5 [-1.3, +2.5]  | P4 61.3% Δ +1.3 [-0.8, +3.3]  | r1 58.6% Δ -1.4 [-3.9, +1.3]  | r2 60.9% Δ +0.9 [-1.1, +3.0]
+  ALL matches of the scored patches n=2709:
+    log loss ×1000  P2 659.2  | P3 658.3 Δ +0.9 [+0.2, +1.6]  | P4 658.1 Δ +1.1 [+0.3, +1.8]  | r1 659.6 Δ -0.4 [-1.6, +0.8]  | r2 658.2 Δ +1.0 [+0.3, +1.6]
+    Brier ×1000     P2 233.5  | P3 233.0 Δ +0.4 [+0.1, +0.8]  | P4 232.9 Δ +0.5 [+0.2, +0.8]  | r1 233.6 Δ -0.2 [-0.8, +0.4]  | r2 233.0 Δ +0.5 [+0.1, +0.8]
+    accuracy        P2 61.6%  | P3 61.5% Δ -0.1 [-0.6, +0.4]  | P4 61.9% Δ +0.3 [-0.3, +0.8]  | r1 61.0% Δ -0.6 [-1.3, +0.1]  | r2 61.8% Δ +0.2 [-0.4, +0.8]
+  secondary (not used for the verdict):
+  first 50 matches of each scored patch n=250:
+    log loss ×1000  P2 684.0  | P3 680.2 Δ +3.8 [-1.8, +9.3]  | P4 679.5 Δ +4.5 [-1.2, +10.2]  | r1 688.6 Δ -4.6 [-14.3, +5.9]  | r2 681.3 Δ +2.7 [-2.4, +7.6]
+  patches where the nudge stands in (too few points) n=1480:
+    log loss ×1000  P2 677.8  | P3 677.2 Δ +0.6 [+0.0, +1.2]  | P4 677.2 Δ +0.6 [+0.0, +1.2]  | r1 677.0 Δ +0.7 [-0.1, +1.6]  | r2 677.2 Δ +0.5 [+0.0, +1.1]
+  synthesized-note patches (direction only → nudge) n=0
+  primary in 2026.1.1 n=125:
+    log loss ×1000  P2 676.6  | P3 673.1 Δ +3.4 [-1.9, +9.0]  | P4 673.6 Δ +3.0 [-2.7, +9.1]  | r1 678.2 Δ -1.6 [-12.2, +9.3]  | r2 674.7 Δ +1.9 [-3.3, +7.2]
+  primary in 2026.1.2 n=117:
+    log loss ×1000  P2 668.9  | P3 667.4 Δ +1.5 [-5.3, +7.4]  | P4 667.9 Δ +1.0 [-6.9, +8.0]  | r1 672.3 Δ -3.3 [-15.4, +8.1]  | r2 669.4 Δ -0.5 [-7.8, +6.2]
+  primary in 2026.2.0 n=131:
+    log loss ×1000  P2 675.0  | P3 669.6 Δ +5.4 [-2.1, +12.2]  | P4 668.4 Δ +6.5 [-0.6, +13.3]  | r1 684.5 Δ -9.6 [-20.7, +1.3]  | r2 670.4 Δ +4.6 [-1.6, +10.3]
+  primary in 2026.3.0 n=135:
+    log loss ×1000  P2 668.0  | P3 667.6 Δ +0.4 [-7.2, +7.7]  | P4 666.6 Δ +1.4 [-6.9, +8.7]  | r1 663.9 Δ +4.1 [-5.9, +13.3]  | r2 666.4 Δ +1.7 [-5.8, +8.3]
+  primary in 2026.3.1 n=127:
+    log loss ×1000  P2 655.6  | P3 653.5 Δ +2.0 [-2.6, +6.9]  | P4 652.0 Δ +3.6 [-1.3, +8.4]  | r1 651.7 Δ +3.9 [-7.9, +15.7]  | r2 651.1 Δ +4.5 [-0.1, +9.1]
+  primary in 2026.4.0 (holdout) n=129:
+    log loss ×1000  P2 665.7  | P3 664.4 Δ +1.4 [-3.1, +5.4]  | P4 664.0 Δ +1.8 [-3.2, +6.4]  | r1 662.4 Δ +3.3 [-6.9, +14.3]  | r2 662.8 Δ +3.0 [-1.6, +7.4]
+  primary in 2026.4.1 (holdout) n=127:
+    log loss ×1000  P2 699.5  | P3 693.5 Δ +6.0 [-4.5, +16.9]  | P4 691.6 Δ +7.8 [-3.2, +18.8]  | r1 689.2 Δ +10.2 [-6.9, +25.5]  | r2 690.6 Δ +8.9 [-0.9, +18.6]
+  VERDICT (pre-registered: primary Δ lower bound > 0 and all-match Δ upper bound > 0): P3 → FAIL · P4 → PASS → adopt P4 size carry κ80
+  HOLDOUT E7b-H — primary over 2026.4.0 2026.4.1 n=256:
+    log loss ×1000  P2 682.5  | P3 678.8 Δ +3.7 [-2.4, +9.0]  | P4 677.7 Δ +4.8 [-1.4, +10.3]  | r1 675.7 Δ +6.7 [-3.5, +16.4]  | r2 676.6 Δ +5.9 [+0.3, +11.0]
+    Brier ×1000     P2 244.6  | P3 242.8 Δ +1.8 [-1.1, +4.3]  | P4 242.3 Δ +2.3 [-0.6, +4.9]  | r1 241.3 Δ +3.3 [-1.8, +8.0]  | r2 241.7 Δ +2.9 [+0.1, +5.4]
+    accuracy        P2 55.9%  | P3 55.9% Δ +0.0 [-2.7, +2.3]  | P4 55.1% Δ -0.8 [-4.3, +2.7]  | r1 57.4% Δ +1.6 [-2.7, +5.9]  | r2 55.5% Δ -0.4 [-3.9, +3.1]
+  HOLDOUT VERDICT (pre-registered: P4 primary Δ > 0 confirms the direction): CONFIRMED
+  post-hoc: logistic maps per patch (α / β of P2 / β of P4): 2026.0.1 +0.058/0.97/0.97 · 2026.1.0 +0.037/1.48/1.49 · 2026.1.1 +0.062/1.39/1.41 · 2026.1.2 +0.040/1.53/1.56 · 2026.2.0 +0.027/1.67/1.69 · 2026.3.0 +0.049/1.64/1.66 · 2026.3.1 +0.061/1.70/1.72 · 2026.4.0 +0.059/1.79/1.82 · 2026.4.1 +0.066/1.88/1.90
+
+E7c CALIBRATED WIN PROBABILITY (pre-registered) — Δ = Σ delta_for diff (the product's strength part, v4.5.0 carry); P(blue) = σ(α + β·conf·Δ), conf = min(M/200, 1); maps refit before each patch on earlier patches only:
+  career bench: eval 2026.1.0–2026.4.1 n=4385 (fits from 2026.0.1) · log loss ×1000 · I − arm and slope s with 95% match-bootstrap intervals
+  arm                                        log loss  I − arm                slope s                 Brier     acc
+  I  score read as %p (clamp 0.5 + Δ)           730.5  —                      0.35 [0.30, 0.39]       250.8   59.9%
+  C  earlier patches' blue rate                 692.7  +37.8 [+19.9, +58.8]   —                       249.8   51.9%
+  L  σ(α + β·conf·Δ), all earlier patches       662.8  +67.7 [+54.7, +82.4]   1.09 [0.95, 1.22]       235.2   59.9%  PASS
+  Lr σ(α + β·conf·Δ), last two patches          663.7  +66.8 [+54.2, +81.1]   0.96 [0.84, 1.08]       235.6   59.3%  PASS
+  secondary (not in the verdict):
+  L  without conf                               662.8  +67.7 [+54.8, +82.3]   1.08 [0.95, 1.21]       235.2   59.9%
+  Lr without conf                               664.0  +66.5 [+54.1, +80.7]   0.97 [0.85, 1.09]       235.8   59.3%
+  L  on Δ + AI prior + comp                     662.5  +68.0 [+54.9, +82.7]   1.08 [0.95, 1.21]       235.1   59.9%
+  VERDICT (pre-registered: I − map interval above 0 and s interval holding 1; the lower loss if both pass): show L
+  per patch: n · log loss ×1000 I / L / Lr · the maps used (L α/β · Lr β):
+    2026.1.0  n=591  775.2 / 685.1 / 685.1 · L +0.026/1.83 · Lr 1.83
+    2026.1.1  n=651  747.6 / 660.6 / 660.6 · L +0.065/1.57 · Lr 1.57
+    2026.1.2  n=355  677.4 / 642.1 / 643.8 · L +0.036/1.69 · Lr 1.60
+    2026.2.0  n=270  778.3 / 679.9 / 686.8 · L +0.020/1.84 · Lr 2.15
+    2026.3.0  n=541  715.8 / 657.0 / 654.9 · L +0.048/1.80 · Lr 2.24
+    2026.3.1  n=892  712.9 / 654.9 / 656.5 · L +0.062/1.87 · Lr 2.03
+    2026.4.0  n=608  669.2 / 646.7 / 644.2 · L +0.060/1.96 · Lr 2.28
+    2026.4.1  n=477  791.9 / 685.9 / 691.4 · L +0.067/2.04 · Lr 2.45
+  reliability by decile, L  σ(α + β·conf·Δ), all earlier patches (mean prediction → blue win rate):
+    0.319→0.313  0.393→0.433  0.435→0.390  0.472→0.462  0.501→0.498  0.531→0.524  0.561→0.550  0.592→0.604  0.631→0.676  0.706→0.736
+  reliability by decile, I  score read as %p (clamp 0.5 + Δ) (mean prediction → blue win rate):
+    0.076→0.317  0.230→0.424  0.325→0.390  0.406→0.467  0.473→0.500  0.541→0.531  0.610→0.532  0.683→0.631  0.773→0.678  0.926→0.715
+  ship constants: L (all 9 patches) α +0.0619 β 1.975 (without conf +0.0623 / 1.943) · Lr (2026.4.0 + 2026.4.1) α +0.0689 β 2.040 (without conf +0.0689 / 2.040)
+
+  COLD START (pre-registered) — fresh-save replay (E7a: patch-local tables, no previous patch, M = matches seen, first 200 of each patch), eval 2026.1.0–2026.4.1 n=1600; the L map fitted on the earlier career patches:
+    log loss ×1000  I 778.1 · C 692.5 · map 677.2 · map without conf 681.2  (accuracy I 55.7% · map 56.9%)
+    C − map +15.4 [+8.6, +22.3] · slope s of the map 1.24 [0.90, 1.63] (without conf 0.72 [0.51, 0.94])
+    RULE (pre-registered: s upper bound below 1 → hide while M < 200): SHOW at every M
+    M   0–50  n=400  log loss I 788.8 · C 693.9 · map 694.1 · without conf 712.0 · accuracy 48.8%
+    M  50–100 n=400  log loss I 764.6 · C 692.0 · map 678.8 · without conf 675.8 · accuracy 59.0%
+    M 100–200 n=800  log loss I 779.6 · C 692.1 · map 667.9 · without conf 668.5 · accuracy 59.9%
+
+>> A term EARNS engine weight only if it lifts base_lane beyond ~±0.7%p noise.

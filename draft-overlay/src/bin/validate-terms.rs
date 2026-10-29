@@ -23,6 +23,9 @@
 //! v3.10 (2026-10-29): the production replica follows v4.5.0 — changed champs
 //! start from their carry (E7b P4) and the patch nudge left the S0-4 score;
 //! E7a and E7b's P2 arm still score the pre-4.5.0 reset.
+//! v3.11 (2026-10-29, E7c): calibrated win probability — the strength diff mapped
+//! by σ(α + β·conf·Δ) fitted on earlier patches only, against reading the score
+//! as %p; career bench + E7a's fresh-save replay for the cold start.
 //!
 //! Usage: validate-terms [--legacy] [--notes=patch_notes_dump.txt] <match_replays.debug.txt> [draft_weights.tsv] [champion_patch_statistics.tsv] [ai_intrinsic.tsv]
 //!   draft_weights.tsv               → T rows (taxonomy) for the comp term
@@ -656,6 +659,8 @@ fn e7_comp_need(taxon: &HashMap<String, Taxon>, cand: &str, allies: &[&str]) -> 
 /// one scored match for E7a; every score is blue − red, each champ scored as
 /// the LAST pick (allies = its four teammates, enemies = the five opponents)
 struct E7Rec {
+    /// patch group (E7c fits its maps on the career patches before this one)
+    g: usize,
     /// the product's evidence count at this match (theory weight = 1 − M/200)
     m_ev: f64,
     w: f64,
@@ -671,6 +676,12 @@ struct E7Rec {
     cnt: f64,    // Σ 0.5·w·tag_counter
     capped: f64, // Σ min(0.5·w·(synergy + counter), E7_CAP)
     win: bool,
+}
+
+/// the product's effective match count (recommender `patch_current`'s M row):
+/// this patch's matches + round(0.35·(1 − min(them/200, 1))·last patch's)
+fn prod_m_ev(total: f64, prev_total: f64) -> f64 {
+    total + (PROD_PREV_W * (1.0 - (total / E7_CONF_FULL).min(1.0)) * prev_total).round()
 }
 
 /// `career` false: every patch replayed as a fresh save — patch-local tables,
@@ -720,7 +731,7 @@ fn e7_records(
         for (k, &i) in idx.iter().enumerate() {
             let m = &matches[i];
             let total = k as f64;
-            let m_ev = total + (PROD_PREV_W * (1.0 - (total / E7_CONF_FULL).min(1.0)) * prev_total).round();
+            let m_ev = prod_m_ev(total, prev_total);
             let w = 1.0 - (m_ev / E7_CONF_FULL).min(1.0);
             if w > 0.0 {
                 // engine chg_nudge: count-scaled ±(0.01 + 0.005·min(n,4)), '~' by its
@@ -767,6 +778,7 @@ fn e7_records(
                 };
                 let (b, r) = (side(&m.blue, &m.red), side(&m.red, &m.blue));
                 out.push(E7Rec {
+                    g,
                     m_ev,
                     w,
                     anchor: b[0] - r[0],
@@ -1377,6 +1389,314 @@ fn e7b_report(recs: &[E7bRec], patches: &[E7bPatch], holdout: &[String]) {
     println!("  post-hoc: logistic maps per patch (α / β of P2 / β of P4): {}", s.join(" · "));
 }
 
+// ---------- E7c: calibrated win probability (pre-registered 2026-10-29) ----------
+
+/// one E7c match: patch group, Σ delta_for diff (blue − red), the product's
+/// effective match count M, the AI prior + comp diff (a secondary arm), the result
+#[derive(Clone, Copy)]
+struct CalRec {
+    g: usize,
+    d: f64,
+    m: f64,
+    x: f64,
+    win: bool,
+}
+
+/// the product's data confidence (engine `confidence()`): min(M / 200, 1)
+fn e7c_conf(m: f64) -> f64 {
+    (m / E7_CONF_FULL).min(1.0)
+}
+
+/// arm I: the score read as %p
+fn e7c_identity(d: f64) -> f64 {
+    (0.5 + d).clamp(0.02, 0.98)
+}
+
+/// a map's training matches for patch `g`: every earlier patch (L) or the two
+/// latest earlier ones (Lr) — never `g` or later
+fn e7c_train(recs: &[CalRec], g: usize, recent: bool) -> Vec<&CalRec> {
+    let mut earlier: Vec<usize> = recs.iter().map(|r| r.g).filter(|&x| x < g).collect();
+    earlier.sort_unstable();
+    earlier.dedup();
+    let keep = if recent && earlier.len() > 2 { &earlier[earlier.len() - 2..] } else { &earlier[..] };
+    recs.iter().filter(|r| keep.contains(&r.g)).collect()
+}
+
+/// calibration slope s of logit P = a + s·x on (predicted logit, result), with a
+/// 95% match-bootstrap interval (the S0-4 seed and draws): 1 = calibrated,
+/// below 1 = overconfident, above 1 = under-confident
+fn e7c_slope(data: &[(f64, bool)]) -> (f64, f64, f64) {
+    let n = data.len();
+    if n == 0 {
+        return (0.0, 0.0, 0.0);
+    }
+    let mut rng: u64 = 20260705;
+    let mut boot: Vec<f64> = (0..1000)
+        .map(|_| {
+            let rs: Vec<(f64, bool)> = (0..n)
+                .map(|_| {
+                    rng ^= rng << 13;
+                    rng ^= rng >> 7;
+                    rng ^= rng << 17;
+                    data[(rng % n as u64) as usize]
+                })
+                .collect();
+            e7b_logit(&rs).1
+        })
+        .collect();
+    boot.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    (e7b_logit(data).1, boot[25], boot[975])
+}
+
+/// the pre-registered pass: the I − map loss interval above 0 and a slope interval holding 1
+fn e7c_pass(d_lo: f64, s_lo: f64, s_hi: f64) -> bool {
+    d_lo > 0.0 && s_lo <= 1.0 && 1.0 <= s_hi
+}
+
+/// [L, Lr] as (log loss, passed) → the passing map with the lower loss; none = show no probability
+fn e7c_choose(arms: [(f64, bool); 2]) -> Option<usize> {
+    (0..2).filter(|&j| arms[j].1).min_by(|&a, &b| arms[a].0.partial_cmp(&arms[b].0).unwrap())
+}
+
+/// reliability table: predictions sorted and cut into ten equal-count bins →
+/// (mean prediction, win rate, matches)
+fn e7c_deciles(pts: &[(f64, bool)]) -> Vec<(f64, f64, usize)> {
+    let mut s = pts.to_vec();
+    s.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    let n = s.len();
+    (0..10)
+        .map(|k| {
+            let bin = &s[n * k / 10..n * (k + 1) / 10];
+            let len = bin.len().max(1) as f64;
+            (bin.iter().map(|p| p.0).sum::<f64>() / len, bin.iter().filter(|p| p.1).count() as f64 / len, bin.len())
+        })
+        .collect()
+}
+
+/// E7c (pre-registered, docs/research/2026-10-28-advanced-directions.md): the
+/// career bench decides which map (if any) the product shows; the fresh-save
+/// replay decides whether it also shows while M < 200
+fn e7c_report(career: &[CalRec], fresh: &[CalRec], vsorted: &[Vec<u32>]) {
+    const NAMES: [&str; 7] = [
+        "I  score read as %p (clamp 0.5 + Δ)",
+        "C  earlier patches' blue rate",
+        "L  σ(α + β·conf·Δ), all earlier patches",
+        "Lr σ(α + β·conf·Δ), last two patches",
+        "L  without conf",
+        "Lr without conf",
+        "L  on Δ + AI prior + comp",
+    ];
+    let label = |g: usize| vsorted[g].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(".");
+    let sig = |z: f64| 1.0 / (1.0 + (-z).exp());
+    let logit = |p: f64| {
+        let p = p.clamp(1e-6, 1.0 - 1e-6);
+        (p / (1.0 - p)).ln()
+    };
+    let ll = |p: f64, win: bool| {
+        let p = p.clamp(1e-6, 1.0 - 1e-6);
+        if win {
+            -p.ln()
+        } else {
+            -(1.0 - p).ln()
+        }
+    };
+    let acc = |p: f64, win: bool| {
+        if (p - 0.5).abs() < 1e-12 {
+            0.5
+        } else if (p > 0.5) == win {
+            1.0
+        } else {
+            0.0
+        }
+    };
+    // a map arm's input: 2/3 the registered conf·Δ, 4/5 plain Δ, 6 conf·(Δ + AI prior + comp)
+    let feat = |j: usize, r: &CalRec| match j {
+        2 | 3 => e7c_conf(r.m) * r.d,
+        4 | 5 => r.d,
+        _ => e7c_conf(r.m) * (r.d + r.x),
+    };
+    let recent = |j: usize| j == 3 || j == 5;
+    let fit = |tr: &[&CalRec], j: usize| e7b_logit(&tr.iter().map(|r| (feat(j, r), r.win)).collect::<Vec<_>>());
+    let blue_rate = |tr: &[&CalRec]| tr.iter().filter(|r| r.win).count() as f64 / tr.len().max(1) as f64;
+    let first = career.iter().map(|r| r.g).min().unwrap_or(0);
+    let last = career.iter().map(|r| r.g).max().unwrap_or(0);
+    let mean = |set: &[usize], f: &dyn Fn(usize) -> f64| set.iter().map(|&i| f(i)).sum::<f64>() / set.len().max(1) as f64;
+
+    // career bench: every arm refit before each patch on that arm's earlier patches
+    let mut p = vec![[0.5f64; 7]; career.len()];
+    let mut maps: Vec<(usize, [(f64, f64); 7])> = Vec::new();
+    for g in (first + 1)..=last {
+        let (all, rec) = (e7c_train(career, g, false), e7c_train(career, g, true));
+        let mut mp = [(0.0, 0.0); 7];
+        for j in 2..7 {
+            mp[j] = fit(if recent(j) { &rec } else { &all }, j);
+        }
+        let c = blue_rate(&all);
+        for (i, r) in career.iter().enumerate().filter(|(_, r)| r.g == g) {
+            p[i][0] = e7c_identity(r.d);
+            p[i][1] = c;
+            for j in 2..7 {
+                p[i][j] = sig(mp[j].0 + mp[j].1 * feat(j, r));
+            }
+        }
+        maps.push((g, mp));
+    }
+    let eval: Vec<usize> = (0..career.len()).filter(|&i| career[i].g > first).collect();
+    println!(
+        "\nE7c CALIBRATED WIN PROBABILITY (pre-registered) — Δ = Σ delta_for diff (the product's strength part, v4.5.0 carry); P(blue) = σ(α + β·conf·Δ), conf = min(M/200, 1); maps refit before each patch on earlier patches only:"
+    );
+    println!(
+        "  career bench: eval {}–{} n={} (fits from {}) · log loss ×1000 · I − arm and slope s with 95% match-bootstrap intervals",
+        label(first + 1),
+        label(last),
+        eval.len(),
+        label(first)
+    );
+    println!(
+        "  {:<42} {:>8}  {:<22} {:<21} {:>7} {:>7}",
+        "arm", "log loss", "I − arm", "slope s", "Brier", "acc"
+    );
+    let mut verdict = [(0.0f64, false); 2];
+    for j in 0..7 {
+        if j == 4 {
+            println!("  secondary (not in the verdict):");
+        }
+        let y = |i: usize| if career[i].win { 1.0 } else { 0.0 };
+        let l = 1000.0 * mean(&eval, &|i| ll(p[i][j], career[i].win));
+        let dl = (j > 0).then(|| {
+            e7b_boot(&eval.iter().map(|&i| 1000.0 * (ll(p[i][0], career[i].win) - ll(p[i][j], career[i].win))).collect::<Vec<_>>())
+        });
+        let sl = (j != 1).then(|| e7c_slope(&eval.iter().map(|&i| (logit(p[i][j]), career[i].win)).collect::<Vec<_>>()));
+        let mut line = format!(
+            "  {:<42} {:>8.1}  {:<22} {:<21} {:>7.1} {:>6.1}%",
+            NAMES[j],
+            l,
+            dl.map_or("—".to_string(), |(d, lo, hi)| format!("{:+.1} [{:+.1}, {:+.1}]", d, lo, hi)),
+            sl.map_or("—".to_string(), |(s, lo, hi)| format!("{:.2} [{:.2}, {:.2}]", s, lo, hi)),
+            1000.0 * mean(&eval, &|i| (p[i][j] - y(i)) * (p[i][j] - y(i))),
+            100.0 * mean(&eval, &|i| acc(p[i][j], career[i].win))
+        );
+        if j == 2 || j == 3 {
+            let (dl, sl) = (dl.unwrap(), sl.unwrap());
+            let pass = e7c_pass(dl.1, sl.1, sl.2);
+            verdict[j - 2] = (l, pass);
+            line += if pass { "  PASS" } else { "  FAIL" };
+        }
+        println!("{}", line);
+    }
+    let chosen = e7c_choose(verdict);
+    println!(
+        "  VERDICT (pre-registered: I − map interval above 0 and s interval holding 1; the lower loss if both pass): {}",
+        match chosen {
+            Some(0) => "show L",
+            Some(_) => "show Lr",
+            None => "NO MAP PASSES — show no probability",
+        }
+    );
+    println!("  per patch: n · log loss ×1000 I / L / Lr · the maps used (L α/β · Lr β):");
+    for (g, mp) in &maps {
+        let set: Vec<usize> = eval.iter().copied().filter(|&i| career[i].g == *g).collect();
+        let lj = |j: usize| 1000.0 * mean(&set, &|i| ll(p[i][j], career[i].win));
+        println!(
+            "    {:<9} n={:<4} {:.1} / {:.1} / {:.1} · L {:+.3}/{:.2} · Lr {:.2}",
+            label(*g),
+            set.len(),
+            lj(0),
+            lj(2),
+            lj(3),
+            mp[2].0,
+            mp[2].1,
+            mp[3].1
+        );
+    }
+    let shown = chosen.map_or(2, |c| c + 2);
+    for j in [shown, 0] {
+        let bins = e7c_deciles(&eval.iter().map(|&i| (p[i][j], career[i].win)).collect::<Vec<_>>());
+        println!("  reliability by decile, {} (mean prediction → blue win rate):", NAMES[j].trim_end());
+        println!("    {}", bins.iter().map(|b| format!("{:.3}→{:.3}", b.0, b.1)).collect::<Vec<_>>().join("  "));
+    }
+    let all: Vec<&CalRec> = career.iter().collect();
+    let two = e7c_train(career, last + 1, true);
+    let (a, b) = fit(&all, 2);
+    let (an, bn) = fit(&all, 4);
+    let (a2, b2) = fit(&two, 3);
+    let (an2, bn2) = fit(&two, 5);
+    println!(
+        "  ship constants: L (all {} patches) α {:+.4} β {:.3} (without conf {:+.4} / {:.3}) · Lr ({} + {}) α {:+.4} β {:.3} (without conf {:+.4} / {:.3})",
+        last - first + 1,
+        a,
+        b,
+        an,
+        bn,
+        label(last - 1),
+        label(last),
+        a2,
+        b2,
+        an2,
+        bn2
+    );
+
+    // cold start: the fresh-save replay scored by the chosen map's rule
+    let j = shown;
+    let mut q = vec![[0.5f64; 4]; fresh.len()]; // I, C, the map, the map without conf
+    for g in (first + 1)..=last {
+        let tr = e7c_train(career, g, recent(j));
+        let (mp, mpn) = (fit(&tr, j), fit(&tr, j + 2));
+        let c = blue_rate(&e7c_train(career, g, false));
+        for (i, r) in fresh.iter().enumerate().filter(|(_, r)| r.g == g) {
+            q[i] = [e7c_identity(r.d), c, sig(mp.0 + mp.1 * feat(j, r)), sig(mpn.0 + mpn.1 * feat(j + 2, r))];
+        }
+    }
+    let fe: Vec<usize> = (0..fresh.len()).filter(|&i| fresh[i].g > first && fresh[i].g <= last).collect();
+    println!(
+        "\n  COLD START (pre-registered) — fresh-save replay (E7a: patch-local tables, no previous patch, M = matches seen, first {:.0} of each patch), eval {}–{} n={}; the {} map fitted on the earlier career patches{}:",
+        E7_CONF_FULL,
+        label(first + 1),
+        label(last),
+        fe.len(),
+        if recent(j) { "Lr" } else { "L" },
+        if chosen.is_none() { " (no map passed — for reference only)" } else { "" }
+    );
+    let qll = |set: &[usize], k: usize| 1000.0 * mean(set, &|i| ll(q[i][k], fresh[i].win));
+    let qacc = |set: &[usize], k: usize| 100.0 * mean(set, &|i| acc(q[i][k], fresh[i].win));
+    println!(
+        "    log loss ×1000  I {:.1} · C {:.1} · map {:.1} · map without conf {:.1}  (accuracy I {:.1}% · map {:.1}%)",
+        qll(&fe, 0),
+        qll(&fe, 1),
+        qll(&fe, 2),
+        qll(&fe, 3),
+        qacc(&fe, 0),
+        qacc(&fe, 2)
+    );
+    let (dc, dlo, dhi) =
+        e7b_boot(&fe.iter().map(|&i| 1000.0 * (ll(q[i][1], fresh[i].win) - ll(q[i][2], fresh[i].win))).collect::<Vec<_>>());
+    let (s, slo, shi) = e7c_slope(&fe.iter().map(|&i| (logit(q[i][2]), fresh[i].win)).collect::<Vec<_>>());
+    let (sn, snlo, snhi) = e7c_slope(&fe.iter().map(|&i| (logit(q[i][3]), fresh[i].win)).collect::<Vec<_>>());
+    println!(
+        "    C − map {:+.1} [{:+.1}, {:+.1}] · slope s of the map {:.2} [{:.2}, {:.2}] (without conf {:.2} [{:.2}, {:.2}])",
+        dc, dlo, dhi, s, slo, shi, sn, snlo, snhi
+    );
+    println!(
+        "    RULE (pre-registered: s upper bound below 1 → hide while M < {:.0}): {}",
+        E7_CONF_FULL,
+        if shi < 1.0 { "HIDE while M < 200" } else { "SHOW at every M" }
+    );
+    for (lo, hi) in [(0.0, 50.0), (50.0, 100.0), (100.0, 200.0)] {
+        let set: Vec<usize> = fe.iter().copied().filter(|&i| fresh[i].m >= lo && fresh[i].m < hi).collect();
+        println!(
+            "    M {:>3.0}–{:<3.0} n={:<4} log loss I {:.1} · C {:.1} · map {:.1} · without conf {:.1} · accuracy {:.1}%",
+            lo,
+            hi,
+            set.len(),
+            qll(&set, 0),
+            qll(&set, 1),
+            qll(&set, 2),
+            qll(&set, 3),
+            qacc(&set, 2)
+        );
+    }
+}
+
 fn main() {
     // --legacy = the old non-causal i%5 interleave (kept for comparison); default is
     // the causal rolling-origin split (train on strictly-earlier patches only).
@@ -1489,6 +1809,8 @@ fn main() {
     // T4 advice bench: per match, (winner-team, loser-team) mean percentile of the
     // ACTUAL picks among their available pools under the shipped score.
     let mut t4_v: Vec<(f64, f64)> = Vec::new();
+    // E7c calibration bench (rolling only): the strength diff and M per scored match
+    let mut cal_v: Vec<CalRec> = Vec::new();
     // champ universe for the T4 pool (sorted — deterministic iteration).
     let universe: Vec<&str> = {
         let mut s: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
@@ -1575,11 +1897,13 @@ fn main() {
         // changed champs drop their prev blend — mirrors recommender.rs patch_current.
         let mut prev_c: HashMap<&str, WL> = HashMap::new();
         let mut prev_cp: HashMap<(&str, usize), WL> = HashMap::new();
+        let mut prev_total = 0.0;
         if !legacy && g >= 1 {
             for (i, m) in matches.iter().enumerate() {
                 if groups[i] != g - 1 {
                     continue;
                 }
+                prev_total += 1.0;
                 for (team, won) in [(&m.blue, m.blue_win), (&m.red, !m.blue_win)] {
                     for a in team {
                         prev_c.entry(&a.champ).or_default().rec(won);
@@ -1666,7 +1990,7 @@ fn main() {
         let mut ath_x = ath_all.clone();
         let mut test_idx: Vec<usize> = (0..matches.len()).filter(|&i| groups[i] == g).collect();
         test_idx.sort_by_key(|&i| matches[i].id); // play order — production tables must expand causally
-        for &i in &test_idx {
+        for (k, &i) in test_idx.iter().enumerate() {
             let m = &matches[i];
             let mut t = Terms { win: m.blue_win, group: g, ..Default::default() };
             let side = |team: &[Ath]| -> (f64, f64, f64, f64, f64, f64, f64) {
@@ -1937,6 +2261,9 @@ fn main() {
                 };
                 let (bp4, rp4) = (team_pct(&m.blue), team_pct(&m.red));
                 t4_v.push(if m.blue_win { (bp4, rp4) } else { (rp4, bp4) });
+                // E7c: k matches of this patch are already in the tables
+                let m_ev = prod_m_ev(k as f64, prev_total);
+                cal_v.push(CalRec { g, d: t.dfor_prod, m: m_ev, x: t.aip_prod + t.comp_prod, win: m.blue_win });
             }
             recs.push(t);
             if !legacy {
@@ -2731,6 +3058,9 @@ fn main() {
             let (recs, patches) = e7b_records(&matches, &groups, &vsorted, &taxon, &notes, &sizes);
             e7b_report(&recs, &patches, &e7b_holdout);
         }
+        let fresh_cal: Vec<CalRec> =
+            fresh.iter().map(|r| CalRec { g: r.g, d: r.strength, m: r.m_ev, x: 0.0, win: r.win }).collect();
+        e7c_report(&cal_v, &fresh_cal, &vsorted);
     }
     println!("\n>> A term EARNS engine weight only if it lifts base_lane beyond ~±{:.1}%p noise.", 50.0 / n.sqrt());
 }
@@ -2829,5 +3159,100 @@ mod tests {
         let with = prod_delta_for("monk", 4, &cur_c, &prev_c, &cur_cp, &prev_cp, &ch, &carry);
         let without = prod_delta_for("monk", 4, &cur_c, &prev_c, &cur_cp, &prev_cp, &ch, &HashMap::new());
         assert_eq!(with, without);
+    }
+
+    #[test]
+    fn effective_matches_add_the_fading_previous_patch() {
+        // the product's M row: current + round(0.35·(1 − min(current/200, 1))·previous)
+        assert_eq!(prod_m_ev(0.0, 500.0), 175.0);
+        assert_eq!(prod_m_ev(100.0, 500.0), 188.0);
+        assert_eq!(prod_m_ev(250.0, 500.0), 250.0);
+    }
+
+    #[test]
+    fn data_confidence_saturates_at_200_matches() {
+        assert_eq!(e7c_conf(100.0), 0.5);
+        assert_eq!(e7c_conf(450.0), 1.0);
+    }
+
+    fn cal(g: usize, d: f64, win: bool) -> CalRec {
+        CalRec { g, d, m: 400.0, x: 0.0, win }
+    }
+
+    #[test]
+    fn calibration_maps_train_only_on_earlier_patches() {
+        let recs: Vec<CalRec> = (1..=4).flat_map(|g| [cal(g, 0.1, true), cal(g, -0.1, false)]).collect();
+        let groups = |g: usize, recent: bool| -> Vec<usize> {
+            let mut v: Vec<usize> = e7c_train(&recs, g, recent).iter().map(|r| r.g).collect();
+            v.dedup();
+            v
+        };
+        assert_eq!(groups(4, false), vec![1, 2, 3]);
+        assert_eq!(groups(4, true), vec![2, 3]);
+        // one earlier patch: the recent map is the full map
+        assert_eq!(groups(2, true), vec![1]);
+        assert!(groups(1, false).is_empty());
+    }
+
+    #[test]
+    fn identity_reading_is_clamped() {
+        assert!((e7c_identity(0.12) - 0.62).abs() < 1e-12);
+        assert_eq!(e7c_identity(0.7), 0.98);
+        assert_eq!(e7c_identity(-0.7), 0.02);
+    }
+
+    /// 21 logits from −1 to 1, 200 matches each, round(200·σ(x)) of them won;
+    /// the predictor reports `scale`·x
+    fn calibrated(scale: f64) -> Vec<(f64, bool)> {
+        let mut v = Vec::new();
+        for i in 0..21 {
+            let x = -1.0 + 0.1 * i as f64;
+            let wins = (200.0 / (1.0 + (-x).exp())).round() as usize;
+            for k in 0..200 {
+                v.push((scale * x, k < wins));
+            }
+        }
+        v
+    }
+
+    #[test]
+    fn slope_is_one_for_a_calibrated_map() {
+        let (s, lo, hi) = e7c_slope(&calibrated(1.0));
+        assert!((s - 1.0).abs() < 0.02, "{}", s);
+        assert!(lo < 1.0 && 1.0 < hi, "[{}, {}]", lo, hi);
+    }
+
+    #[test]
+    fn slope_below_one_flags_an_overconfident_map() {
+        let (s, _, hi) = e7c_slope(&calibrated(2.0));
+        assert!((s - 0.5).abs() < 0.01, "{}", s);
+        assert!(hi < 1.0, "{}", hi);
+    }
+
+    #[test]
+    fn verdict_needs_a_better_loss_and_a_slope_near_one() {
+        assert!(e7c_pass(0.4, 0.8, 1.2));
+        assert!(!e7c_pass(-0.1, 0.8, 1.2), "loss interval reaches 0");
+        assert!(!e7c_pass(0.4, 1.05, 1.4), "under-confident");
+        assert!(!e7c_pass(0.4, 0.6, 0.95), "overconfident");
+    }
+
+    #[test]
+    fn choice_takes_the_lower_loss_among_passing_maps() {
+        assert_eq!(e7c_choose([(660.0, true), (655.0, true)]), Some(1));
+        assert_eq!(e7c_choose([(660.0, true), (655.0, false)]), Some(0));
+        assert_eq!(e7c_choose([(660.0, false), (655.0, false)]), None);
+    }
+
+    #[test]
+    fn deciles_split_sorted_predictions_evenly() {
+        // 20 predictions given in reverse order; each bin gets two neighbours
+        let pts: Vec<(f64, bool)> = (0..20).rev().map(|i| (0.025 + 0.05 * i as f64, i % 2 == 0)).collect();
+        let bins = e7c_deciles(&pts);
+        assert_eq!(bins.len(), 10);
+        assert!(bins.iter().all(|b| b.2 == 2), "{:?}", bins);
+        assert!((bins[0].0 - 0.05).abs() < 1e-12, "{:?}", bins[0]);
+        assert!((bins[0].1 - 0.5).abs() < 1e-12, "{:?}", bins[0]);
+        assert!((bins[9].0 - 0.95).abs() < 1e-12, "{:?}", bins[9]);
     }
 }
