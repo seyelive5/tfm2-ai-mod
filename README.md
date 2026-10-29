@@ -12,7 +12,7 @@
 > draws tier tags, pick/ban highlights and two game-style recommendation cards onto the game's own
 > ban/pick screen — no external window, no launcher.
 
-> **상태 (2026-10-29): v4.5.0 — 게임 카드 UI(인게임 확인) + 상대 다음 수 후보(F2·버튼 인게임 확인) + 근거 없던 태그 이론과 조언 문구 정리 + 패치 변경 챔피언의 크기 이월**
+> **상태 (2026-10-30): v4.6.0 — 게임 카드 UI(인게임 확인) + 상대 다음 수 후보(F2·버튼 인게임 확인) + 근거 없던 태그 이론과 조언 문구 정리 + 패치 변경 챔피언의 크기 이월 + 10픽 뒤 예상 승률**
 > (게임 0.7.0 확인, 클래식 UI. 새 UI 스타일은 아직 확인하지 않았습니다).
 > 게임 0.6부터 게임사가 classic 모드 SDK 지원을 끝내서, 게임 0.6.5+의 **stable 모드 API**로 다시 작성했습니다.
 > 카드 표시, 해설 글자 색, Tab 숨기기를 모두 게임에서 확인했습니다.
@@ -33,6 +33,9 @@
   - AI끼리 붙은 드래프트에서 3위 안 적중은 게임 0.6.5에서 밴 약 93%·픽 약 70%, 0.7.0에서 밴 약 82%·픽 약 70%였습니다.
     사람을 상대로 한 판에서는 더 낮았습니다(0.7.0 내 경기 29번 중 15번).
     근거: [고도화 검토](docs/research/2026-10-28-advanced-directions.md) E1b·E1c.
+- **10픽 뒤 예상 승률** — 양 팀 픽이 끝나면 해설 카드에 `예상 승률(챔피언 강도 기준) 약 N%`를 보여 줍니다.
+  추천 배치와 상대의 추정 배치로 라인 강도 차를 구하고, 앞 패치로만 맞춘 확률 지도로 바꾼 값입니다.
+  데이터가 적으면 50% 쪽으로 줄입니다. 지도는 클래식 데이터로 맞췄습니다(E7c).
 - **게임 화면은 건드리지 않음** — 표시는 전부 모드가 만든 노드이고 클릭은 게임으로 그대로 통과합니다.
   LT AI Coach 등 다른 모드와 함께 켤 수 있습니다.
 - **점수 모델** (v3.0 기반. v4.4.0에서 근거 없던 콜드스타트 태그 이론을 빼고, v4.5.0에서 패치 변경 챔피언의 출발점을 바꿈)
@@ -46,7 +49,10 @@
 - 시간순(rolling-origin) 홀드아웃 백테스트 + 부트스트랩 신뢰구간으로 모든 점수 항을 채택/기각합니다.
 - 5,274경기 기준 "점수 높은 팀이 이긴다" 예측 정확도 **약 60%** (게임 0.4.x 데이터; 0.6.5 데이터 재측정은 ROADMAP Phase 2).
 - 세이브 초반(콜드스타트) 구간은 태그 이론(시너지·카운터)만 쟀습니다. 새 세이브 첫 200판에서 승자 신호가 없어 v4.4.0에서
-  껐습니다(E7a). 확률 보정은 아직 측정하지 않았습니다 — [고도화 검토](docs/research/2026-10-28-advanced-directions.md) 참조.
+  껐습니다(E7a).
+- 확률 보정(E7c): 점수 차를 %p로 그대로 읽으면 확률이 지나치게 극단적이어서(92.6%로 읽힌 판들이 실제로는 71.5%만 이김),
+  블루 승률 하나로 찍는 것보다도 나빴습니다(로그 손실 730.5 대 692.7, ×1000). 앞 패치로만 맞춘 지도는 662.8이었고 보정 기울기 1.09로 맞았습니다. 이 지도가 예상 승률입니다.
+  자세한 결과: [고도화 검토](docs/research/2026-10-28-advanced-directions.md).
 - 검증에서 **효과 없음**이 확인된 항(챔피언 시너지/카운터, 태그 이론, 동라인 매치업, 상대 팀 성향, 포켓픽 밴 등)은 가중치 0으로 제거했습니다.
 - 상세: [`ALGO-FIXES.md`](ALGO-FIXES.md), [`analysis/recommender-algorithm-review.md`](analysis/recommender-algorithm-review.md),
   [`analysis/harness-causal-findings.md`](analysis/harness-causal-findings.md)
@@ -55,7 +61,7 @@
 
 | 폴더 | 내용 |
 |---|---|
-| `tfm2_db_export/` | **제품** — 추천기 모드 본체(v4.5, stable API): `db`(경기 기록 → 통계) · `board`(밴픽 읽기) · `recommender` · `prior`(게임 AI 사전) · `foresee`(상대 다음 수 후보) · `ui`(게임 카드·칸 태그) · `markup`(게임 글자 색 문법) · `diag`·`probe`(진단 파일·덤프) |
+| `tfm2_db_export/` | **제품** — 추천기 모드 본체(v4.6, stable API): `db`(경기 기록 → 통계) · `board`(밴픽 읽기) · `recommender` · `prior`(게임 AI 사전) · `foresee`(상대 다음 수 후보) · `ui`(게임 카드·칸 태그) · `markup`(게임 글자 색 문법) · `diag`·`probe`(진단 파일·덤프) |
 | `draft-overlay/` | 점수 엔진 `src/engine.rs`(`tfm2_db_export`가 `#[path]`로 공유) + 검증 하네스(`src/bin/validate-terms.rs`, `backtest.rs`) + 구 hudhook 오버레이 |
 | `draft-weights-gen/` | 구 가중치 생성기(구 오버레이용) |
 | `tfm2_bp_reader/` | 라이브 밴픽 읽기 프로토타입(classic) — `tfm2_db_export`에 통합됨 |

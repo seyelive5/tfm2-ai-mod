@@ -518,6 +518,8 @@ pub struct Board {
     /// the enemy AI's top remaining candidates from its latest deliberation
     /// (observed via ModDraftScoreHook) — its likely next picks/bans.
     pub enemy_intent: Vec<String>,
+    /// my side (blue = true); None → the expected win rate drops its side term
+    pub my_blue: Option<bool>,
 }
 
 /// Cross-frame series tracking — ONLY what the game doesn't hand us directly:
@@ -674,7 +676,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
     // matches — two matches' empty-board start frames would otherwise collide
     // and serve a wrong-phase Output under a different ban rule.
     let key = format!(
-        "{}|{}|{}|{}|{}|{}|{}|{:?}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{:?}|{}|{}|{}|{}|{:?}",
         board.my_ban.join(","),
         board.enemy_ban.join(","),
         board.my_pick.join(","),
@@ -687,6 +689,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         board.ban_count,
         board.teams,
         board.attributed, // commentary's style claim depends on it
+        board.my_blue,    // the expected win rate's side term
     ) + &board.enemy_intent.join(","); // kept in the cache key so a restored intent line stays cache-correct
     if let Ok(g) = OUTPUT.lock() {
         if let Some((k, out)) = g.as_ref() {
@@ -823,6 +826,12 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
     }
     if !swap.is_empty() {
         parts.push("픽이 끝났습니다. 전체 승률이 가장 높아지는 배치는 위 추천 배치입니다.".to_string());
+        // E7c: calibrated on champion strength alone (AI prior, comp, familiarity unproven)
+        let mine: Vec<&str> = board.my_pick.iter().map(|x| x.as_str()).collect();
+        let theirs: Vec<&str> = board.enemy_pick.iter().map(|x| x.as_str()).collect();
+        if let Some(p) = engine::win_probability(tables, &mine, &theirs, board.my_blue) {
+            parts.push(format!("예상 승률(챔피언 강도 기준) 약 {}", markup::num(&format!("{:.0}%", p * 100.0))));
+        }
     } else if let Some(lv) = lane_view.as_ref().filter(|lv| lv.has_pos) {
         // the headline must describe the SAME ① the header/glyphs show (the
         // GLOBAL score-sorted top) — it diverged from the ★ lane's local top
@@ -1368,5 +1377,60 @@ mod tests {
         let n = plain_notes(&update(&b, &build_tables("", &[], &chg, ""), 7_100_003));
         let line = n.iter().find(|x| x.starts_with("이번 패치 변경: ")).expect("patch line");
         assert!(line.contains("지난 패치 성적") && !line.contains("리셋"), "{}", line);
+    }
+
+    const MINE: [&str; 5] = ["fighter", "swordman", "jiangshi", "pole_warrior", "vampire"];
+    const THEIRS: [&str; 5] = ["ogre", "archer", "monk", "ninja", "priest"];
+
+    /// E7c: every champ pinned to lane i; mine carry the given lane deltas,
+    /// theirs 0; M sets the data confidence
+    fn winp_tables(mine: [f32; 5], m: usize) -> engine::Tables {
+        let mut s = String::new();
+        for l in 0..5 {
+            s += &format!("POS\t{}\t{l}\t{l}\nCP\t{}\t{l}\t{}\t50\n", MINE[l], MINE[l], mine[l]);
+            s += &format!("POS\t{}\t{l}\t{l}\nCP\t{}\t{l}\t0\t50\n", THEIRS[l], THEIRS[l]);
+        }
+        engine::parse_tables_from_str(&format!("{}M\t{}", s, m))
+    }
+
+    #[test]
+    fn expected_win_rate_maps_the_lane_strength_gap() {
+        // Δ = +0.10 at full confidence: σ(side·0.0619 + 1.975·0.10)
+        let t = winp_tables([0.04, 0.03, 0.02, 0.01, 0.0], 400);
+        let p = |side| engine::win_probability(&t, &MINE, &THEIRS, side).unwrap();
+        assert!((p(Some(true)) - 0.5645).abs() < 1e-3, "blue {}", p(Some(true)));
+        assert!((p(Some(false)) - 0.5339).abs() < 1e-3, "red {}", p(Some(false)));
+        assert!((p(None) - 0.5492).abs() < 1e-3, "no side {}", p(None));
+    }
+
+    #[test]
+    fn expected_win_rate_shrinks_with_thin_data() {
+        // M = 100 → confidence 0.5: σ(0.0619 + 1.975·0.5·0.10)
+        let t = winp_tables([0.04, 0.03, 0.02, 0.01, 0.0], 100);
+        let p = engine::win_probability(&t, &MINE, &THEIRS, Some(true)).unwrap();
+        assert!((p - 0.5401).abs() < 1e-3, "{}", p);
+    }
+
+    #[test]
+    fn expected_win_rate_waits_for_both_full_teams() {
+        let t = winp_tables([0.0; 5], 400);
+        assert!(engine::win_probability(&t, &MINE, &THEIRS[..4], Some(true)).is_none());
+        assert!(engine::win_probability(&t, &MINE[..4], &THEIRS, Some(true)).is_none());
+    }
+
+    #[test]
+    fn swap_notes_state_the_expected_win_rate() {
+        // no stats → no strength gap → the blue side term alone, σ(0.0619) ≈ 52%
+        let b = Board { my_blue: Some(true), ..swap_board() };
+        let n = plain_notes(&run("t-swap-winp", b, 0));
+        assert!(n.iter().any(|x| x == "예상 승률(챔피언 강도 기준) 약 52%"), "{:?}", n);
+    }
+
+    #[test]
+    fn notes_skip_the_win_rate_until_the_enemy_is_full() {
+        let mut b = swap_board();
+        b.enemy_pick.pop();
+        let n = plain_notes(&run("t-swap-winp-4", b, 0));
+        assert!(!n.iter().any(|x| x.contains("예상 승률")), "{:?}", n);
     }
 }

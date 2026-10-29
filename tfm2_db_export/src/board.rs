@@ -609,6 +609,7 @@ pub(crate) fn read(ctx: &StableClient) -> Read {
             enemy_team: enemy_id.unwrap_or(0) as u32,
             i_am_team1,
             enemy_intent: Vec::new(),
+            my_blue: Some(sd == Side::Blue),
         }
     });
 

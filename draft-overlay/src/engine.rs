@@ -1370,6 +1370,36 @@ fn assign_lanes<'a>(tables: &Tables, allies: &[&'a str], enemies: &[&str]) -> [O
     assign_core(tables, allies, &enemy_at, true)
 }
 
+// E7c (2026-10-29, docs/research/2026-10-28-advanced-directions.md): P(blue) =
+// σ(α + β·conf·Δ), Δ = Σ lane strength (delta_for) blue − red, fitted on all nine
+// classic patches (5,274 matches). Out of sample it beat reading Δ as %p by 67.7
+// [+54.7, +82.4] log loss ×1000 (calibration slope 1.09 [0.95, 1.22]), and conf
+// kept it calibrated in fresh saves (1.24 [0.90, 1.63]; without conf 0.72).
+const WINP_ALPHA: f32 = 0.0619; // blue side
+const WINP_BETA: f32 = 1.975;
+
+/// Expected win rate on champion strength once both teams have five picks: my
+/// picks on my recommended lanes (as `assign_lanes`) vs the enemy's estimated
+/// lanes. `my_blue` None → no side term.
+pub fn win_probability(tables: &Tables, mine: &[&str], theirs: &[&str], my_blue: Option<bool>) -> Option<f32> {
+    if mine.len() < 5 || theirs.len() < 5 {
+        return None;
+    }
+    let none: [Option<&str>; 5] = [None; 5];
+    let enemy_at = assign_core(tables, theirs, &none, false);
+    let my_at = assign_core(tables, mine, &enemy_at, true);
+    let strength = |at: &[Option<&str>; 5]| -> f32 {
+        at.iter().enumerate().filter_map(|(l, c)| c.map(|c| tables.delta_for(c, Some(l as u8)))).sum()
+    };
+    let side = match my_blue {
+        Some(true) => 1.0,
+        Some(false) => -1.0,
+        None => 0.0,
+    };
+    let z = side * WINP_ALPHA + WINP_BETA * tables.confidence() * (strength(&my_at) - strength(&enemy_at));
+    Some(1.0 / (1.0 + (-z).exp()))
+}
+
 fn assign_rec(
     val: &[[f32; 5]; 5],
     n: usize,
