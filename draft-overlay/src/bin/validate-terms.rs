@@ -1282,8 +1282,9 @@ fn e7b_report(recs: &[E7bRec], patches: &[E7bPatch], holdout: &[String]) {
         if patches[g].fit.is_none() {
             continue;
         }
-        let set: Vec<usize> = primary.iter().copied().filter(|&i| recs[i].g == g).collect();
-        line(&format!("primary in {}", patches[g].label), &set, true);
+        let set: Vec<usize> = (0..recs.len()).filter(|&i| recs[i].g == g && recs[i].fresh).collect();
+        let tag = if held(g) { " (holdout)" } else { "" };
+        line(&format!("primary in {}{}", patches[g].label, tag), &set, true);
     }
     // pre-registered rule: primary lower bound > 0 and the all-match upper bound > 0;
     // both pass → the higher primary lower bound
