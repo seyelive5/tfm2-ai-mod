@@ -12,7 +12,7 @@
 > draws tier tags, pick/ban highlights and two game-style recommendation cards onto the game's own
 > ban/pick screen — no external window, no launcher.
 
-> **상태 (2026-10-29): v4.4.0 — 게임 카드 UI(인게임 확인) + 상대 다음 수 후보(F2·버튼 인게임 확인) + 근거 없던 태그 이론 끔**
+> **상태 (2026-10-29): v4.4.1 — 게임 카드 UI(인게임 확인) + 상대 다음 수 후보(F2·버튼 인게임 확인) + 근거 없던 태그 이론과 조언 문구 정리**
 > (게임 0.7.0 확인, 클래식 UI. 새 UI 스타일은 아직 확인하지 않았습니다).
 > 게임 0.6부터 게임사가 classic 모드 SDK 지원을 끝내서, 게임 0.6.5+의 **stable 모드 API**로 다시 작성했습니다.
 > 카드 표시, 해설 글자 색, Tab 숨기기를 모두 게임에서 확인했습니다.

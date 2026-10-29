@@ -787,7 +787,8 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
                 // counters() is driven by laning-dominance (LP z) + cold-start tags;
                 // the head-to-head record (MU direct) is weight-0 in the mod (BT
                 // residual τ≈0), so DON'T claim "상대 전적상 우위" — laning metric only
-                // (2026-07-05 review F10).
+                // (2026-07-05 review F10). Both drivers are weight-0 now (LP since
+                // S2-4, the tags since E7a), so this line stays dark in the mod.
                 parts.push(format!(
                     "1순위 픽은 상대 {}에게 라인전 지표상 우위가 있습니다.",
                     markup::name(cof)
@@ -849,36 +850,22 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         let known = ids.iter().filter(|c| tables.role_known(c)).count();
         if known > 0 {
             let (tanks, heals) = tables.comp_counts(&ids);
-            let mut t = format!(
-                "상대 조합 {}픽 — 탱커 {} · 힐러 {}",
+            // counts only (2026-10-29): the "no frontline → dive" and "healer →
+            // burst/CC" advice had no backing — "no frontline = worst" was refuted
+            // (stratified residual ≈ 0, n=3,077) and the counter rules showed no
+            // signal (E7a)
+            parts.push(format!(
+                "상대 조합 {}픽 — 탱커 {} · 힐러 {}.",
                 ids.len(),
                 markup::num(&tanks.to_string()),
                 markup::num(&heals.to_string())
-            );
-            if tanks == 0 && known == ids.len() {
-                t.push_str(". 앞라인이 없어 돌진·암살 가치가 높습니다");
-            } else if heals >= 1 {
-                t.push_str(". 힐러가 있어 장기전 불리 — 폭딜이나 CC 연계를 고려하세요");
-            }
-            t.push('.');
-            parts.push(t);
+            ));
         }
     }
-    // own-comp guardrail warning (symmetric to the enemy-comp line): 3+ of MY
-    // picks with no frontline is the comp the autobattle punishes hardest.
-    if board.my_pick.len() >= 3 && swap.is_empty() {
-        let ids: Vec<&str> = board.my_pick.iter().map(|s| s.as_str()).collect();
-        let known = ids.iter().filter(|c| tables.role_known(c)).count();
-        if known == ids.len() {
-            let (tanks, _) = tables.comp_counts(&ids);
-            if tanks == 0 {
-                parts.push(format!(
-                    "{} — 남은 픽에서 탱커/브루저를 고려하세요.",
-                    markup::warn("아군 조합에 앞라인이 없습니다")
-                ));
-            }
-        }
-    }
+    // own-comp "no frontline" warning REMOVED (2026-10-29): its premise — the comp
+    // the autobattle punishes hardest — was refuted by the 2026-07-05 review F3
+    // (the more-frontline side wins 50.0%, stratified residual ≈ 0, n=3,077). The
+    // score dropped the matching boost then; the warning outlived it.
     // enemy-AI-intent commentary REMOVED (code review 2026-07-04): the draft-score
     // hook that feeds board.enemy_intent fires only for BACKGROUND league sims, never
     // the player's opponent (CLAUDE.md §2c) — so the line presented league-wide noise
@@ -1149,5 +1136,52 @@ mod tests {
         let text = markup::plain(run("t-data-cold", Board::default(), 0).notes.last().unwrap());
         assert!(text.contains("콜드스타트 구간"), "{}", text);
         assert!(!text.contains("이론"), "{}", text);
+    }
+
+    /// the mid/late memo used to advise counters and synergy; the harness found
+    /// no effect for either and the score has neither term (2026-10-29)
+    #[test]
+    fn strategy_memo_names_what_the_ranking_does() {
+        for (key, mine) in [("t-memo-mid", &["fighter", "swordman"][..]), ("t-memo-late", &["fighter", "swordman", "jiangshi"][..])] {
+            let n = plain_notes(&run(key, Board { my_pick: ids(mine), ..Default::default() }, 0));
+            let memo = n.iter().find(|x| x.starts_with("전략 메모: ")).expect("memo");
+            assert!(memo.contains("남은 강챔 우선"), "{}", memo);
+            assert!(!memo.contains("카운터 우선") && !memo.contains("채우기"), "{}", memo);
+        }
+    }
+
+    /// baked T/POS rows plus data roles (RP = tank ratio, heal ratio)
+    fn role_tables(rp: &[(&str, f32, f32)]) -> engine::Tables {
+        let mut tsv: Vec<String> = engine::WEIGHTS_TSV
+            .lines()
+            .filter(|l| l.starts_with("T\t") || l.starts_with("POS\t"))
+            .map(str::to_string)
+            .collect();
+        tsv.extend(rp.iter().map(|(c, t, h)| format!("RP\t{}\t{:.2}\t{:.2}", c, t, h)));
+        engine::parse_tables_from_str(&tsv.join("\n"))
+    }
+
+    /// the comp lines keep the counts but drop advice the evidence does not back:
+    /// "no frontline = worst" was refuted (stratified residual ≈ 0, n=3,077) and
+    /// the counter rules showed no signal (E7a)
+    #[test]
+    fn comp_lines_state_counts_without_unproven_advice() {
+        let flat: Vec<(&str, f32, f32)> =
+            ["fighter", "swordman", "jiangshi", "ogre", "archer", "monk"].iter().map(|c| (*c, 0.8, 0.1)).collect();
+        let b = Board {
+            teams: "t-comp-flat".to_string(),
+            my_pick: ids(&["fighter", "swordman", "jiangshi"]),
+            enemy_pick: ids(&["ogre", "archer", "monk"]),
+            ..Default::default()
+        };
+        let n = plain_notes(&update(&b, &role_tables(&flat), 7_100_001));
+        let enemy = n.iter().find(|x| x.starts_with("상대 조합 ")).expect("enemy comp line");
+        assert!(enemy.contains("탱커 0") && !enemy.contains("돌진"), "{}", enemy);
+        assert!(!n.iter().any(|x| x.contains("앞라인이 없습니다")), "{:?}", n);
+
+        let b = Board { teams: "t-comp-heal".to_string(), enemy_pick: ids(&["ogre", "priest"]), ..Default::default() };
+        let n = plain_notes(&update(&b, &role_tables(&[("ogre", 1.8, 0.2), ("priest", 0.5, 2.0)]), 7_100_002));
+        let enemy = n.iter().find(|x| x.starts_with("상대 조합 ")).expect("enemy comp line");
+        assert!(enemy.contains("힐러 1") && !enemy.contains("고려하세요"), "{}", enemy);
     }
 }

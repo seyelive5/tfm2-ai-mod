@@ -1465,10 +1465,12 @@ pub fn recommend_lanes(
     };
     let (timing, tip) = if early {
         ("선픽", "플렉스·강픽 우선 (라인 안 들키게)")
-    } else if late {
-        ("후픽", "카운터 우선 (상대 드러난 라인 받아치기)")
     } else {
-        ("중반", "시너지·조합 채우기")
+        // past the first picks the score is strength + lane fit (+ the small comp
+        // guardrail): counters and synergy have no measured effect (pair/lane
+        // counters BT τ≈0, data syn/cnt failed 3 holdouts, tag theory E7a), so the
+        // memo stopped advising them (2026-10-29)
+        (if late { "후픽" } else { "중반" }, "남은 강챔 우선 (카운터·시너지는 검증된 효과 없음)")
     };
     // fearless: depletion management dominates → explain why ★ moves to the thin lane.
     let tip = if fearless { "피어리스: 얕은 라인 먼저 확보 · 플렉스 우선" } else { tip };
