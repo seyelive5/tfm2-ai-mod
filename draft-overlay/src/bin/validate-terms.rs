@@ -1178,7 +1178,9 @@ fn e7b_boot(d: &[f64]) -> (f64, f64, f64) {
     (d.iter().sum::<f64>() / n as f64, boot[25], boot[975])
 }
 
-fn e7b_report(recs: &[E7bRec], patches: &[E7bPatch]) {
+/// `holdout` (E7b-H, `--e7b-holdout=v1,v2`): patches kept out of the verdict sets
+/// and scored together on their own; empty = the pre-registered E7b run
+fn e7b_report(recs: &[E7bRec], patches: &[E7bPatch], holdout: &[String]) {
     let (all_fit, patches) = patches.split_last().expect("the (all) entry");
     println!(
         "\nE7b PATCH-SIZE CARRY (pre-registered) — career replay; a changed champ starts from the previous posterior + a + b·size (P3 κ40, P4 κ80) instead of the shipped reset + count nudge (P2); P(blue) = σ(α + β·score), fit per arm on earlier patches only:"
@@ -1230,6 +1232,10 @@ fn e7b_report(recs: &[E7bRec], patches: &[E7bPatch]) {
     // Δ is signed so that + = the arm beats P2 (lower loss, higher accuracy)
     let line = |name: &str, set: &[usize], verdict: bool| -> [(f64, f64); 5] {
         let mut ci = [(0.0, 0.0); 5];
+        if set.is_empty() {
+            println!("  {} n=0", name);
+            return ci;
+        }
         println!("  {} n={}:", name, set.len());
         let mean = |f: &dyn Fn(usize) -> f64| set.iter().map(|&i| f(i)).sum::<f64>() / set.len().max(1) as f64;
         let mut s_ll = format!("    log loss ×1000  P2 {:.1}", 1000.0 * mean(&|i| ll[i][0]));
@@ -1252,10 +1258,11 @@ fn e7b_report(recs: &[E7bRec], patches: &[E7bPatch]) {
         }
         ci
     };
-    let scored: Vec<usize> = (0..recs.len()).filter(|&i| patches[recs[i].g].fit.is_some()).collect();
+    let held = |g: usize| holdout.iter().any(|h| *h == patches[g].label);
+    let scored: Vec<usize> = (0..recs.len()).filter(|&i| patches[recs[i].g].fit.is_some() && !held(recs[i].g)).collect();
     let primary: Vec<usize> = scored.iter().copied().filter(|&i| recs[i].fresh).collect();
     let names: Vec<&str> =
-        patches.iter().filter(|p| p.fit.is_some()).map(|p| p.label.as_str()).collect();
+        (0..patches.len()).filter(|&g| patches[g].fit.is_some() && !held(g)).map(|g| patches[g].label.as_str()).collect();
     println!(
         "  scored patches (real sizes, ≥ {} earlier points): {} · Δ = P2 − arm for losses, arm − P2 for accuracy (+ = arm better), 95% paired bootstrap",
         E7B_FIT_MIN,
@@ -1294,6 +1301,25 @@ fn e7b_report(recs: &[E7bRec], patches: &[E7bPatch]) {
         word(2),
         pick.map_or("keep the shipped reset + count nudge".to_string(), |j| format!("adopt {}", E7B_ARMS[j]))
     );
+    if !holdout.is_empty() {
+        // E7b-H (pre-registered after E7b): patches whose sizes neither the pilot nor
+        // any E7b fit has seen; the check is the direction of P4's primary Δ
+        let set: Vec<usize> = (0..recs.len())
+            .filter(|&i| patches[recs[i].g].fit.is_some() && held(recs[i].g) && recs[i].fresh)
+            .collect();
+        let mean: f64 = set.iter().map(|&i| 1000.0 * (ll[i][0] - ll[i][2])).sum::<f64>() / set.len().max(1) as f64;
+        line(&format!("HOLDOUT E7b-H — primary over {}", holdout.join(" ")), &set, false);
+        println!(
+            "  HOLDOUT VERDICT (pre-registered: P4 primary Δ > 0 confirms the direction): {}",
+            if set.is_empty() {
+                "NO DATA"
+            } else if mean > 0.0 {
+                "CONFIRMED"
+            } else {
+                "NOT CONFIRMED"
+            }
+        );
+    }
     // post-hoc (added after the first run, descriptive only): the maps the losses used
     let s: Vec<String> = (1..ng)
         .map(|g| format!("{} {:+.3}/{:.2}/{:.2}", patches[g].label, maps[g][0].0, maps[g][0].1, maps[g][2].1))
@@ -1311,6 +1337,12 @@ fn main() {
     let notes_path: Option<String> = raw.iter().find_map(|a| a.strip_prefix("--notes=").map(str::to_string));
     // --solo=<solo_rank_matches.debug.txt> → S2-5 solo-rank power-prior experiment.
     let solo_path: Option<String> = raw.iter().find_map(|a| a.strip_prefix("--solo=").map(str::to_string));
+    // --e7b-holdout=<v1,v2> → E7b-H: score these patches apart from the E7b verdict
+    let e7b_holdout: Vec<String> = raw
+        .iter()
+        .find_map(|a| a.strip_prefix("--e7b-holdout="))
+        .map(|s| s.split(',').map(str::to_string).collect())
+        .unwrap_or_default();
     let args: Vec<String> = raw.into_iter().filter(|a| !a.starts_with("--")).collect();
     if args.len() < 2 {
         eprintln!("usage: validate-terms [--legacy] [--notes=patch_notes_dump.txt] <match_replays.debug.txt> [draft_weights.tsv] [champion_patch_statistics.tsv] [ai_intrinsic.tsv]");
@@ -2652,7 +2684,7 @@ fn main() {
         if let Some(p) = notes_path.as_deref() {
             let sizes = e7b_sizes(&std::fs::read_to_string(p).unwrap_or_default());
             let (recs, patches) = e7b_records(&matches, &groups, &vsorted, &taxon, &notes, &sizes);
-            e7b_report(&recs, &patches);
+            e7b_report(&recs, &patches, &e7b_holdout);
         }
     }
     println!("\n>> A term EARNS engine weight only if it lifts base_lane beyond ~±{:.1}%p noise.", 50.0 / n.sqrt());
