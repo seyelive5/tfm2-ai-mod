@@ -239,12 +239,10 @@ pub struct Tables {
     /// team id -> display name (from `TEAM` rows), sorted by name for the picker.
     pub team_names: Vec<(u32, String)>,
     /// champs buffed/nerfed in the CURRENT patch (from `CHG` rows): champ ->
-    /// '+' buff / '-' nerf / '~' mixed-rework. Their winrate stats were reset
-    /// (stale prev-patch blend dropped), so the UI tags them ▲/▼/◆.
+    /// '+' buff / '-' nerf / '~' mixed-rework, tagged ▲/▼/◆ in the UI. The
+    /// producer already folded the patch into their C/CP rows (E7b, v4.5.0: the
+    /// previous version's posterior moved by the patch), so no score term reads it.
     chg: std::collections::HashMap<String, char>,
-    /// authored (buffs, nerfs) change counts per changed champ (CHG row fields 4-5,
-    /// authored path only) — drives the S2-2 count-scaled nudge sizing.
-    chg_n: std::collections::HashMap<String, (u32, u32)>,
 }
 
 /// Baked fallback table (compiled-in draft_weights.tsv).
@@ -282,7 +280,6 @@ pub fn parse_tables_from_str(tsv: &str) -> Tables {
         lane_dom: HashMap::new(),
         team_names: Vec::new(),
         chg: HashMap::new(),
-        chg_n: HashMap::new(),
     };
     for line in tsv.lines() {
         if line.starts_with('#') || line.is_empty() {
@@ -355,17 +352,12 @@ pub fn parse_tables_from_str(tsv: &str) -> Tables {
                 t.pos_primary.insert(f[1].into(), prim.min(4));
                 t.pos_play.insert(f[1].into(), plays);
             }
-            // CHG<TAB><champ><TAB><dir>[<TAB><buffs><TAB><nerfs>] — champ changed in
-            // the current patch ('+' buff / '-' nerf / '~' mixed); stats reset. The
-            // optional counts (authored path only) drive the S2-2 count-scaled nudge.
+            // CHG<TAB><champ><TAB><dir> — champ changed in the current patch ('+'
+            // buff / '-' nerf / '~' mixed). Fields after the dir (the old S2-2
+            // counts) are ignored: the patch shift now lives in the C rows' prior.
             "CHG" if f.len() >= 2 => {
                 let d = f.get(2).and_then(|x| x.chars().next()).unwrap_or('~');
                 t.chg.insert(f[1].into(), d);
-                if let (Some(b), Some(nrf)) =
-                    (f.get(3).and_then(|x| x.parse().ok()), f.get(4).and_then(|x| x.parse().ok()))
-                {
-                    t.chg_n.insert(f[1].into(), (b, nrf));
-                }
             }
             // RP<TAB><champ><TAB><tankRatio><TAB><healRatio> — data role signal.
             "RP" if f.len() >= 4 => {
@@ -455,37 +447,9 @@ impl Tables {
     }
     /// any champ changed in the current patch? (drives the UI legend line)
     pub fn any_chg(&self) -> bool { !self.chg.is_empty() }
-    /// patch-direction nudge: a just-changed champ has its stats RESET, so its
-    /// delta reads ~0 and its tier is blank — until ~30 fresh games the diff
-    /// DIRECTION (▲ buff / ▼ nerf) is the best available estimate, fading with
-    /// fresh sample size. S2-2 (2026-07-05): COUNT-SCALED — T-nudge over the 7
-    /// authored notes measured a realized shift of ≈+0.0125 delta per net change
-    /// (r +0.66, n 46), so a 5-line buff deserves more than a 1-line tweak:
-    /// uniform-direction 0.01+0.005·min(n,4) (missing counts → n=2 reproduces the
-    /// legacy ±0.02); mixed '~' nudges 0.02·(b−n′)/n·min(1,n/4) instead of 0 (a
-    /// 5buff/1nerf rework ⇒ +0.0133). Deliberately sized below the measured slope
-    /// — still a prior, not a data term.
-    fn chg_nudge(&self, c: &str) -> f32 {
-        let (b, nrf) = self.chg_n.get(c).copied().unwrap_or((0, 0));
-        let n = b + nrf;
-        let uni = 0.01 + 0.005 * (if n == 0 { 2 } else { n.min(4) }) as f32;
-        let d = match self.chg.get(c) {
-            Some('+') => uni,
-            Some('-') => -uni,
-            Some('~') if n > 0 => {
-                0.02 * (b as f32 - nrf as f32) / n as f32 * ((n as f32 / 4.0).min(1.0))
-            }
-            _ => return 0.0,
-        };
-        if d == 0.0 {
-            return 0.0; // balanced '~' (b == n′) has no direction
-        }
-        let g = self.games(c);
-        if g == u32::MAX {
-            return d; // changed champ with no fresh games yet → full nudge
-        }
-        d * (1.0 - (g as f32 / 30.0).min(1.0)).max(0.0)
-    }
+    // (chg_nudge removed 2026-10-29, v4.5.0: E7b moved the patch shift into the
+    // changed champ's prior — tfm2_db_export recommender::patch_current, with the
+    // S2-2 count nudge kept there as `count_shift` for notes without numbers.)
     /// Lane-specific winrate delta: the (champ, lane) cell if present, else the
     /// champ-level delta SHRUNK HARD toward neutral. A POS-playable lane with no
     /// CP cell means ZERO games there in the current patch window — valuing it at
@@ -936,11 +900,12 @@ impl Tables {
         let theory = 1.0 - data;
 
         // split so the commentary can attribute honestly (2026-07-05 review F10): the
-        // measured strength vs the domain/cold-start priors (patch nudge + AI seed).
-        // At cold start a champ can top the list purely on the 45.4% AI prior — that
-        // must not read as "강챔" (strong champ).
+        // measured strength vs the cold-start AI seed. At cold start a champ can top
+        // the list purely on the 45.4% AI prior — that must not read as "강챔"
+        // (strong champ). The patch nudge left this part in v4.5.0 (E7b: the patch
+        // shift is in a changed champ's delta now).
         let strength = power_ramp * self.delta_for(cand, lane);
-        let prior_part = self.chg_nudge(cand) + self.ai_prior_term(cand);
+        let prior_part = self.ai_prior_term(cand);
         let base = strength + prior_part;
         let mut syn = 0.0;
         for a in allies {
@@ -997,7 +962,7 @@ impl Tables {
         // `("디나이", deny)` to the dominant list here (uncommenting the feed alone
         // silently leaves the pick-side term dropped). See the ban-side twin below.
         let total = base + syn + cnt + comp + fam - dup + steal;
-        (total, dominant(&[("강챔", strength), ("패치/사전", prior_part), ("시너지", syn), ("카운터", cnt), ("조합", comp), ("숙련", fam), ("저격픽", steal)]))
+        (total, dominant(&[("강챔", strength), ("AI 점수", prior_part), ("시너지", syn), ("카운터", cnt), ("조합", comp), ("숙련", fam), ("저격픽", steal)]))
     }
 
     /// BAN desirability. DATA terms mirror tfm2_draft_ai::score_ban; at cold-start
@@ -1035,7 +1000,7 @@ impl Tables {
             2 => 1.1,
             _ => 1.0,
         };
-        let base = base_mult * self.delta(cand) + self.chg_nudge(cand) + self.ai_prior_term(cand);
+        let base = base_mult * self.delta(cand) + self.ai_prior_term(cand);
         let mut cnt = 0.0;
         for a in allies {
             cnt += data * W_BAN_CNT * self.cnt(cand, a);

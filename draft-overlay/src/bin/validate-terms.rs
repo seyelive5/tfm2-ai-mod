@@ -893,11 +893,12 @@ fn e7_report(fresh: &[E7Rec], career: &[E7Rec]) {
 }
 
 // ---------- E7b (2026-10-29): changed champions carried by patch size ----------
-// The shipped state drops a changed champ's previous patch and adds a count
+// The pre-4.5.0 product drops a changed champ's previous patch and adds a count
 // nudge (P2). E7b starts it from the previous posterior moved by a + b·size
 // instead (P3 κ40, P4 κ80), with a and b fit on earlier patches only.
 // Pre-registered in docs/research/2026-10-28-advanced-directions.md (E7b)
-// before the first run.
+// before the first run. v4.5.0 ships P4; the prod_* replicas above still model
+// changed champs the P2 way.
 const E7B_FIT_MIN: usize = 8; // fewer earlier points → the shipped nudge stands in for the shift
 const E7B_FIT_GAMES: f64 = 10.0; // a fit point needs this many games in both patches
 const E7B_FRESH: f64 = 30.0; // primary: a changed champ under this many current games

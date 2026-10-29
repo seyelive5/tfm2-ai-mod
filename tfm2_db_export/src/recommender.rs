@@ -14,7 +14,7 @@
 pub mod engine;
 
 use engine::{parse_tables_from_str, recommend, recommend_lanes, DraftState, Tables, CHAMPS};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 // ───────────────────────── tables (stats → engine) ─────────────────────────
@@ -30,6 +30,32 @@ const KAPPA_LANE: f64 = 20.0;
 /// per-CHAMP current-patch matches at which its previous-patch blend fades out
 /// (the old GLOBAL total/200 gate starved low-pickrate champs of their history).
 const CONF_CHAMP: f64 = 40.0;
+// E7b (2026-10-29, v4.5.0): a champ CHANGED this patch starts from its posterior
+// in the version it changed from, moved by the patch: μ = clamp(post + CARRY_A +
+// CARRY_B·size, 0.2, 0.8) at prior strength KAPPA_CARRY. It replaces the reset +
+// count nudge: career replay, log loss ×1000 on matches with a changed champ
+// under 30 current games +3.1 [+0.4, +6.0] (patches 1.1–3.1), holdout 4.0/4.1
+// +4.8 [−1.4, +10.3]. a, b = OLS over all 62 points of the nine real-size
+// patches (analysis/harness-e7b-holdout.txt, "product fit").
+const CARRY_A: f64 = -0.0041;
+const CARRY_B: f64 = 0.00072;
+const KAPPA_CARRY: f64 = 80.0;
+
+/// The carry's shift when the note has no numeric values: the S2-2 count nudge
+/// (2026-07-05; T-nudge measured ≈+0.0125 delta per net change, r +0.66, n 46).
+/// Uniform direction 0.01 + 0.005·min(n, 4) (no counts → n = 2, the legacy
+/// ±0.02); mixed '~' 0.02·(b − n′)/n·min(1, n/4). It was a score term faded over
+/// 30 fresh games until v4.5.0; as a prior shift the posterior does the fading.
+fn count_shift(dir: char, buffs: u32, nerfs: u32) -> f64 {
+    let n = buffs + nerfs;
+    let uni = 0.01 + 0.005 * (if n == 0 { 2 } else { n.min(4) }) as f64;
+    match dir {
+        '+' => uni,
+        '-' => -uni,
+        '~' if n > 0 => 0.02 * (buffs as f64 - nerfs as f64) / n as f64 * (n as f64 / 4.0).min(1.0),
+        _ => 0.0,
+    }
+}
 
 fn beta_post(w: f64, m: f64, prior_mean: f64, kappa: f64) -> (f64, f64) {
     let pm = prior_mean.clamp(0.001, 0.999);
@@ -62,9 +88,10 @@ fn lane_idx(p: &str) -> Option<u8> {
 }
 
 /// C/CP rows + total matches from the patch-stats TSV (latest patch ×1 +
-/// previous ×fading; champs CHANGED this patch skip every row at/below the
-/// diff anchor — they restart from neutral).
-fn patch_current(patch: &str, changed: &HashSet<String>, chg_prev: Option<&str>) -> (Vec<String>, Vec<String>, u32) {
+/// previous ×fading). Champs CHANGED this patch (`carry`: champ → prior shift)
+/// skip every row at/below the diff anchor and start from their posterior in the
+/// version they changed from, moved by the shift (E7b).
+fn patch_current(patch: &str, carry: &HashMap<String, f64>, chg_prev: Option<&str>) -> (Vec<String>, Vec<String>, u32) {
     let rows: Vec<Vec<&str>> = patch
         .lines()
         .skip(1)
@@ -90,8 +117,26 @@ fn patch_current(patch: &str, changed: &HashSet<String>, chg_prev: Option<&str>)
     }
     let mut by: BTreeMap<String, (f64, f64)> = BTreeMap::new();
     let mut byp: BTreeMap<(String, u8), (f64, f64)> = BTreeMap::new();
+    // a changed champ's prior comes from the version it changed from, that
+    // version alone (as in the measured replay); its lanes there keep a cell
+    let base = chg_prev.or(prev).map(vkey);
+    let mut base_c: BTreeMap<&str, (f64, f64)> = BTreeMap::new();
+    let mut base_lanes: BTreeSet<(&str, u8)> = BTreeSet::new();
     for f in &rows {
-        if changed.contains(f[2]) {
+        if !carry.contains_key(f[2]) || base.as_ref() != Some(&vkey(f[0])) {
+            continue;
+        }
+        let w: f64 = f[5].parse().unwrap_or(0.0);
+        let m: f64 = f[6].parse().unwrap_or(0.0);
+        let e = base_c.entry(f[2]).or_insert((0.0, 0.0));
+        e.0 += w;
+        e.1 += m;
+        if let Some(li) = lane_idx(f[3]).filter(|_| m > 0.0) {
+            base_lanes.insert((f[2], li));
+        }
+    }
+    for f in &rows {
+        if carry.contains_key(f[2]) {
             let stale = match chg_prev {
                 Some(pv) => vkey(f[0]) <= vkey(pv),
                 None => Some(f[0]) == prev,
@@ -122,29 +167,51 @@ fn patch_current(patch: &str, changed: &HashSet<String>, chg_prev: Option<&str>)
             pe.1 += wgt * m;
         }
     }
-    // C rows: posterior MEAN − 0.5 (κ-shrunk). See the note above beta_post.
-    let c_rows = by
+    // champ posteriors (mean, sd, current games). C rows: posterior MEAN − 0.5
+    // (κ-shrunk; see the note above beta_post). A changed champ gets a row even
+    // with no game yet this patch: its carried prior is the estimate.
+    let mut post: BTreeMap<&str, (f64, f64, f64)> = by
         .iter()
+        .filter(|(c, _)| !carry.contains_key(c.as_str()))
         .map(|(c, (w, m))| {
             let (mean, sd) = beta_post(*w, *m, 0.5, KAPPA_CHAMP);
-            // 5th field = posterior sd (honest uncertainty) → engine's tier "?" gate.
-            format!("C\t{}\t{:.3}\t{}\t{:.4}", c, mean - 0.5, m.round() as u32, sd)
+            (c.as_str(), (mean, sd, *m))
         })
         .collect();
-    let champ_mean: BTreeMap<String, f64> =
-        by.iter().map(|(c, (w, m))| (c.clone(), beta_post(*w, *m, 0.5, KAPPA_CHAMP).0)).collect();
+    for (c, shift) in carry {
+        let (bw, bm) = base_c.get(c.as_str()).copied().unwrap_or((0.0, 0.0));
+        let mu = (beta_post(bw, bm, 0.5, KAPPA_CHAMP).0 + shift).clamp(0.2, 0.8);
+        let (w, m) = by.get(c).copied().unwrap_or((0.0, 0.0));
+        let (mean, sd) = beta_post(w, m, mu, KAPPA_CARRY);
+        post.insert(c.as_str(), (mean, sd, m));
+    }
+    // 5th field = posterior sd (honest uncertainty) → engine's tier "?" gate.
+    let c_rows = post
+        .iter()
+        .map(|(c, (mean, sd, m))| format!("C\t{}\t{:.3}\t{}\t{:.4}", c, mean - 0.5, m.round() as u32, sd))
+        .collect();
     // CP rows: posterior MEAN − 0.5 with the champ's own mean as the prior — a
     // thin lane cell now reads ≈ the champ's strength instead of champ−1sd (the
     // old z·sd artifact made a 1-game lane score BELOW a 0-game lane).
-    let cp_rows = byp
+    let mut cp_rows: Vec<String> = byp
         .iter()
         .filter(|(_, (_, m))| *m > 0.0)
         .map(|((c, li), (w, m))| {
-            let prior = champ_mean.get(c).copied().unwrap_or(0.5);
+            let prior = post.get(c.as_str()).map_or(0.5, |p| p.0);
             let (mean, sd) = beta_post(*w, *m, prior, KAPPA_LANE);
             format!("CP\t{}\t{}\t{:.3}\t{}\t{:.4}", c, li, mean - 0.5, m.round() as u32, sd)
         })
         .collect();
+    // E7b kept lanes: a lane the changed champ played in the version it changed
+    // from, with no game there yet this patch, reads its carried value (0 games)
+    for &(c, li) in &base_lanes {
+        if byp.get(&(c.to_string(), li)).map_or(false, |p| p.1 > 0.0) {
+            continue;
+        }
+        if let Some((mean, sd, _)) = post.get(c) {
+            cp_rows.push(format!("CP\t{}\t{}\t{:.3}\t0\t{:.4}", c, li, mean - 0.5, sd));
+        }
+    }
     // effective evidence: the tables blend ~prev_w×prev matches too — report that,
     // so the engine's theory fade matches the data actually loaded.
     let prev_total: u32 =
@@ -235,7 +302,7 @@ fn compute_roles(patch: &str, reworked: &HashSet<String>, anchor: Option<&str>) 
 /// older ×0.25) — season-wide enough that a fresh patch's handful of games can't
 /// swing W_BAN_META, but a champ nerfed into the ground no longer keeps its
 /// season-high banrate all year. Changed champs additionally drop rows at/below
-/// the diff anchor (same reset as the C rows).
+/// the diff anchor (same stale-row drop as the C rows).
 fn compute_banrate(patch: &str, changed: &HashSet<String>, chg_prev: Option<&str>) -> Vec<String> {
     let rows: Vec<Vec<&str>> = patch
         .lines()
@@ -343,10 +410,13 @@ pub struct ChgInfo {
     pub anchor: Option<String>,
     /// (champ, dir): '+' buff '-' nerf '~' mixed 'R' rework
     pub dirs: Vec<(String, char)>,
-    /// (champ, buffs, nerfs) authored change counts — S2-2 count-scaled nudge.
-    /// Empty on the defs-diff fallback (engine treats missing counts as n=2,
-    /// which reproduces the legacy uniform ±0.02).
+    /// (champ, buffs, nerfs) authored change counts — the carry's shift when the
+    /// note has no sizes (`count_shift`; missing counts → n = 2, the legacy ±0.02).
     pub counts: Vec<(String, u32, u32)>,
+    /// (champ, signed size) — Σ±min(100, |after − pre|/|pre|·100) over its change
+    /// lines (E7b). Empty when the note has no numeric values: the count nudge
+    /// then stands in for the size shift.
+    pub sizes: Vec<(String, f64)>,
 }
 
 /// Build the engine Tables from the in-memory stats TSV + live pool + patch
@@ -363,7 +433,24 @@ pub fn build_tables(patch_tsv: &str, pool: &[String], chg: &ChgInfo, replay_rows
         .filter(|l| l.starts_with("T\t"))
         .map(|s| s.to_string())
         .collect();
-    let (c_rows, cp_rows, total) = patch_current(patch_tsv, &changed, anchor);
+    // E7b prior shift per changed champ: the size fit, or the count nudge when
+    // the note has no numeric values
+    let cnt_of: HashMap<&str, (u32, u32)> = chg.counts.iter().map(|(c, b, n)| (c.as_str(), (*b, *n))).collect();
+    let size_of: HashMap<&str, f64> = chg.sizes.iter().map(|(c, s)| (c.as_str(), *s)).collect();
+    let carry: HashMap<String, f64> = chg
+        .dirs
+        .iter()
+        .map(|(c, d)| {
+            let shift = if chg.sizes.is_empty() {
+                let (b, n) = cnt_of.get(c.as_str()).copied().unwrap_or((0, 0));
+                count_shift(*d, b, n)
+            } else {
+                CARRY_A + CARRY_B * size_of.get(c.as_str()).copied().unwrap_or(0.0)
+            };
+            (c.clone(), shift)
+        })
+        .collect();
+    let (c_rows, cp_rows, total) = patch_current(patch_tsv, &carry, anchor);
     out.extend(c_rows);
     out.extend(cp_rows);
     // POS: live data, falling back to the BAKED rows when stats are empty (fresh
@@ -389,14 +476,8 @@ pub fn build_tables(patch_tsv: &str, pool: &[String], chg: &ChgInfo, replay_rows
     out.extend(compute_roles(patch_tsv, &reworked, anchor));
     out.extend(compute_banrate(patch_tsv, &changed, anchor));
     out.extend(compute_lane_dom(patch_tsv, &changed, anchor));
-    // CHG rows: 5-field when authored counts exist (S2-2 count-scaled nudge);
-    // 3-field otherwise (engine falls back to the legacy uniform ±0.02 size).
-    let cnt_of: HashMap<&str, (u32, u32)> =
-        chg.counts.iter().map(|(c, b, n)| (c.as_str(), (*b, *n))).collect();
-    out.extend(chg.dirs.iter().map(|(c, d)| match cnt_of.get(c.as_str()) {
-        Some((b, n)) => format!("CHG\t{}\t{}\t{}\t{}", c, d, b, n),
-        None => format!("CHG\t{}\t{}", c, d),
-    }));
+    // CHG rows: the ▲▼◆ marks only — the patch shift is in the C rows' prior (E7b)
+    out.extend(chg.dirs.iter().map(|(c, d)| format!("CHG\t{}\t{}", c, d)));
     if !replay_rows.is_empty() {
         out.push(replay_rows.trim_end().to_string());
     }
@@ -886,7 +967,7 @@ pub fn update(board: &Board, tables: &Tables, tables_gen: usize) -> Arc<Output> 
         .collect();
     if !changed_list.is_empty() {
         parts.push(format!(
-            "이번 패치 변경: {} — 변경 챔프는 통계가 리셋되어 티어가 비어있을 수 있습니다.",
+            "이번 패치 변경: {} — 변경 챔프는 지난 패치 성적에 변경 폭을 반영해 출발합니다.",
             changed_list.join(" ")
         ));
     }
@@ -1183,5 +1264,109 @@ mod tests {
         let n = plain_notes(&update(&b, &role_tables(&[("ogre", 1.8, 0.2), ("priest", 0.5, 2.0)]), 7_100_002));
         let enemy = n.iter().find(|x| x.starts_with("상대 조합 ")).expect("enemy comp line");
         assert!(enemy.contains("힐러 1") && !enemy.contains("고려하세요"), "{}", enemy);
+    }
+
+    /// stats TSV from (version, champ, lane, wins, games)
+    fn stats(rows: &[(&str, &str, &str, u32, u32)]) -> String {
+        let mut s = String::from("version\ttotal_match\tchampion\tposition\tbans\twins\tmatches\n");
+        for (v, c, p, w, m) in rows {
+            s.push_str(&format!("{}\t100\t{}\t{}\t0\t{}\t{}\n", v, c, p, w, m));
+        }
+        s
+    }
+
+    /// archer won 36 of 60 at Bottom last patch (κ40 posterior 0.56) and has no
+    /// game yet in this one; monk keeps the current patch populated
+    fn carry_tables(archer_now: Option<(u32, u32)>, chg: ChgInfo) -> engine::Tables {
+        let mut rows = vec![
+            ("2026.0.0", "archer", "Bottom", 36, 60),
+            ("2026.0.0", "monk", "Support", 30, 60),
+            ("2026.1.0", "monk", "Support", 5, 10),
+        ];
+        if let Some((w, m)) = archer_now {
+            rows.push(("2026.1.0", "archer", "Bottom", w, m));
+        }
+        build_tables(&stats(&rows), &[], &chg, "")
+    }
+
+    fn archer_changed(dir: char, counts: (u32, u32), size: Option<f64>) -> ChgInfo {
+        ChgInfo {
+            anchor: Some("2026.0.0".to_string()),
+            dirs: vec![("archer".to_string(), dir)],
+            counts: vec![("archer".to_string(), counts.0, counts.1)],
+            sizes: size.map(|s| vec![("archer".to_string(), s)]).unwrap_or_default(),
+        }
+    }
+
+    /// E7b (v4.5.0): a changed champ starts from last patch's posterior moved by
+    /// the patch size (0.56 − 0.0041 − 0.00072·40 = 0.527 → A), instead of
+    /// restarting blank. The lane it played last patch keeps that value; one it
+    /// never played gets no cell. With no game yet the letter is unsure.
+    #[test]
+    fn changed_champ_keeps_a_tier_from_its_last_patch() {
+        let t = carry_tables(None, archer_changed('-', (0, 2), Some(-40.0)));
+        assert_eq!(t.tier_display("archer", None), "A?");
+        assert_eq!(t.tier_display("archer", Some(3)), "A?");
+        assert_eq!(t.tier_of("archer", Some(0)), "");
+    }
+
+    /// the size sets how far the carried strength moves: −100 → 0.484 (B),
+    /// +100 → 0.628 (S)
+    #[test]
+    fn patch_size_moves_the_carried_strength() {
+        assert_eq!(carry_tables(None, archer_changed('-', (0, 5), Some(-100.0))).tier_of("archer", None), "B");
+        assert_eq!(carry_tables(None, archer_changed('+', (5, 0), Some(100.0))).tier_of("archer", None), "S");
+    }
+
+    /// a note without numeric values moves the carry by the count nudge instead:
+    /// a four-line buff on a 0.50 champ → 0.53 (A); reading it as size 0 would
+    /// give 0.496 (B)
+    #[test]
+    fn note_without_sizes_moves_the_carry_by_the_count_nudge() {
+        let rows = [("2026.0.0", "archer", "Bottom", 20, 40), ("2026.1.0", "monk", "Support", 5, 10)];
+        let t = build_tables(&stats(&rows), &[], &archer_changed('+', (4, 0), None), "");
+        assert_eq!(t.tier_of("archer", None), "A");
+    }
+
+    /// this patch's games pull toward the data at prior strength 80: 4 wins in 20
+    /// on the 0.527 carry → 0.462 (C); the old κ40 restart read 0.40 (D)
+    #[test]
+    fn current_games_update_the_carry_at_strength_80() {
+        let t = carry_tables(Some((4, 20)), archer_changed('-', (0, 2), Some(-40.0)));
+        assert_eq!(t.tier_of("archer", None), "C");
+    }
+
+    /// the patch shift lives in the changed champ's prior now, so the ▲▼ mark
+    /// itself adds nothing to a pick or ban score
+    #[test]
+    fn patch_marks_add_nothing_to_scores() {
+        let t = engine::parse_tables_from_str(
+            "C\tarcher\t0.030\t10\t0.03\nC\tmonk\t0.030\t10\t0.03\nC\togre\t0.030\t10\t0.03\n\
+             CHG\tarcher\t+\t4\t0\nCHG\tmonk\t-\t0\t4",
+        );
+        for c in ["archer", "monk"] {
+            assert_eq!(t.score_pick(c, &[], &[]).0, t.score_pick("ogre", &[], &[]).0, "{}", c);
+            assert_eq!(t.score_ban(c, &[], &[], 0, 0, None).0, t.score_ban("ogre", &[], &[], 0, 0, None).0, "{}", c);
+        }
+    }
+
+    /// without the patch nudge the prior part is the game AI's own valuation
+    /// alone, so its reason tag names that (it read "패치/사전")
+    #[test]
+    fn ai_seed_reason_tag_names_the_ai_score() {
+        let mut t = engine::parse_tables_from_str("POS\tvampire\t0\t0");
+        t.set_ai_prior([("vampire".to_string(), 0.05)].into_iter().collect());
+        assert_eq!(t.score_pick("vampire", &[], &[]).1, "AI 점수");
+    }
+
+    /// changed champs no longer restart blank, so the patch line must not say
+    /// their stats were reset
+    #[test]
+    fn patch_line_says_changed_champs_carry_their_last_patch() {
+        let chg = ChgInfo { dirs: vec![("archer".to_string(), '+')], ..Default::default() };
+        let b = Board { teams: "t-patch-line".to_string(), ..Default::default() };
+        let n = plain_notes(&update(&b, &build_tables("", &[], &chg, ""), 7_100_003));
+        let line = n.iter().find(|x| x.starts_with("이번 패치 변경: ")).expect("patch line");
+        assert!(line.contains("지난 패치 성적") && !line.contains("리셋"), "{}", line);
     }
 }

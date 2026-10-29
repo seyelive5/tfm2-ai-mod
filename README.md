@@ -12,7 +12,7 @@
 > draws tier tags, pick/ban highlights and two game-style recommendation cards onto the game's own
 > ban/pick screen — no external window, no launcher.
 
-> **상태 (2026-10-29): v4.4.1 — 게임 카드 UI(인게임 확인) + 상대 다음 수 후보(F2·버튼 인게임 확인) + 근거 없던 태그 이론과 조언 문구 정리**
+> **상태 (2026-10-29): v4.5.0 — 게임 카드 UI(인게임 확인) + 상대 다음 수 후보(F2·버튼 인게임 확인) + 근거 없던 태그 이론과 조언 문구 정리 + 패치 변경 챔피언의 크기 이월**
 > (게임 0.7.0 확인, 클래식 UI. 새 UI 스타일은 아직 확인하지 않았습니다).
 > 게임 0.6부터 게임사가 classic 모드 SDK 지원을 끝내서, 게임 0.6.5+의 **stable 모드 API**로 다시 작성했습니다.
 > 카드 표시, 해설 글자 색, Tab 숨기기를 모두 게임에서 확인했습니다.
@@ -35,9 +35,10 @@
     근거: [고도화 검토](docs/research/2026-10-28-advanced-directions.md) E1b·E1c.
 - **게임 화면은 건드리지 않음** — 표시는 전부 모드가 만든 노드이고 클릭은 게임으로 그대로 통과합니다.
   LT AI Coach 등 다른 모드와 함께 켤 수 있습니다.
-- **점수 모델** (v3.0과 같음. v4.4.0에서 근거 없던 콜드스타트 태그 이론만 뺌)
+- **점수 모델** (v3.0 기반. v4.4.0에서 근거 없던 콜드스타트 태그 이론을 빼고, v4.5.0에서 패치 변경 챔피언의 출발점을 바꿈)
   - 현재 패치 위주의 챔피언 승률(베타 사후평균 + 수축), 이전 패치는 감쇠 반영 — 세이브의 경기 기록에서 직접 집계
-  - 패치 노트 버프/너프 — 게임 자체 `PatchNote`의 `is_buff`를 직접 읽어 반영
+  - 패치 노트 — 게임 자체 `PatchNote`를 직접 읽습니다. 바뀐 챔피언은 기록을 버리지 않고 지난 패치 성적에서 출발해,
+    변경 전·후 값으로 잰 변경 폭만큼 옮겨집니다(이번 패치 경기가 쌓이면 그 기록 쪽으로). ▲▼는 바뀐 방향 표시입니다.
   - 선수의 챔피언 숙련(약하게), 챔피언 라인 배정, 선픽 감지·픽 순서별 밴 가중, 피어리스 대응
 
 ## 검증
@@ -54,7 +55,7 @@
 
 | 폴더 | 내용 |
 |---|---|
-| `tfm2_db_export/` | **제품** — 추천기 모드 본체(v4.4, stable API): `db`(경기 기록 → 통계) · `board`(밴픽 읽기) · `recommender` · `prior`(게임 AI 사전) · `foresee`(상대 다음 수 후보) · `ui`(게임 카드·칸 태그) · `markup`(게임 글자 색 문법) · `diag`·`probe`(진단 파일·덤프) |
+| `tfm2_db_export/` | **제품** — 추천기 모드 본체(v4.5, stable API): `db`(경기 기록 → 통계) · `board`(밴픽 읽기) · `recommender` · `prior`(게임 AI 사전) · `foresee`(상대 다음 수 후보) · `ui`(게임 카드·칸 태그) · `markup`(게임 글자 색 문법) · `diag`·`probe`(진단 파일·덤프) |
 | `draft-overlay/` | 점수 엔진 `src/engine.rs`(`tfm2_db_export`가 `#[path]`로 공유) + 검증 하네스(`src/bin/validate-terms.rs`, `backtest.rs`) + 구 hudhook 오버레이 |
 | `draft-weights-gen/` | 구 가중치 생성기(구 오버레이용) |
 | `tfm2_bp_reader/` | 라이브 밴픽 읽기 프로토타입(classic) — `tfm2_db_export`에 통합됨 |

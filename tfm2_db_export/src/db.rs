@@ -68,7 +68,8 @@ struct Replay {
     red: Vec<Part>,
 }
 
-type Notes = BTreeMap<Vec<u32>, (String, HashMap<String, (u32, u32)>)>;
+/// version key → (version, champ → (buffs, nerfs, signed size), the note has numeric values)
+type Notes = BTreeMap<Vec<u32>, (String, HashMap<String, (u32, u32, f64)>, bool)>;
 
 #[derive(Default)]
 struct Db {
@@ -443,13 +444,23 @@ fn build(ctx: &StableClient, db: &mut Db) {
     db.built = Some(db.replays.len());
     db.builds += 1;
     db.build_ms = t0.elapsed().as_millis();
+    // sized=false: the note had no numeric values → the count nudge shifts the carry
+    let size_of: HashMap<&str, f64> = chg.sizes.iter().map(|(c, s)| (c.as_str(), *s)).collect();
     db.chg_line = format!(
-        "src={} anchor={} pool={} changed={} [{}]",
+        "src={} anchor={} pool={} changed={} sized={} [{}]",
         src,
         chg.anchor.as_deref().unwrap_or("-"),
         pool.len(),
         chg.dirs.len(),
-        chg.dirs.iter().map(|(c, d)| format!("{}{}", c, d)).collect::<Vec<_>>().join(" ")
+        !chg.sizes.is_empty(),
+        chg.dirs
+            .iter()
+            .map(|(c, d)| match size_of.get(c.as_str()) {
+                Some(s) => format!("{}{}:{:+.0}", c, d, s),
+                None => format!("{}{}", c, d),
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
     );
     if diag::debug_dumps() {
         let dir = format!("{}/probe", diag::base());
@@ -461,9 +472,14 @@ fn build(ctx: &StableClient, db: &mut Db) {
 
 // ───────────────────── authored patch changes (PatchNote news) ─────────────────────
 
-/// `news` → PatchNote champion changes per version (buffs, nerfs). Notes are
-/// single-instance per version (v3.0 dump: 120 teams, 7 notes / 7 versions), so
-/// the first non-empty copy of a version wins. Returns how many notes were seen.
+/// `news` → PatchNote champion changes per version (buffs, nerfs, signed size).
+/// Notes are single-instance per version (v3.0 dump: 120 teams, 7 notes / 7
+/// versions), so the first non-empty copy of a version wins. Returns how many
+/// notes were seen.
+///
+/// Size (E7b): each change line adds ±min(100, |after − pre|/|pre|·100) by its
+/// own direction — the harness's measure, parsed the same way (values are
+/// numbers with an optional '%'; a zero `pre` adds nothing).
 fn notes_into(news: &JsonVal, by_ver: &mut Notes) -> usize {
     let mut seen = 0;
     for item in news.values() {
@@ -474,7 +490,7 @@ fn notes_into(news: &JsonVal, by_ver: &mut Notes) -> usize {
             continue;
         };
         seen += 1;
-        let entry = by_ver.entry(vkey(ver)).or_insert_with(|| (ver.to_string(), HashMap::new()));
+        let entry = by_ver.entry(vkey(ver)).or_insert_with(|| (ver.to_string(), HashMap::new(), false));
         if !entry.1.is_empty() {
             continue;
         }
@@ -483,12 +499,23 @@ fn notes_into(news: &JsonVal, by_ver: &mut Notes) -> usize {
             if changes.is_empty() {
                 continue; // an empty change list would misclassify as '~' (spurious ◆ + stats reset)
             }
-            let e = entry.1.entry(champ).or_insert((0, 0));
+            let e = entry.1.entry(champ).or_insert((0, 0, 0.0));
             for c in changes {
-                if c.get("is_buff").and_then(|b| b.as_bool()).unwrap_or(false) {
+                let buff = c.get("is_buff").and_then(|b| b.as_bool()).unwrap_or(false);
+                if buff {
                     e.0 += 1;
                 } else {
                     e.1 += 1;
+                }
+                let num = |k: &str| {
+                    c.get(k).and_then(|v| v.as_str()).and_then(|s| s.trim().trim_end_matches('%').parse::<f64>().ok())
+                };
+                if let (Some(p), Some(a)) = (num("pre_value"), num("after_value")) {
+                    entry.2 = true;
+                    if p.abs() > 1e-9 {
+                        let rel = (((a - p) / p).abs() * 100.0).min(100.0);
+                        e.2 += if buff { rel } else { -rel };
+                    }
                 }
             }
         }
@@ -500,7 +527,7 @@ fn notes_into(news: &JsonVal, by_ver: &mut Notes) -> usize {
 /// the last PLAYED version before it; None = currency guard (a newer version is
 /// already being played than the newest note).
 fn chg_from_notes(by_ver: &Notes, played: &BTreeMap<Vec<u32>, String>) -> Option<ChgInfo> {
-    let (lk, (_, latest)) = by_ver.iter().next_back()?;
+    let (lk, (_, latest, sized)) = by_ver.iter().next_back()?;
     if let Some((smax, _)) = played.iter().next_back() {
         if smax > lk {
             return None;
@@ -509,7 +536,7 @@ fn chg_from_notes(by_ver: &Notes, played: &BTreeMap<Vec<u32>, String>) -> Option
     let anchor = played.iter().filter(|(k, _)| *k < lk).next_back().map(|(_, v)| v.clone());
     let mut dirs: Vec<(String, char)> = latest
         .iter()
-        .map(|(champ, (b, n))| {
+        .map(|(champ, (b, n, _))| {
             let dir = if *b > 0 && *n == 0 {
                 '+'
             } else if *n > 0 && *b == 0 {
@@ -521,9 +548,12 @@ fn chg_from_notes(by_ver: &Notes, played: &BTreeMap<Vec<u32>, String>) -> Option
         })
         .collect();
     dirs.sort();
-    let mut counts: Vec<(String, u32, u32)> = latest.iter().map(|(c, (b, n))| (c.clone(), *b, *n)).collect();
+    let mut counts: Vec<(String, u32, u32)> = latest.iter().map(|(c, (b, n, _))| (c.clone(), *b, *n)).collect();
     counts.sort();
-    Some(ChgInfo { anchor, dirs, counts })
+    let mut sizes: Vec<(String, f64)> =
+        if *sized { latest.iter().map(|(c, (_, _, s))| (c.clone(), *s)).collect() } else { Vec::new() };
+    sizes.sort_by(|a, b| a.0.cmp(&b.0));
+    Some(ChgInfo { anchor, dirs, counts, sizes })
 }
 
 /// The player's inbox first (LT export of this save: all 10 notes are there);
@@ -719,5 +749,57 @@ mod tests {
                 .collect();
         assert_eq!(replay_mix(&rs, Some(8)), "brief=1/3 mine=2 versions=[0.6.5:2 0.6.10:1]");
         assert_eq!(replay_mix(&rs, None), "brief=1/3 mine=- versions=[0.6.5:2 0.6.10:1]");
+    }
+
+    /// a news list holding one PatchNote: champ → [(pre, after, is_buff)]
+    fn note(ver: &str, champs: &[(&str, &[(&str, &str, bool)])]) -> JsonVal {
+        let data: Vec<String> = champs
+            .iter()
+            .map(|(c, lines)| {
+                let ch: Vec<String> = lines
+                    .iter()
+                    .map(|(p, a, b)| {
+                        format!(r#"{{"after_value":"{}","is_buff":{},"key":"k","pre_value":"{}","target_action":null}}"#, a, b, p)
+                    })
+                    .collect();
+                format!(r#"["{}",[{}]]"#, c, ch.join(","))
+            })
+            .collect();
+        let item = format!(r#"{{"ty":{{"PatchNote":{{"version":"{}","champion_patch_data":[{}]}}}}}}"#, ver, data.join(","));
+        JsonVal::parse(&format!("[{}]", item)).unwrap()
+    }
+
+    fn played(vs: &[&str]) -> BTreeMap<Vec<u32>, String> {
+        vs.iter().map(|v| (vkey(v), v.to_string())).collect()
+    }
+
+    /// E7b size: each change line adds ±min(100, |after − pre|/|pre|·100) by its
+    /// own direction; a zero `pre` or a non-numeric value adds nothing
+    #[test]
+    fn patch_note_sizes_sum_signed_relative_changes() {
+        let mut by_ver: Notes = BTreeMap::new();
+        let lines: [(&str, &[(&str, &str, bool)]); 3] = [
+            ("archer", &[("100", "120", true), ("10%", "30%", true), ("50", "45", false)]),
+            ("monk", &[("0", "5", true)]),
+            ("ogre", &[("fast", "slow", false), ("200", "150", false)]),
+        ];
+        notes_into(&note("2026.1.0", &lines), &mut by_ver);
+        let ci = chg_from_notes(&by_ver, &played(&["2026.0.0"])).unwrap();
+        let want = [("archer", 110.0), ("monk", 0.0), ("ogre", -25.0)];
+        assert_eq!(ci.sizes.len(), want.len(), "{:?}", ci.sizes);
+        for ((c, s), (wc, ws)) in ci.sizes.iter().zip(want) {
+            assert_eq!(c, wc);
+            assert!((s - ws).abs() < 1e-9, "{} {}", c, s);
+        }
+    }
+
+    /// no numeric value anywhere in the note → no sizes (the count nudge stands in)
+    #[test]
+    fn note_without_numeric_values_has_no_sizes() {
+        let mut by_ver: Notes = BTreeMap::new();
+        notes_into(&note("2026.1.0", &[("archer", &[("fast", "faster", true)])]), &mut by_ver);
+        let ci = chg_from_notes(&by_ver, &played(&["2026.0.0"])).unwrap();
+        assert_eq!(ci.dirs, vec![("archer".to_string(), '+')]);
+        assert!(ci.sizes.is_empty(), "{:?}", ci.sizes);
     }
 }
